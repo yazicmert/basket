@@ -195,6 +195,14 @@ const MIGRATIONS = [
 
       CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine_entries(status);
     `
+  },
+  {
+    version: 3,
+    name: '003_scan_truncation_flag',
+    sql: `
+      ALTER TABLE scans ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE scans ADD COLUMN max_files_limit INTEGER;
+    `
   }
 ];
 
@@ -359,8 +367,9 @@ export class SQLiteStore {
               id, schema_version, status, application_id, authorized_roots_json,
               scanned_locations_json, discovered_artifact_count, total_logical_bytes,
               total_physical_bytes, deduplicated_hardlink_count,
-              permission_limitations_json, skipped_symlinks_json, started_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              permission_limitations_json, skipped_symlinks_json, started_at, completed_at,
+              truncated, max_files_limit
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
           .run(
             scan.id,
@@ -376,7 +385,9 @@ export class SQLiteStore {
             JSON.stringify(scan.permissionLimitations || []),
             JSON.stringify(scan.skippedSymlinks || []),
             scan.startedAt,
-            scan.completedAt
+            scan.completedAt,
+            scan.truncated ? 1 : 0,
+            scan.maxFilesLimit ?? null
           );
       }
 

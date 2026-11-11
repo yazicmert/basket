@@ -36,6 +36,16 @@ function parseCookies(cookieHeader = '') {
   return out;
 }
 
+/**
+ * True only when the Host header names loopback exactly (optionally with a numeric port).
+ */
+export function isLoopbackHostHeader(hostHeader) {
+  const match = /^(127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})?$/.exec(
+    String(hostHeader || '').trim().toLowerCase()
+  );
+  return Boolean(match);
+}
+
 export function createAtlasServer(options = {}) {
   const defaultBaseDir =
     options.dataDir ||
@@ -49,10 +59,19 @@ export function createAtlasServer(options = {}) {
   const quarantineRoot =
     options.quarantineRoot || path.join(defaultBaseDir, 'quarantine-vault');
 
-  // Local API security token (Requirement 8)
+  // Local API security token (Requirement 8). Every /api/* route except /api/health always
+  // requires it: a caller-supplied token (packaged app) or a random per-process token that the
+  // UI receives via the HttpOnly cookie + meta tag served with index.html.
   const explicitToken = options.apiToken || process.env.ATLAS_API_TOKEN || null;
-  const sessionToken = explicitToken || crypto.randomBytes(24).toString('hex');
-  const enforceStrictToken = Boolean(explicitToken || options.enforceToken);
+  const sessionToken = explicitToken || crypto.randomBytes(32).toString('hex');
+  const sessionTokenDigest = crypto.createHash('sha256').update(sessionToken).digest();
+  const isValidToken = (candidate) => {
+    if (typeof candidate !== 'string' || candidate.length === 0) {
+      return false;
+    }
+    const digest = crypto.createHash('sha256').update(candidate).digest();
+    return crypto.timingSafeEqual(digest, sessionTokenDigest);
+  };
 
   const service = new ArtifactAtlasService({
     homeDir: options.homeDir || demoEnv.homeDir,
@@ -127,6 +146,7 @@ export function createAtlasServer(options = {}) {
         data += chunk;
         if (data.length > 2 * 1024 * 1024) {
           reject(new Error('Request payload too large'));
+          req.destroy();
         }
       });
       req.on('end', () => {
@@ -159,14 +179,9 @@ export function createAtlasServer(options = {}) {
       return { allowed: false, status: 403, error: 'FORBIDDEN_NON_LOOPBACK_CLIENT' };
     }
 
-    // 2. DNS Rebinding Guard: Host header must be localhost or 127.0.0.1
-    const hostHeader = String(req.headers.host || '').toLowerCase();
-    if (
-      hostHeader &&
-      !hostHeader.startsWith('127.0.0.1') &&
-      !hostHeader.startsWith('localhost') &&
-      !hostHeader.startsWith('[::1]')
-    ) {
+    // 2. DNS Rebinding Guard: Host header hostname must be exactly a loopback name.
+    // Prefix matching is not enough (`localhost.evil.example` resolves wherever an attacker likes).
+    if (!isLoopbackHostHeader(req.headers.host)) {
       return { allowed: false, status: 403, error: 'FORBIDDEN_HOST_HEADER' };
     }
 
@@ -178,6 +193,7 @@ export function createAtlasServer(options = {}) {
         if (
           parsedOrigin.hostname !== '127.0.0.1' &&
           parsedOrigin.hostname !== 'localhost' &&
+          parsedOrigin.hostname !== '[::1]' &&
           parsedOrigin.protocol !== 'file:'
         ) {
           return { allowed: false, status: 403, error: 'FORBIDDEN_CROSS_ORIGIN_REQUEST' };
@@ -199,7 +215,7 @@ export function createAtlasServer(options = {}) {
       const queryToken = url.searchParams.get('token');
       const providedToken = headerToken || cookieToken || queryToken;
 
-      if (enforceStrictToken && providedToken !== sessionToken) {
+      if (!isValidToken(providedToken)) {
         return {
           allowed: false,
           status: 401,

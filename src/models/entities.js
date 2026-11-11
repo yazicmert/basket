@@ -188,6 +188,7 @@ export function createArtifactModel(fields) {
     artifactType: fields.artifactType || ArtifactType.UNKNOWN,
     applicationId: fields.applicationId || null,
     workspaceId: fields.workspaceId || null,
+    gitRepositoryRoot: fields.gitRepositoryRoot || null,
     groupId: fields.groupId || null,
     sessionIds: Array.isArray(fields.sessionIds) ? fields.sessionIds : [],
     operationIds: Array.isArray(fields.operationIds) ? fields.operationIds : [],
@@ -271,7 +272,7 @@ export function createQuarantineEntryModel(fields) {
     reason: fields.reason || '',
     quarantinedAt: fields.quarantinedAt || new Date().toISOString(),
     restoredAt: fields.restoredAt || null,
-    status: fields.status || 'QUARANTINED' // QUARANTINED | RESTORED
+    status: fields.status || 'QUARANTINED' // PENDING | QUARANTINED | RESTORED
   };
 }
 
@@ -289,6 +290,8 @@ export function createScanModel(fields) {
     deduplicatedHardlinkCount: Number(fields.deduplicatedHardlinkCount || 0),
     permissionLimitations: Array.isArray(fields.permissionLimitations) ? fields.permissionLimitations : [],
     skippedSymlinks: Array.isArray(fields.skippedSymlinks) ? fields.skippedSymlinks : [],
+    truncated: Boolean(fields.truncated),
+    maxFilesLimit: fields.maxFilesLimit ? Number(fields.maxFilesLimit) : null,
     startedAt: fields.startedAt || new Date().toISOString(),
     completedAt: fields.completedAt || null
   };

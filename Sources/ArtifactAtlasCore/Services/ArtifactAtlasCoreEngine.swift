@@ -194,7 +194,8 @@ public final class MacOSArtifactClassifier {
             return (ext == "map" ? .derivedData : .buildOutput, .review, "Compiled build output.", "Requires rebuilding project.")
         }
         if lower.contains("/library/caches/") || lower.contains("/.claude/statsig/") || lower.contains("/cacheddata/") {
-            let risk: RiskCategory = hasSharedDependencies ? .review : .low
+            // UNKNOWN provenance never yields LOW, even inside a cache container
+            let risk: RiskCategory = (hasSharedDependencies || provenance == .unknown) ? .review : .low
             return (.regenerableCache, risk, "Dedicated application cache container.", "Rebuilt automatically on next launch.")
         }
         if lower.contains("/library/logs/") || lower.contains("/.claude/debug/") || ext == "log" {

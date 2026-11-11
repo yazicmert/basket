@@ -68,6 +68,27 @@ export class CleanupEngine {
       };
     }
 
+    // 3b. Reject anything outside the authorized scan roots or inside the Quarantine Vault itself
+    if (
+      authorizedRoots.length > 0 &&
+      !this.platformServices.isWithinAuthorizedRoots(absPath, authorizedRoots)
+    ) {
+      return {
+        valid: false,
+        code: 'OUTSIDE_AUTHORIZED_BOUNDARY',
+        issues: [`Path '${absPath}' is outside the authorized scan roots.`],
+        warnings
+      };
+    }
+    if (absPath === this.quarantineRoot || absPath.startsWith(this.quarantineRoot + path.sep)) {
+      return {
+        valid: false,
+        code: 'QUARANTINE_VAULT_REJECTED',
+        issues: ['Path is inside the managed Quarantine Vault.'],
+        warnings
+      };
+    }
+
     // 4. Reject symlinked ancestor directories inside authorized roots
     if (
       authorizedRoots.length > 0 &&
@@ -100,6 +121,16 @@ export class CleanupEngine {
         valid: false,
         code: 'SYMLINK_TARGET_REJECTED',
         issues: ['Target path is a symbolic link; Artifact Atlas refuses to quarantine symlinks.'],
+        warnings
+      };
+    }
+
+    // 6b. Only regular files are ever moved (never directories, sockets, FIFOs, or devices)
+    if (!lstat.isFile()) {
+      return {
+        valid: false,
+        code: 'NOT_REGULAR_FILE_REJECTED',
+        issues: ['Target path is not a regular file.'],
         warnings
       };
     }
@@ -327,87 +358,70 @@ export class CleanupEngine {
     const artifactById = new Map(artifacts.map((a) => [a.id, a]));
     const quarantinedEntries = [];
     const runtimeBlocked = [...review.blockedItems];
+    const batchManifestPath = path.join(batchDir, 'batch-manifest.json');
 
-    for (const item of review.eligibleItems) {
-      const artifact = artifactById.get(item.artifactId);
-      // Re-run preflight right before atomic move (TOCTOU guard)
-      const finalCheck = this.verifyArtifactPreFlight(artifact, authorizedRoots);
-      if (!finalCheck.valid) {
-        runtimeBlocked.push({
-          artifactId: artifact.id,
-          name: artifact.name,
-          canonicalPath: artifact.canonicalPath,
-          code: finalCheck.code,
-          reasons: finalCheck.issues
-        });
-        continue;
-      }
+    try {
+      for (const item of review.eligibleItems) {
+        const artifact = artifactById.get(item.artifactId);
+        // Re-run preflight right before atomic move (TOCTOU guard)
+        const finalCheck = this.verifyArtifactPreFlight(artifact, authorizedRoots);
+        if (!finalCheck.valid) {
+          runtimeBlocked.push({
+            artifactId: artifact.id,
+            name: artifact.name,
+            canonicalPath: artifact.canonicalPath,
+            code: finalCheck.code,
+            reasons: finalCheck.issues
+          });
+          continue;
+        }
 
-      const entryId = stableId('qent', `${batchId}:${artifact.canonicalPath}`);
-      const entryDir = path.join(batchDir, entryId);
-      fs.mkdirSync(entryDir, { recursive: true });
-
-      const payloadPath = path.join(entryDir, 'payload');
-      const manifestPath = path.join(entryDir, 'manifest.json');
-      const sha256 = this.platformServices.computeFileSha256(artifact.canonicalPath);
-
-      // Move file into quarantine (fallback to copy+unlink if across mount points EXDEV)
-      try {
-        fs.renameSync(artifact.canonicalPath, payloadPath);
-      } catch (err) {
-        if (err.code === 'EXDEV') {
-          fs.copyFileSync(artifact.canonicalPath, payloadPath);
-          fs.unlinkSync(artifact.canonicalPath);
-        } else {
-          throw err;
+        try {
+          const entryModel = this.moveIntoVault({
+            batchId,
+            batchDir,
+            sourcePath: artifact.canonicalPath,
+            fields: {
+              artifactId: artifact.id,
+              artifactName: artifact.name,
+              sizeBytes: artifact.sizeBytes,
+              originalMode: artifact.mode,
+              originalMtimeMs: artifact.mtimeMs,
+              originalInodeKey: artifact.physicalInodeKey,
+              riskCategory: artifact.cleanupClassification,
+              artifactType: artifact.artifactType,
+              provenanceConfidence: artifact.provenanceConfidence,
+              reason: artifact.cleanupExplanation
+            }
+          });
+          artifact.quarantined = true;
+          quarantinedEntries.push(entryModel);
+        } catch (err) {
+          runtimeBlocked.push({
+            artifactId: artifact.id,
+            name: artifact.name,
+            canonicalPath: artifact.canonicalPath,
+            code: 'QUARANTINE_MOVE_FAILED',
+            reasons: [`File was left in place; move into quarantine failed (${err.code || err.message}).`]
+          });
         }
       }
-
-      const entryModel = createQuarantineEntryModel({
-        id: entryId,
-        batchId,
-        artifactId: artifact.id,
-        artifactName: artifact.name,
-        originalPath: artifact.canonicalPath,
-        quarantinePath: payloadPath,
-        manifestPath,
-        sizeBytes: artifact.sizeBytes,
-        originalMode: artifact.mode,
-        originalMtimeMs: artifact.mtimeMs,
-        originalInodeKey: artifact.physicalInodeKey,
-        sha256,
-        riskCategory: artifact.cleanupClassification,
-        artifactType: artifact.artifactType,
-        provenanceConfidence: artifact.provenanceConfidence,
-        reason: artifact.cleanupExplanation,
-        status: 'QUARANTINED'
-      });
-
-      // Write durable on-disk manifest.json before committing SQLite record
-      fs.writeFileSync(manifestPath, JSON.stringify(entryModel, null, 2), 'utf8');
-
-      artifact.quarantined = true;
-      if (this.sqliteStore) {
-        this.sqliteStore.saveQuarantineEntry(entryModel);
-      }
-      quarantinedEntries.push(entryModel);
+    } finally {
+      // Always write the batch summary, even when an item failed mid-batch
+      fs.writeFileSync(
+        batchManifestPath,
+        JSON.stringify(
+          {
+            batchId,
+            createdAt: new Date().toISOString(),
+            entries: quarantinedEntries
+          },
+          null,
+          2
+        ),
+        'utf8'
+      );
     }
-
-    // Write batch summary manifest
-    const batchManifestPath = path.join(batchDir, 'batch-manifest.json');
-    fs.writeFileSync(
-      batchManifestPath,
-      JSON.stringify(
-        {
-          batchId,
-          createdAt: new Date().toISOString(),
-          entries: quarantinedEntries
-        },
-        null,
-        2
-      ),
-      'utf8'
-    );
 
     return {
       batchId,
@@ -418,13 +432,107 @@ export class CleanupEngine {
   }
 
   /**
+   * Moves one regular file into the vault with a crash-safe ordering:
+   *   1. hash the source, 2. write manifest.json (status PENDING) durably,
+   *   3. move the payload (never clobbering), 4. mark manifest QUARANTINED, 5. commit SQLite.
+   * A payload therefore never exists in the vault without its recovery descriptor. If the move
+   * fails the source is untouched and the empty entry directory is removed.
+   */
+  moveIntoVault({ batchId, batchDir, sourcePath, fields }) {
+    const entryId = stableId('qent', `${batchId}:${sourcePath}`);
+    const entryDir = path.join(batchDir, entryId);
+    fs.mkdirSync(entryDir, { recursive: true });
+
+    const payloadPath = path.join(entryDir, 'payload');
+    const manifestPath = path.join(entryDir, 'manifest.json');
+
+    let entryModel;
+    try {
+      const sha256 = this.platformServices.computeFileSha256(sourcePath);
+      entryModel = createQuarantineEntryModel({
+        ...fields,
+        id: entryId,
+        batchId,
+        originalPath: sourcePath,
+        quarantinePath: payloadPath,
+        manifestPath,
+        sha256,
+        status: 'PENDING'
+      });
+      writeFileDurable(manifestPath, JSON.stringify(entryModel, null, 2));
+      this.platformServices.moveFileNoClobber(sourcePath, payloadPath, sha256);
+    } catch (err) {
+      // The move did not happen: the source is still in place, so drop the empty entry dir
+      if (!this.platformServices.entryExists(payloadPath)) {
+        fs.rmSync(entryDir, { recursive: true, force: true });
+      }
+      throw err;
+    }
+
+    entryModel.status = 'QUARANTINED';
+    writeFileDurable(manifestPath, JSON.stringify(entryModel, null, 2));
+    if (this.sqliteStore) {
+      this.sqliteStore.saveQuarantineEntry(entryModel);
+    }
+    return entryModel;
+  }
+
+  /**
+   * Looks up a quarantine entry in SQLite, falling back to the on-disk manifest.json recovery
+   * descriptors when the database record is missing (lost/corrupt DB or interrupted quarantine).
+   */
+  findQuarantineEntry(entryId) {
+    const fromDb = this.sqliteStore ? this.sqliteStore.getQuarantineEntryById(entryId) : null;
+    if (fromDb) {
+      return fromDb;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(String(entryId || ''))) {
+      return null;
+    }
+    const batchesDir = path.join(this.quarantineRoot, 'batches');
+    let batchNames = [];
+    try {
+      batchNames = fs.readdirSync(batchesDir);
+    } catch {
+      return null;
+    }
+    for (const batchName of batchNames) {
+      const entryDir = path.join(batchesDir, batchName, entryId);
+      const manifestPath = path.join(entryDir, 'manifest.json');
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      } catch {
+        continue;
+      }
+      if (manifest.id !== entryId || !manifest.originalPath) {
+        continue;
+      }
+      // Never trust payload locations from the manifest: always use the vault layout
+      return createQuarantineEntryModel({
+        ...manifest,
+        quarantinePath: path.join(entryDir, 'payload'),
+        manifestPath,
+        status: manifest.status === 'RESTORED' ? 'RESTORED' : 'QUARANTINED'
+      });
+    }
+    return null;
+  }
+
+  /**
    * Restores a quarantined artifact back to its original path with explicit conflict handling.
+   * No strategy ever destroys data: OVERWRITE_IF_EXPLICIT first moves the file currently
+   * occupying the destination into the Quarantine Vault as its own recoverable entry.
    */
   restoreQuarantineEntry({
     entryId,
     conflictStrategy = RestoreConflictStrategy.FAIL_IF_EXISTS
   }) {
-    let entry = this.sqliteStore ? this.sqliteStore.getQuarantineEntryById(entryId) : null;
+    if (!Object.values(RestoreConflictStrategy).includes(conflictStrategy)) {
+      throw new Error(`Unsupported conflict strategy: ${conflictStrategy}`);
+    }
+
+    const entry = this.findQuarantineEntry(entryId);
 
     if (!entry) {
       throw new Error(`Quarantine entry not found: ${entryId}`);
@@ -434,20 +542,57 @@ export class CleanupEngine {
       throw new Error(`Quarantine entry '${entryId}' has already been restored.`);
     }
 
-    if (!fs.existsSync(entry.quarantinePath)) {
+    let payloadStat;
+    try {
+      payloadStat = fs.lstatSync(entry.quarantinePath);
+    } catch {
       throw new Error(`Quarantined payload missing on disk: ${entry.quarantinePath}`);
+    }
+    if (!payloadStat.isFile()) {
+      throw new Error('QUARANTINE_INTEGRITY_MISMATCH: Quarantined payload is not a regular file.');
     }
 
     // Verify SHA-256 integrity of quarantined payload before restoring
     if (entry.sha256) {
       const currentSha = this.platformServices.computeFileSha256(entry.quarantinePath);
-      if (currentSha && currentSha !== entry.sha256) {
+      if (currentSha !== entry.sha256) {
         throw new Error('QUARANTINE_INTEGRITY_MISMATCH: Quarantined payload SHA-256 does not match manifest.');
       }
     }
 
-    let destinationPath = entry.originalPath;
-    if (fs.existsSync(destinationPath)) {
+    let destinationPath = path.resolve(entry.originalPath);
+    if (
+      this.platformServices.isProtectedSystemPath(destinationPath) ||
+      destinationPath === this.quarantineRoot ||
+      destinationPath.startsWith(this.quarantineRoot + path.sep)
+    ) {
+      throw new Error(
+        `RESTORE_DESTINATION_REJECTED: '${destinationPath}' is a protected location.`
+      );
+    }
+
+    // The original path was canonical at scan time. If the nearest existing ancestor now
+    // resolves elsewhere, a directory was swapped for a symlink: refuse to write through it.
+    let existingAncestor = path.dirname(destinationPath);
+    while (!this.platformServices.entryExists(existingAncestor)) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) break;
+      existingAncestor = parent;
+    }
+    let ancestorReal = null;
+    try {
+      ancestorReal = fs.realpathSync(existingAncestor);
+    } catch {
+      ancestorReal = null;
+    }
+    if (ancestorReal !== existingAncestor || !fs.lstatSync(existingAncestor).isDirectory()) {
+      throw new Error(
+        `RESTORE_PATH_CHANGED: '${existingAncestor}' is no longer a real directory (symlink or file); refusing to restore through it.`
+      );
+    }
+
+    let displacedEntry = null;
+    if (this.platformServices.entryExists(destinationPath)) {
       if (conflictStrategy === RestoreConflictStrategy.FAIL_IF_EXISTS) {
         throw new Error(
           `RESTORE_CONFLICT_EXISTS: A file already exists at '${destinationPath}'. Choose RENAME_RESTORED or OVERWRITE_IF_EXPLICIT.`
@@ -455,24 +600,56 @@ export class CleanupEngine {
       } else if (conflictStrategy === RestoreConflictStrategy.RENAME_RESTORED) {
         const ext = path.extname(destinationPath);
         const base = destinationPath.slice(0, destinationPath.length - ext.length);
-        destinationPath = `${base}.restored-${Date.now()}${ext}`;
-      } else if (conflictStrategy !== RestoreConflictStrategy.OVERWRITE_IF_EXPLICIT) {
-        throw new Error(`Unsupported conflict strategy: ${conflictStrategy}`);
+        let candidate;
+        let attempt = 0;
+        do {
+          candidate = `${base}.restored-${Date.now()}${attempt ? `-${attempt}` : ''}${ext}`;
+          attempt += 1;
+        } while (this.platformServices.entryExists(candidate));
+        destinationPath = candidate;
+      } else {
+        // OVERWRITE_IF_EXPLICIT: displace the occupying file into the vault (never destroy it)
+        const occupant = fs.lstatSync(destinationPath);
+        if (!occupant.isFile()) {
+          throw new Error(
+            `RESTORE_CONFLICT_NOT_REGULAR_FILE: '${destinationPath}' is occupied by a directory, symlink, or special file; only regular files can be displaced. Choose RENAME_RESTORED.`
+          );
+        }
+        const batchId = `qbatch_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const batchDir = path.join(this.quarantineRoot, 'batches', batchId);
+        fs.mkdirSync(batchDir, { recursive: true });
+        displacedEntry = this.moveIntoVault({
+          batchId,
+          batchDir,
+          sourcePath: destinationPath,
+          fields: {
+            artifactId: stableId('art', destinationPath),
+            artifactName: path.basename(destinationPath),
+            sizeBytes: occupant.size,
+            originalMode: occupant.mode,
+            originalMtimeMs: occupant.mtimeMs,
+            originalInodeKey: `${occupant.dev}:${occupant.ino}`,
+            riskCategory: RiskCategory.REVIEW,
+            artifactType: entry.artifactType,
+            provenanceConfidence: ProvenanceConfidence.UNKNOWN,
+            reason: `Displaced by explicit-overwrite restore of quarantine entry ${entry.id}; recoverable from the Quarantine Vault.`
+          }
+        });
+        fs.writeFileSync(
+          path.join(batchDir, 'batch-manifest.json'),
+          JSON.stringify(
+            { batchId, createdAt: new Date().toISOString(), entries: [displacedEntry] },
+            null,
+            2
+          ),
+          'utf8'
+        );
       }
     }
 
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 
-    try {
-      fs.renameSync(entry.quarantinePath, destinationPath);
-    } catch (err) {
-      if (err.code === 'EXDEV') {
-        fs.copyFileSync(entry.quarantinePath, destinationPath);
-        fs.unlinkSync(entry.quarantinePath);
-      } else {
-        throw err;
-      }
-    }
+    this.platformServices.moveFileNoClobber(entry.quarantinePath, destinationPath, entry.sha256);
 
     if (entry.originalMode) {
       try {
@@ -496,7 +673,25 @@ export class CleanupEngine {
       entryId: entry.id,
       restoredToPath: destinationPath,
       conflictStrategyUsed: conflictStrategy,
+      displacedEntry,
       restoredAt: entry.restoredAt
     };
+  }
+}
+
+/**
+ * Writes a file and fsyncs it so the recovery descriptor survives a crash right after the move.
+ */
+function writeFileDurable(filePath, contents) {
+  const fd = fs.openSync(filePath, 'w');
+  try {
+    fs.writeFileSync(fd, contents, 'utf8');
+    try {
+      fs.fsyncSync(fd);
+    } catch {
+      // fsync is unsupported on some filesystems; the write itself still succeeded
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }

@@ -22,6 +22,47 @@ function hasFlag(flagName) {
   return args.includes(flagName);
 }
 
+const VALUE_FLAGS = new Set([
+  '--port',
+  '--home',
+  '--data-dir',
+  '--api-token',
+  '--parent-pid',
+  '--app',
+  '--workspace',
+  '--confirm',
+  '--strategy'
+]);
+
+/**
+ * Positional arguments after the command name (flags and their values removed).
+ */
+function positionalArgs() {
+  const out = [];
+  for (let i = 1; i < args.length; i++) {
+    if (VALUE_FLAGS.has(args[i])) {
+      i += 1;
+    } else if (!args[i].startsWith('--')) {
+      out.push(args[i]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Builds a service backed by the persistent index + Quarantine Vault so that `quarantine`
+ * and `restore` work across separate CLI invocations.
+ */
+function createPersistentService() {
+  const dataDir = parseFlagValue('--data-dir', process.env.ATLAS_DATA_DIR || null);
+  const baseDir = path.resolve(dataDir || path.join(os.homedir(), '.artifact-atlas'));
+  return new ArtifactAtlasService({
+    homeDir: parseFlagValue('--home', null) || undefined,
+    dbPath: path.join(baseDir, 'atlas-index.sqlite'),
+    quarantineRoot: path.join(baseDir, 'quarantine-vault')
+  });
+}
+
 async function runServe() {
   const rawPort = parseFlagValue('--port', process.env.PORT ?? '4310');
   const port = Number(rawPort);
@@ -166,7 +207,7 @@ async function runCliScan() {
     additionalWorkspacePaths: isAppBundle ? [] : [resolved]
   });
 
-  console.log(`Scan Status: ${state.scan.status}`);
+  console.log(`Scan Status: ${state.scan.status}${state.scan.truncated ? ` (PARTIAL: stopped at the ${state.scan.maxFilesLimit}-file limit)` : ''}`);
   console.log(`Discovered Artifacts: ${state.scan.discoveredArtifactCount}`);
   console.log(`Physical Bytes: ${state.scan.totalPhysicalBytes}`);
   for (const art of state.artifacts.slice(0, 30)) {
@@ -177,13 +218,162 @@ async function runCliScan() {
   service.sqliteStore.close();
 }
 
+/**
+ * artifact-atlas quarantine <file...> [--workspace <dir>] [--app <bundle.app>]
+ *                           [--confirm <token>] [--allow-high-risk] [--data-dir <dir>]
+ *
+ * Two-step by design: the first run prints the review and a confirmation token; nothing moves
+ * until the same command is re-run with `--confirm <token>`.
+ */
+async function runCliQuarantine() {
+  const targets = positionalArgs();
+  if (targets.length === 0) {
+    console.error(
+      'Usage: artifact-atlas quarantine <file...> [--workspace <dir>] [--app <bundle.app>] [--confirm <token>] [--allow-high-risk] [--data-dir <dir>]'
+    );
+    process.exit(1);
+  }
+
+  const service = createPersistentService();
+  let exitCode = 0;
+  try {
+    const targetPaths = targets.map((t) => service.platformServices.resolveRealPathSafe(t));
+    const workspaceFlag = parseFlagValue('--workspace', null);
+    const workspacePaths = workspaceFlag
+      ? [path.resolve(workspaceFlag)]
+      : Array.from(new Set(targetPaths.map((p) => path.dirname(p))));
+
+    const state = await service.scanAndAnalyze({
+      bundlePath: parseFlagValue('--app', null),
+      additionalWorkspacePaths: workspacePaths
+    });
+
+    const selected = [];
+    for (const targetPath of targetPaths) {
+      const art = state.artifacts.find((a) => a.canonicalPath === targetPath);
+      if (art) {
+        selected.push(art);
+      } else {
+        console.error(`Not found in scan (missing, unreadable, symlink, or outside scan roots): ${targetPath}`);
+        exitCode = 1;
+      }
+    }
+    if (selected.length === 0) {
+      return 1;
+    }
+
+    const allowHighRisk = hasFlag('--allow-high-risk');
+    const ids = selected.map((a) => a.id);
+    const review = service.prepareCleanupReview(ids, allowHighRisk);
+
+    console.log(`Operation: ${review.operationLabel}`);
+    console.log(`Quarantine Vault: ${review.quarantineVaultLocation}`);
+    for (const item of review.eligibleItems) {
+      console.log(
+        ` ELIGIBLE [${item.riskCategory}] [${item.provenanceConfidence}] ${item.canonicalPath} (${item.sizeBytes} B)`
+      );
+      console.log(`          ${item.explanation}`);
+      for (const warning of item.warnings) {
+        console.log(`          WARNING: ${warning}`);
+      }
+    }
+    for (const item of review.blockedItems) {
+      console.log(` BLOCKED  [${item.code}] ${item.canonicalPath}`);
+      for (const reason of item.reasons) {
+        console.log(`          ${reason}`);
+      }
+    }
+
+    if (!review.confirmationToken) {
+      console.log('Nothing is eligible for quarantine.');
+      return 1;
+    }
+
+    const confirm = parseFlagValue('--confirm', null);
+    if (!confirm) {
+      console.log(`\nNo files were moved. To proceed, re-run with: --confirm ${review.confirmationToken}`);
+      return exitCode;
+    }
+
+    const result = service.executeQuarantine({
+      artifactIds: ids,
+      confirmationToken: confirm,
+      allowHighRiskSingleOverride: allowHighRisk
+    });
+    for (const entry of result.quarantinedEntries) {
+      console.log(`QUARANTINED ${entry.originalPath}`);
+      console.log(`  entry:    ${entry.id}`);
+      console.log(`  manifest: ${entry.manifestPath}`);
+    }
+    if (result.quarantinedEntries.length === 0) {
+      exitCode = 1;
+    }
+    return exitCode;
+  } catch (err) {
+    console.error(`Quarantine failed: ${err.message}`);
+    return 1;
+  } finally {
+    service.sqliteStore.close();
+  }
+}
+
+/**
+ * artifact-atlas restore --list
+ * artifact-atlas restore <entryId> [--strategy FAIL_IF_EXISTS|RENAME_RESTORED|OVERWRITE_IF_EXPLICIT]
+ */
+function runCliRestore() {
+  const service = createPersistentService();
+  try {
+    if (hasFlag('--list')) {
+      const entries = service.sqliteStore.listQuarantineEntries();
+      if (entries.length === 0) {
+        console.log('Quarantine Vault is empty.');
+      }
+      for (const entry of entries) {
+        console.log(`${entry.id}  [${entry.status}]  ${entry.originalPath} (${entry.sizeBytes} B)`);
+      }
+      return 0;
+    }
+
+    const entryId = positionalArgs()[0];
+    if (!entryId) {
+      console.error(
+        'Usage: artifact-atlas restore <entryId> [--strategy FAIL_IF_EXISTS|RENAME_RESTORED|OVERWRITE_IF_EXPLICIT] [--data-dir <dir>]\n       artifact-atlas restore --list'
+      );
+      return 1;
+    }
+    const result = service.restoreQuarantineEntry({
+      entryId,
+      conflictStrategy: parseFlagValue('--strategy', RestoreConflictStrategy.FAIL_IF_EXISTS)
+    });
+    console.log(`RESTORED ${result.restoredToPath}`);
+    if (result.displacedEntry) {
+      console.log(
+        `  The file previously at that path was moved to quarantine (entry ${result.displacedEntry.id}).`
+      );
+    }
+    return 0;
+  } catch (err) {
+    console.error(`Restore failed: ${err.message}`);
+    return 1;
+  } finally {
+    service.sqliteStore.close();
+  }
+}
+
 if (command === 'serve') {
   runServe();
 } else if (command === 'demo') {
   runVerticalSliceDemo();
 } else if (command === 'scan') {
   runCliScan();
+} else if (command === 'quarantine') {
+  runCliQuarantine().then((code) => {
+    process.exitCode = code;
+  });
+} else if (command === 'restore') {
+  process.exitCode = runCliRestore();
 } else {
-  console.error(`Unknown command '${command}'. Supported: serve, demo, scan`);
+  console.error(`Unknown command '${command}'. Supported: serve, demo, scan, quarantine, restore`);
   process.exit(1);
 }

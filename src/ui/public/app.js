@@ -370,6 +370,11 @@ function renderScanNoticesBanner(state) {
       `Generic macOS Adapter active for ${state.application.name}: application-level caches and saved state were discovered, while conversation-level provenance is marked UNKNOWN.`
     );
   }
+  if (state.scan.truncated) {
+    notices.push(
+      `Scan stopped at the ${state.scan.maxFilesLimit}-file limit: results and size totals are PARTIAL, and files beyond the limit were not analyzed.`
+    );
+  }
   if (state.scan.permissionLimitations.length > 0) {
     notices.push(
       `${state.scan.permissionLimitations.length} protected/unreadable path(s) skipped due to permissions.`
@@ -1202,7 +1207,11 @@ function renderQuarantineVaultView() {
         renderQuarantineVaultView();
         renderTreemapView();
         updateQuarantineCountPill();
-        showToast(`Restored artifact to ${res.restoredToPath}`);
+        showToast(
+          res.displacedEntry
+            ? `Restored artifact to ${res.restoredToPath}; the file that was there is now recoverable in the Quarantine Vault.`
+            : `Restored artifact to ${res.restoredToPath}`
+        );
       } catch (err) {
         showToast(`Restore blocked: ${err.message}`);
       }

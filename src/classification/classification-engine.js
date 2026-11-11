@@ -5,6 +5,7 @@ import {
   createCleanupRecommendationModel,
   createArtifactGroupModel
 } from '../models/entities.js';
+import { PlatformServices } from '../platform/platform-services.js';
 
 const CREDENTIAL_PATTERNS = [
   /^\.env(\..+)?$/i,
@@ -72,6 +73,10 @@ const MODEL_WEIGHT_EXTENSIONS = new Set([
 ]);
 
 export class ClassificationEngine {
+  constructor(options = {}) {
+    this.platformServices = options.platformServices || new PlatformServices();
+  }
+
   /**
    * Classifies all artifacts using multi-factor contextual rules (never extension alone)
    * and builds ArtifactGroup aggregations + CleanupRecommendations.
@@ -80,9 +85,11 @@ export class ClassificationEngine {
     const recommendations = [];
     const groupsByKey = new Map();
     const seenInodesPerGroup = new Map();
+    const gitRootCache = new Map();
 
     for (const artifact of artifacts) {
-      const result = this.classifySingleArtifact(artifact);
+      const result = this.classifySingleArtifact(artifact, gitRootCache);
+      artifact.gitRepositoryRoot = result.gitRepositoryRoot;
       artifact.artifactType = result.artifactType;
       artifact.cleanupClassification = result.riskCategory;
       artifact.cleanupExplanation = result.explanation;
@@ -139,7 +146,58 @@ export class ClassificationEngine {
     };
   }
 
-  classifySingleArtifact(artifact) {
+  /**
+   * Classifies one artifact: contextual rules first, then a final safety clamp that can only
+   * raise risk. `LOW` is granted only when every independent signal agrees it is disposable:
+   * known (non-UNKNOWN) provenance, no shared/multi-session dependency, not source code inside a
+   * workspace or Git repository, and not an arbitrary file inside a Git working tree.
+   */
+  classifySingleArtifact(artifact, gitRootCache = null) {
+    const result = this.classifyByContextRules(artifact);
+    const gitRepositoryRoot = this.platformServices.findGitRepositoryRoot(
+      artifact.parentDir || artifact.canonicalPath.slice(0, artifact.canonicalPath.lastIndexOf('/')) || '/',
+      gitRootCache
+    );
+    result.gitRepositoryRoot = gitRepositoryRoot;
+
+    if (result.riskCategory !== RiskCategory.LOW) {
+      return result;
+    }
+
+    const ext = String(artifact.extension || '').toLowerCase();
+    const insideProject = Boolean(gitRepositoryRoot || artifact.workspaceId);
+    const escalations = [];
+
+    if (artifact.provenanceConfidence === ProvenanceConfidence.UNKNOWN) {
+      escalations.push('its provenance is UNKNOWN');
+    }
+    if ((artifact.sharedDependencyIndicators || []).length > 0 || (artifact.sessionIds || []).length > 1) {
+      escalations.push('it is shared across hardlinks or multiple sessions');
+    }
+    if (SOURCE_CODE_EXTENSIONS.has(ext) && insideProject) {
+      escalations.push(
+        'it is a source-code file inside a workspace or Git repository (directory name alone does not prove it is disposable)'
+      );
+    } else if (gitRepositoryRoot && result.artifactType !== ArtifactType.REGENERABLE_CACHE) {
+      escalations.push(
+        `it lives inside the Git working tree at '${gitRepositoryRoot}' and may be tracked project content`
+      );
+    }
+
+    if (escalations.length === 0) {
+      return result;
+    }
+
+    return {
+      ...result,
+      riskCategory: RiskCategory.REVIEW,
+      explanation: `Located in a ${formatArtifactTypeLabel(result.artifactType).toLowerCase()} container, but raised to REVIEW because ${escalations.join('; ')}.`,
+      consequences:
+        'If this file is project content or still referenced elsewhere, removing it may lose work or interrupt another session; inspect before quarantining.'
+    };
+  }
+
+  classifyByContextRules(artifact) {
     const canonical = artifact.canonicalPath;
     const lowerPath = canonical.toLowerCase();
     const fileName = artifact.name;

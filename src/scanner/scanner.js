@@ -55,9 +55,17 @@ export class Scanner {
           totalPhysicalBytes: scanRecord.totalPhysicalBytes,
           deduplicatedHardlinkCount: scanRecord.deduplicatedHardlinkCount,
           permissionLimitationsCount: scanRecord.permissionLimitations.length,
-          skippedSymlinksCount: scanRecord.skippedSymlinks.length
+          skippedSymlinksCount: scanRecord.skippedSymlinks.length,
+          truncated: scanRecord.truncated
         });
       }
+    };
+
+    // Hitting the file cap must never look like a complete scan: totals and provenance
+    // coverage are partial, so the scan record says so explicitly.
+    const markTruncated = () => {
+      scanRecord.truncated = true;
+      scanRecord.maxFilesLimit = this.maxFiles;
     };
 
     const walkDirectory = async (dirPath) => {
@@ -67,6 +75,7 @@ export class Scanner {
       }
 
       if (rawEntries.length >= this.maxFiles) {
+        markTruncated();
         return;
       }
 
@@ -122,6 +131,11 @@ export class Scanner {
       for (const dirent of dirEntries) {
         if (signal?.aborted) {
           scanRecord.status = ScanStatus.CANCELLED;
+          return;
+        }
+
+        if (rawEntries.length >= this.maxFiles) {
+          markTruncated();
           return;
         }
 
