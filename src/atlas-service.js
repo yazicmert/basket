@@ -1,0 +1,323 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { PlatformServices } from './platform/platform-services.js';
+import { AdapterRegistry } from './adapters/adapter-registry.js';
+import { ApplicationDiscovery } from './discovery/application-discovery.js';
+import { Scanner } from './scanner/scanner.js';
+import { ArtifactIndexer } from './indexer/artifact-indexer.js';
+import { ProvenanceEngine } from './provenance/provenance-engine.js';
+import { ClassificationEngine } from './classification/classification-engine.js';
+import { GraphEngine } from './graph/graph-engine.js';
+import { CleanupEngine } from './cleanup/cleanup-engine.js';
+import { SQLiteStore } from './persistence/sqlite-store.js';
+
+export class ArtifactAtlasService {
+  constructor(options = {}) {
+    this.platformServices = new PlatformServices({
+      homeDir: options.homeDir,
+      platform: options.platform
+    });
+    this.adapterRegistry = new AdapterRegistry();
+    this.applicationDiscovery = new ApplicationDiscovery({
+      platformServices: this.platformServices,
+      adapterRegistry: this.adapterRegistry
+    });
+    this.scanner = new Scanner({
+      platformServices: this.platformServices,
+      maxFiles: options.maxFiles || 25000
+    });
+    this.indexer = new ArtifactIndexer();
+    this.provenanceEngine = new ProvenanceEngine();
+    this.classificationEngine = new ClassificationEngine();
+    this.graphEngine = new GraphEngine();
+    this.sqliteStore = new SQLiteStore(options.dbPath || ':memory:');
+    this.cleanupEngine = new CleanupEngine({
+      platformServices: this.platformServices,
+      sqliteStore: this.sqliteStore,
+      quarantineRoot: options.quarantineRoot
+    });
+
+    this.activeState = {
+      application: null,
+      workspaces: [],
+      sessions: [],
+      operations: [],
+      scan: null,
+      artifacts: [],
+      artifactGroups: [],
+      provenanceEdges: [],
+      evidence: [],
+      recommendations: [],
+      malformedRecords: [],
+      graph: null,
+      authorizedRoots: [],
+      isDemoEnvironment: Boolean(options.isDemoEnvironment)
+    };
+
+    this.currentScanAbortController = null;
+    this.lastProgress = null;
+  }
+
+  /**
+   * Step 1: Identify a dropped or selected macOS .app bundle without executing it.
+   */
+  identifyApplication(bundlePath) {
+    const app = this.applicationDiscovery.identifyAppBundle(bundlePath);
+    this.activeState.application = app;
+    return app;
+  }
+
+  /**
+   * Step 2: Run full discovery, session provenance analysis, classification,
+   * SQLite persistence, and Knowledge Graph + Treemap construction.
+   */
+  async scanAndAnalyze({
+    bundlePath = null,
+    additionalWorkspacePaths = [],
+    onProgress = null,
+    artificialDelayMs = 0
+  }) {
+    if (this.currentScanAbortController) {
+      this.currentScanAbortController.abort();
+    }
+    this.currentScanAbortController = new AbortController();
+    const signal = this.currentScanAbortController.signal;
+
+    let application = this.activeState.application;
+    if (bundlePath) {
+      application = this.identifyApplication(bundlePath);
+    }
+
+    const candidateRoots = [];
+    if (application) {
+      for (const dirEntry of application.knownDataDirectories) {
+        if (fs.existsSync(dirEntry.path)) {
+          candidateRoots.push(dirEntry.path);
+        }
+      }
+    }
+
+    for (const wsPath of additionalWorkspacePaths) {
+      if (wsPath && fs.existsSync(wsPath)) {
+        candidateRoots.push(this.platformServices.resolveRealPathSafe(wsPath));
+      }
+    }
+
+    // Parse adapter provenance records first so any workspaces referenced in session transcripts
+    // within the user's home/workspace scope are discovered
+    const adapter = application
+      ? this.adapterRegistry.getAdapterById(application.adapterId)
+      : this.adapterRegistry.fallbackAdapter;
+
+    const parsedRecords = application
+      ? adapter.parseProvenanceRecords({
+          application,
+          authorizedRoots: candidateRoots,
+          platformServices: this.platformServices
+        })
+      : { workspaces: [], sessions: [], operations: [], malformedRecords: [] };
+
+    const workspacesByPath = new Map();
+    for (const ws of parsedRecords.workspaces) {
+      workspacesByPath.set(ws.canonicalPath, ws);
+      if (
+        fs.existsSync(ws.canonicalPath) &&
+        !this.platformServices.isProtectedSystemPath(ws.canonicalPath)
+      ) {
+        candidateRoots.push(ws.canonicalPath);
+      }
+    }
+
+    for (const manualWsPath of additionalWorkspacePaths) {
+      if (!manualWsPath || !fs.existsSync(manualWsPath)) {
+        continue;
+      }
+      const wsModel = this.applicationDiscovery.identifyWorkspaceTarget
+        ? this.applicationDiscovery.identifyWorkspaceTarget(manualWsPath)
+        : this.applicationDiscovery.identifyWorkspaceDirectory(
+            manualWsPath,
+            application ? [application.id] : []
+          );
+      if (!workspacesByPath.has(wsModel.canonicalPath)) {
+        workspacesByPath.set(wsModel.canonicalPath, wsModel);
+      }
+    }
+
+    const workspaces = Array.from(workspacesByPath.values());
+    const authorizedRoots = Array.from(new Set(candidateRoots));
+
+    // Execute cancellable permission-aware scan
+    const { scan, rawEntries } = await this.scanner.scan({
+      applicationId: application ? application.id : null,
+      authorizedRoots,
+      signal,
+      artificialDelayMs,
+      onProgress: (prog) => {
+        this.lastProgress = prog;
+        if (typeof onProgress === 'function') {
+          onProgress(prog);
+        }
+      }
+    });
+
+    // Index raw entries into canonical Artifact models
+    const indexedArtifacts = this.indexer.indexEntries({
+      rawEntries,
+      scanId: scan.id,
+      applicationId: application ? application.id : null,
+      workspaces
+    });
+
+    // Resolve provenance links (VERIFIED, INFERRED, UNKNOWN) & multi-session sharing
+    const provenanceResult = this.provenanceEngine.analyzeProvenance({
+      artifacts: indexedArtifacts,
+      application,
+      workspaces,
+      sessions: parsedRecords.sessions,
+      operations: parsedRecords.operations
+    });
+
+    // Classify artifact types and risk levels (LOW, REVIEW, HIGH, PROTECTED)
+    const classificationResult = this.classificationEngine.classifyArtifacts({
+      artifacts: provenanceResult.artifacts,
+      application
+    });
+
+    // Build Knowledge Graph & Space Treemap
+    const graph = this.graphEngine.buildKnowledgeGraph({
+      application,
+      workspaces,
+      sessions: parsedRecords.sessions,
+      operations: parsedRecords.operations,
+      artifacts: classificationResult.artifacts,
+      artifactGroups: classificationResult.artifactGroups,
+      provenanceEdges: provenanceResult.provenanceEdges,
+      unknownOriginNodeId: provenanceResult.unknownOriginNodeId
+    });
+
+    // Persist snapshot in SQLite
+    this.sqliteStore.saveSnapshot({
+      application,
+      workspaces,
+      sessions: parsedRecords.sessions,
+      operations: parsedRecords.operations,
+      scan,
+      artifacts: classificationResult.artifacts,
+      artifactGroups: classificationResult.artifactGroups,
+      evidence: provenanceResult.evidence,
+      provenanceEdges: provenanceResult.provenanceEdges,
+      recommendations: classificationResult.recommendations
+    });
+
+    this.activeState = {
+      application,
+      workspaces,
+      sessions: parsedRecords.sessions,
+      operations: parsedRecords.operations,
+      scan,
+      artifacts: classificationResult.artifacts,
+      artifactGroups: classificationResult.artifactGroups,
+      provenanceEdges: provenanceResult.provenanceEdges,
+      evidence: provenanceResult.evidence,
+      recommendations: classificationResult.recommendations,
+      malformedRecords: parsedRecords.malformedRecords,
+      unknownOriginNodeId: provenanceResult.unknownOriginNodeId,
+      graph,
+      authorizedRoots,
+      isDemoEnvironment: this.activeState.isDemoEnvironment
+    };
+
+    return this.activeState;
+  }
+
+  cancelActiveScan() {
+    if (this.currentScanAbortController) {
+      this.currentScanAbortController.abort();
+      return { cancelled: true };
+    }
+    return { cancelled: false };
+  }
+
+  inspectNodeProvenance(nodeId) {
+    if (!this.activeState.graph) {
+      return null;
+    }
+    return this.graphEngine.traceProvenancePaths(this.activeState.graph, nodeId);
+  }
+
+  prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {
+    const selected = this.activeState.artifacts.filter(
+      (a) => artifactIds.includes(a.id) && !a.quarantined
+    );
+    return this.cleanupEngine.prepareCleanupReview({
+      artifacts: selected,
+      authorizedRoots: this.activeState.authorizedRoots,
+      allowHighRiskSingleOverride
+    });
+  }
+
+  executeQuarantine({ artifactIds = [], confirmationToken, allowHighRiskSingleOverride = false }) {
+    const selected = this.activeState.artifacts.filter(
+      (a) => artifactIds.includes(a.id) && !a.quarantined
+    );
+    const result = this.cleanupEngine.executeQuarantine({
+      artifacts: selected,
+      authorizedRoots: this.activeState.authorizedRoots,
+      confirmationToken,
+      allowHighRiskSingleOverride
+    });
+
+    // Refresh Knowledge Graph and Treemap after quarantining items
+    this.rebuildActiveGraph();
+    return {
+      ...result,
+      updatedGraph: this.activeState.graph,
+      quarantineEntries: this.sqliteStore.listQuarantineEntries()
+    };
+  }
+
+  restoreQuarantineEntry({ entryId, conflictStrategy }) {
+    const result = this.cleanupEngine.restoreQuarantineEntry({
+      entryId,
+      conflictStrategy
+    });
+
+    // Unmark artifact in activeState if present and refresh graph
+    const entry = this.sqliteStore.getQuarantineEntryById(entryId);
+    if (entry) {
+      const art = this.activeState.artifacts.find((a) => a.id === entry.artifactId);
+      if (art && result.restoredToPath === art.canonicalPath) {
+        art.quarantined = false;
+      }
+    }
+    this.rebuildActiveGraph();
+
+    return {
+      ...result,
+      updatedGraph: this.activeState.graph,
+      quarantineEntries: this.sqliteStore.listQuarantineEntries()
+    };
+  }
+
+  rebuildActiveGraph() {
+    if (!this.activeState.artifacts) {
+      return;
+    }
+    const activeArtifacts = this.activeState.artifacts.filter((a) => !a.quarantined);
+    const classificationResult = this.classificationEngine.classifyArtifacts({
+      artifacts: activeArtifacts,
+      application: this.activeState.application
+    });
+    this.activeState.artifactGroups = classificationResult.artifactGroups;
+    this.activeState.graph = this.graphEngine.buildKnowledgeGraph({
+      application: this.activeState.application,
+      workspaces: this.activeState.workspaces,
+      sessions: this.activeState.sessions,
+      operations: this.activeState.operations,
+      artifacts: this.activeState.artifacts,
+      artifactGroups: this.activeState.artifactGroups,
+      provenanceEdges: this.activeState.provenanceEdges,
+      unknownOriginNodeId: this.activeState.unknownOriginNodeId
+    });
+  }
+}
