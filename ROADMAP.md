@@ -46,7 +46,7 @@
 ### Milestone 8 — Cross-Platform Native Packaging (In Progress)
 - [x] Self-contained `ArtifactAtlas.app` with bundled Node.js runtime, loopback-only token-protected backend, and managed child-process lifecycle.
 - [x] Reproducible `scripts/package-macos.sh` (`.app`, `.dmg`, `.zip`, SHA-256) + `scripts/verify-macos-bundle.sh`; macOS CI workflow and manual-only release workflow.
-- [ ] Green macOS CI run producing verified arm64 artifacts.
+- [x] Green macOS CI run producing verified arm64 `.app`, `.dmg`, and `.zip` artifacts (`PACKAGED_APP_WORKFLOW_VERIFIED: OK`).
 - [ ] Separate Intel (`x86_64`) / Universal builds validated on CI.
 - [ ] Developer ID signing & notarization (needs Apple credentials as repository secrets).
 - Add Windows (`%APPDATA%` / `%LOCALAPPDATA%`) and Linux (`$XDG_CONFIG_HOME` / `$XDG_CACHE_HOME`) platform path adapters on top of the existing `PlatformServices` abstraction.
