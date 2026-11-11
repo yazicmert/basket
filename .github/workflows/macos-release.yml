@@ -56,7 +56,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: ./scripts/package-macos.sh
+        run: |
+          # CFBundleShortVersionString must be numeric (e.g. 0.2.0), so strip a leading "v" from the tag.
+          export APP_VERSION="${APP_VERSION#v}"
+          ./scripts/package-macos.sh
 
       - name: Verify Mounted DMG & Read-Only End-to-End Workflow
         run: ./scripts/verify-macos-bundle.sh

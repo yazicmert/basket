@@ -20,6 +20,21 @@ permissions:
   contents: read
 
 jobs:
+  portable-core-linux:
+    name: Portable Core Tests (Linux, Node 24)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run Portable Core & Loopback Security Tests
+        run: npm test
+
   build-and-package-macos:
     name: Build & Verify ArtifactAtlas.app (.dmg & .zip)
     runs-on: macos-14
