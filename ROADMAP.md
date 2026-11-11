@@ -43,6 +43,10 @@
 - Add validated adapters for **Windsurf**, **Continue.dev**, **Aider** (`.aider.chat.history.md`), **Zed AI**, **Ollama** (`~/.ollama/models` blob/manifest deduplication), and **LM Studio** (`~/.cache/lm-studio`).
 - Content-addressable weight blob awareness so shared GGUF/Safetensors layers across multiple model manifests are visualized accurately.
 
-### Milestone 8 — Cross-Platform Native Packaging
-- Package signed & notarized macOS Universal `.dmg` bundle (`arm64` + `x86_64`).
+### Milestone 8 — Cross-Platform Native Packaging (In Progress)
+- [x] Self-contained `ArtifactAtlas.app` with bundled Node.js runtime, loopback-only token-protected backend, and managed child-process lifecycle.
+- [x] Reproducible `scripts/package-macos.sh` (`.app`, `.dmg`, `.zip`, SHA-256) + `scripts/verify-macos-bundle.sh`; macOS CI workflow and manual-only release workflow.
+- [ ] Green macOS CI run producing verified arm64 artifacts.
+- [ ] Separate Intel (`x86_64`) / Universal builds validated on CI.
+- [ ] Developer ID signing & notarization (needs Apple credentials as repository secrets).
 - Add Windows (`%APPDATA%` / `%LOCALAPPDATA%`) and Linux (`$XDG_CONFIG_HOME` / `$XDG_CACHE_HOME`) platform path adapters on top of the existing `PlatformServices` abstraction.

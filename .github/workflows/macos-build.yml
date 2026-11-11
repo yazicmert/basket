@@ -15,6 +15,10 @@ on:
         description: "Target macOS architecture (arm64, x86_64, or universal)"
         required: false
         default: "arm64"
+      macos_runner:
+        description: "macOS runner label (e.g. macos-14, macos-15, macos-latest, or a self-hosted label)"
+        required: false
+        default: "macos-14"
 
 permissions:
   contents: read
@@ -37,7 +41,7 @@ jobs:
 
   build-and-package-macos:
     name: Build & Verify ArtifactAtlas.app (.dmg & .zip)
-    runs-on: macos-14
+    runs-on: ${{ inputs.macos_runner || 'macos-14' }}
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
       APP_VERSION: "0.2.0"

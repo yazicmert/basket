@@ -136,6 +136,15 @@ flowchart TD
 ### 3.11 `DesktopUI` (`src/ui/` & `Sources/ArtifactAtlasApp/`)
 - Minimal empty workspace dropzone → live scan progress drawer → interactive Obsidian-inspired Knowledge Graph & Space Treemap → right-hand Provenance & Evidence Inspector → bottom contextual action bar (`Inspect`, `Reveal in Finder`, `Select Related`, `Delete / Move to Quarantine`) → Confirmation Modal & Quarantine Vault manager.
 
+### 3.12 Packaged macOS Application (`Sources/ArtifactAtlasApp/`, `Sources/ArtifactAtlasCore/Services/BackendProcessManager.swift`, `scripts/package-macos.sh`)
+- `ArtifactAtlas.app` is a native SwiftUI shell (`WKWebView`) around the real portable core. The bundle ships a pinned Node.js runtime (`Contents/Resources/runtime/node`) and the core sources (`Contents/Resources/app/src`), so end users don't need to install Node, Swift, Xcode or npm, and the app works offline.
+- On launch, `BackendProcessManager` starts `node src/cli.js serve --port 0 --data-dir <AppSupport> --api-token <random> --parent-pid <pid> --watch-stdin`, then waits for the `ATLAS_SERVER_READY:{…}` line on stdout.
+- **Loopback & API protection:** the server binds `127.0.0.1` only and rejects non-loopback peers. It checks the `Host` header (DNS-rebinding guard) and `Origin` / `Sec-Fetch-Site` (CSRF guard), and every `/api/*` call except `/api/health` needs a per-launch random token (`X-Atlas-Token` header, HttpOnly SameSite=Strict cookie, or the initial `?token=`).
+- **Lifecycle:** quitting the app closes the child's stdin, sends `SIGTERM`, and sends `SIGKILL` after 2 s. The backend also exits on its own if the parent PID disappears or stdin closes, so crashes don't leave orphaned servers.
+- Native drag-and-drop and `NSOpenPanel` pickers pass paths to the web UI through `window.handleNativeMacOSAppDrop` / `window.handleNativeMacOSWorkspacePicked`. Dropped `.app` bundles are still only inspected through static `Info.plist` metadata.
+- `ArtifactAtlasApp --verify-workflow` is a headless self-test for packaged builds. Against an isolated fixture sandbox it runs: start the backend → check that an unauthenticated call gets 401 → identify the app → scan → trace provenance → review → quarantine → restore → check the child process has exited. CI runs it on both `dist/ArtifactAtlas.app` and the copy mounted from the DMG.
+- `scripts/package-macos.sh` produces `dist/ArtifactAtlas.app`, `ArtifactAtlas-macOS.dmg`, `ArtifactAtlas-macOS.zip` and `SHA256SUMS.txt`. It uses ad-hoc signing by default. When the secrets are provided as environment variables, it switches to Developer ID signing with hardened runtime, plus notarization and stapling.
+
 ---
 
 ## 4. Future Live Monitoring Interface (`LiveMonitorProvider`)
