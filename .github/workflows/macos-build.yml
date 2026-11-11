@@ -1,0 +1,92 @@
+name: macOS Build, Test & Package DMG
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "release/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      target_arch:
+        description: "Target macOS architecture (arm64, x86_64, or universal)"
+        required: false
+        default: "arm64"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-package-macos:
+    name: Build & Verify ArtifactAtlas.app (.dmg & .zip)
+    runs-on: macos-14
+    env:
+      TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
+      APP_VERSION: "0.2.0"
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Standalone Node.js Runtime (v22 LTS with node:sqlite)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+
+      - name: Inspect macOS Toolchain Versions
+        run: |
+          sw_vers
+          uname -a
+          swift --version
+          node -v
+
+      - name: Run Portable Core & Loopback Security Tests
+        run: npm test
+
+      - name: Run Native macOS Swift XCTest Suite
+        run: swift test
+
+      - name: Build Self-Contained ArtifactAtlas.app, DMG, ZIP & SHA-256 Checksums
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: ./scripts/package-macos.sh
+
+      - name: Verify Mounted DMG & Read-Only End-to-End Workflow
+        run: ./scripts/verify-macos-bundle.sh
+
+      - name: Upload ArtifactAtlas-macOS.dmg Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtifactAtlas-macOS-dmg
+          path: |
+            dist/ArtifactAtlas-macOS.dmg
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload ArtifactAtlas-macOS.zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtifactAtlas-macOS-zip
+          path: |
+            dist/ArtifactAtlas-macOS.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Combined Release Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtifactAtlas-macOS-release-bundle
+          path: |
+            dist/ArtifactAtlas-macOS.dmg
+            dist/ArtifactAtlas-macOS.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

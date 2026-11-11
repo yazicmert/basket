@@ -55,8 +55,21 @@ function showToast(message) {
   }, 3800);
 }
 
+function getLocalApiToken() {
+  const meta = document.querySelector('meta[name="atlas-api-token"]');
+  if (meta && meta.content) {
+    return meta.content;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return params.get('token') || '';
+}
+
 async function apiRequest(path, method = 'GET', body = null) {
+  const token = getLocalApiToken();
   const opts = { method, headers: {} };
+  if (token) {
+    opts.headers['X-Atlas-Token'] = token;
+  }
   if (body !== null) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -74,6 +87,22 @@ async function apiRequest(path, method = 'GET', body = null) {
    ========================================================================= */
 
 async function initApp() {
+  // Expose hooks for the native macOS SwiftUI + WKWebView host application
+  window.handleNativeMacOSAppDrop = (bundlePath) => {
+    if (bundlePath) {
+      handleDroppedOrSelectedBundle(String(bundlePath).trim());
+    }
+  };
+  window.handleNativeMacOSWorkspacePicked = (workspacePath) => {
+    if (workspacePath) {
+      uiState.pendingWorkspacePath = String(workspacePath).trim();
+      executeScan({
+        bundlePath: uiState.pendingBundlePath || null,
+        workspacePath: uiState.pendingWorkspacePath
+      });
+    }
+  };
+
   bindTopBarEvents();
   bindDropzoneEvents();
   bindExplorerControls();

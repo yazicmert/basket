@@ -12,23 +12,80 @@ const command = args[0] || 'serve';
 
 function parseFlagValue(flagName, defaultValue) {
   const idx = args.indexOf(flagName);
-  if (idx !== -1 && args[idx + 1]) {
+  if (idx !== -1 && args[idx + 1] !== undefined) {
     return args[idx + 1];
   }
   return defaultValue;
 }
 
-async function runServe() {
-  const port = Number(parseFlagValue('--port', process.env.PORT || 4310));
-  const homeDir = parseFlagValue('--home', null);
-  const { server, demoEnv } = createAtlasServer({ homeDir });
+function hasFlag(flagName) {
+  return args.includes(flagName);
+}
 
+async function runServe() {
+  const rawPort = parseFlagValue('--port', process.env.PORT ?? '4310');
+  const port = Number(rawPort);
+  const homeDir = parseFlagValue('--home', null);
+  const dataDir = parseFlagValue('--data-dir', process.env.ATLAS_DATA_DIR || null);
+  const apiToken = parseFlagValue('--api-token', process.env.ATLAS_API_TOKEN || null);
+  const parentPid = Number(parseFlagValue('--parent-pid', process.env.ATLAS_PARENT_PID || 0));
+  const watchStdin = hasFlag('--watch-stdin');
+
+  const { server, demoEnv, sessionToken, shutdown } = createAtlasServer({
+    homeDir,
+    dataDir,
+    apiToken
+  });
+
+  let shuttingDown = false;
+  const gracefulExit = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await shutdown();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', gracefulExit);
+  process.on('SIGINT', gracefulExit);
+  process.on('SIGHUP', gracefulExit);
+
+  if (watchStdin) {
+    process.stdin.resume();
+    process.stdin.on('end', gracefulExit);
+    process.stdin.on('close', gracefulExit);
+  }
+
+  if (parentPid > 0) {
+    const timer = setInterval(() => {
+      try {
+        process.kill(parentPid, 0);
+      } catch {
+        clearInterval(timer);
+        gracefulExit();
+      }
+    }, 1500);
+    timer.unref();
+  }
+
+  // Always bind strictly to loopback 127.0.0.1 (Requirement 8)
   server.listen(port, '127.0.0.1', () => {
+    const addr = server.address();
+    const actualPort = addr && typeof addr === 'object' ? addr.port : port;
+    const readyPayload = {
+      port: actualPort,
+      host: '127.0.0.1',
+      url: `http://127.0.0.1:${actualPort}`,
+      pid: process.pid
+    };
+
+    // Machine-readable readiness line for the native macOS Swift app launcher
+    console.log(`ATLAS_SERVER_READY:${JSON.stringify(readyPayload)}`);
     console.log('===================================================================');
     console.log('  Artifact Atlas — AI Artifact Provenance & Cleanup Explorer');
     console.log('===================================================================');
-    console.log(`  Local Desktop UI:   http://localhost:${port}`);
+    console.log(`  Local Desktop UI:   http://127.0.0.1:${actualPort}`);
     console.log(`  Sandbox Workspace:  ${demoEnv.workspaceDir}`);
+    console.log(`  Loopback Auth:      Active (Token Protected)`);
     console.log(`  Available .apps:    Claude.app, Cursor.app, Codex.app, NebulaSketch.app`);
     console.log('===================================================================');
   });
@@ -87,6 +144,7 @@ async function runVerticalSliceDemo() {
       conflictStrategy: RestoreConflictStrategy.FAIL_IF_EXISTS
     });
     console.log(`   -> Restored to: ${rRes.restoredToPath}`);
+    service.sqliteStore.close();
     console.log('\nVertical slice completed and verified successfully.');
   } finally {
     fs.rmSync(sandboxDir, { recursive: true, force: true });
@@ -116,6 +174,7 @@ async function runCliScan() {
       ` - [${art.cleanupClassification}] [${art.provenanceConfidence}] (${art.artifactType}) ${art.canonicalPath} (${art.sizeBytes} B)`
     );
   }
+  service.sqliteStore.close();
 }
 
 if (command === 'serve') {

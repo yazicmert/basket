@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { createAtlasServer } from '../src/ui/server.js';
 
 test('HTTP Desktop UI Server & REST API end-to-end integration test', async () => {
@@ -11,14 +12,16 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
+  assert.equal(address.address, '127.0.0.1', 'Server must bind strictly to loopback 127.0.0.1');
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    // 1. Verify UI HTML serves cleanly
+    // 1. Verify UI HTML serves cleanly and injects atlas-api-token meta tag
     const htmlRes = await fetch(`${baseUrl}/`);
     assert.equal(htmlRes.status, 200);
     const htmlText = await htmlRes.text();
     assert.ok(htmlText.includes('Drop an AI application to explore its artifacts.'));
+    assert.ok(htmlText.includes('meta name="atlas-api-token"'));
 
     // 2. Verify /api/bootstrap
     const bootRes = await fetch(`${baseUrl}/api/bootstrap`);
@@ -101,5 +104,89 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     await new Promise((resolve) => server.close(resolve));
     service.sqliteStore.close();
     fs.rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test('Local API protection: enforces X-Atlas-Token authentication and blocks cross-origin CSRF', async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-sec-test-'));
+  const secretToken = 'test_secret_token_998877';
+  const { server, shutdown } = createAtlasServer({
+    sandboxRoot,
+    apiToken: secretToken,
+    enforceToken: true
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    // 1. Unauthenticated /api/bootstrap must fail with 401
+    const unauthRes = await fetch(`${baseUrl}/api/bootstrap`);
+    assert.equal(unauthRes.status, 401);
+
+    // 2. Authenticated /api/bootstrap with X-Atlas-Token succeeds
+    const authRes = await fetch(`${baseUrl}/api/bootstrap`, {
+      headers: { 'X-Atlas-Token': secretToken }
+    });
+    assert.equal(authRes.status, 200);
+
+    // 3. Cross-origin request with Origin: https://evil.example.com must fail with 403
+    const csrfRes = await fetch(`${baseUrl}/api/bootstrap`, {
+      headers: {
+        'X-Atlas-Token': secretToken,
+        Origin: 'https://evil.example.com'
+      }
+    });
+    assert.equal(csrfRes.status, 403);
+  } finally {
+    await shutdown();
+    fs.rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test('Spawned backend lifecycle: starts on loopback port 0 and shuts down cleanly when stdin closes', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-spawn-test-'));
+  const cliPath = path.resolve('src/cli.js');
+
+  const child = spawn(
+    process.execPath,
+    [cliPath, 'serve', '--port', '0', '--data-dir', dataDir, '--api-token', 'spawn_tok_123', '--watch-stdin'],
+    { stdio: ['pipe', 'pipe', 'pipe'] }
+  );
+
+  try {
+    const readyPayload = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Timed out waiting for ATLAS_SERVER_READY')), 8000);
+      let buffer = '';
+      child.stdout.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        for (const line of buffer.split('\n')) {
+          if (line.startsWith('ATLAS_SERVER_READY:')) {
+            clearTimeout(timeout);
+            resolve(JSON.parse(line.slice('ATLAS_SERVER_READY:'.length)));
+          }
+        }
+      });
+      child.on('error', reject);
+    });
+
+    assert.equal(readyPayload.host, '127.0.0.1');
+    assert.ok(readyPayload.port > 0);
+
+    const healthRes = await fetch(`${readyPayload.url}/api/health`);
+    assert.equal(healthRes.status, 200);
+
+    // Closing stdin simulates the parent macOS app exiting
+    const exitPromise = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+    child.stdin.end();
+    const exitCode = await exitPromise;
+    assert.equal(exitCode, 0);
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // Already exited
+    }
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,6 @@
 {
   "name": "artifact-atlas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Artifact Atlas — Local-First AI Artifact Provenance & Cleanup Explorer",
   "license": "MIT",
   "type": "module",
@@ -16,6 +16,8 @@
     "demo": "node src/cli.js demo",
     "scan": "node src/cli.js scan",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/cli.js && node --test tests/*.test.js"
+    "check": "node --check src/cli.js && node --test tests/*.test.js",
+    "package:macos": "./scripts/package-macos.sh",
+    "verify:macos": "./scripts/verify-macos-bundle.sh"
   }
 }

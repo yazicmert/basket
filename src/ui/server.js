@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ArtifactAtlasService } from '../atlas-service.js';
 import { createDeterministicDemoEnvironment } from '../fixtures/demo-environment.js';
@@ -16,17 +17,42 @@ const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml'
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.icns': 'application/octet-stream'
 };
 
+function parseCookies(cookieHeader = '') {
+  const out = {};
+  if (!cookieHeader) return out;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx > 0) {
+      const k = part.slice(0, idx).trim();
+      const v = part.slice(idx + 1).trim();
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export function createAtlasServer(options = {}) {
-  const sandboxRoot =
-    options.sandboxRoot || path.join(os.tmpdir(), 'artifact-atlas-live-workspace');
+  const defaultBaseDir =
+    options.dataDir ||
+    process.env.ATLAS_DATA_DIR ||
+    path.join(os.tmpdir(), 'artifact-atlas-live-workspace');
+
+  const sandboxRoot = options.sandboxRoot || path.join(defaultBaseDir, 'sandbox');
   const demoEnv = createDeterministicDemoEnvironment(sandboxRoot);
 
-  const dbPath = options.dbPath || path.join(sandboxRoot, 'atlas-index.sqlite');
+  const dbPath = options.dbPath || path.join(defaultBaseDir, 'atlas-index.sqlite');
   const quarantineRoot =
-    options.quarantineRoot || path.join(sandboxRoot, 'quarantine-vault');
+    options.quarantineRoot || path.join(defaultBaseDir, 'quarantine-vault');
+
+  // Local API security token (Requirement 8)
+  const explicitToken = options.apiToken || process.env.ATLAS_API_TOKEN || null;
+  const sessionToken = explicitToken || crypto.randomBytes(24).toString('hex');
+  const enforceStrictToken = Boolean(explicitToken || options.enforceToken);
 
   const service = new ArtifactAtlasService({
     homeDir: options.homeDir || demoEnv.homeDir,
@@ -82,11 +108,14 @@ export function createAtlasServer(options = {}) {
     return bundles;
   };
 
-  const sendJson = (res, statusCode, payload) => {
+  const sendJson = (res, statusCode, payload, extraHeaders = {}) => {
     const body = JSON.stringify(payload);
     res.writeHead(statusCode, {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store'
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'SAMEORIGIN',
+      ...extraHeaders
     });
     res.end(body);
   };
@@ -114,15 +143,103 @@ export function createAtlasServer(options = {}) {
       req.on('error', reject);
     });
 
+  /**
+   * Verifies that requests originate locally (loopback Host, non-cross-site Origin,
+   * and valid session token when strict token protection is active).
+   */
+  const verifyLocalRequestSecurity = (req, url) => {
+    // 1. Verify socket remote address is loopback (127.0.0.1 or ::1)
+    const remoteAddr = req.socket?.remoteAddress || '';
+    if (
+      remoteAddr &&
+      remoteAddr !== '127.0.0.1' &&
+      remoteAddr !== '::1' &&
+      remoteAddr !== '::ffff:127.0.0.1'
+    ) {
+      return { allowed: false, status: 403, error: 'FORBIDDEN_NON_LOOPBACK_CLIENT' };
+    }
+
+    // 2. DNS Rebinding Guard: Host header must be localhost or 127.0.0.1
+    const hostHeader = String(req.headers.host || '').toLowerCase();
+    if (
+      hostHeader &&
+      !hostHeader.startsWith('127.0.0.1') &&
+      !hostHeader.startsWith('localhost') &&
+      !hostHeader.startsWith('[::1]')
+    ) {
+      return { allowed: false, status: 403, error: 'FORBIDDEN_HOST_HEADER' };
+    }
+
+    // 3. Cross-Origin CSRF Guard: block cross-origin browser requests
+    const originHeader = req.headers.origin;
+    if (originHeader) {
+      try {
+        const parsedOrigin = new URL(originHeader);
+        if (
+          parsedOrigin.hostname !== '127.0.0.1' &&
+          parsedOrigin.hostname !== 'localhost' &&
+          parsedOrigin.protocol !== 'file:'
+        ) {
+          return { allowed: false, status: 403, error: 'FORBIDDEN_CROSS_ORIGIN_REQUEST' };
+        }
+      } catch {
+        return { allowed: false, status: 403, error: 'INVALID_ORIGIN_HEADER' };
+      }
+    }
+
+    if (req.headers['sec-fetch-site'] === 'cross-site') {
+      return { allowed: false, status: 403, error: 'FORBIDDEN_CROSS_SITE_FETCH' };
+    }
+
+    // 4. API Token check for /api/* routes (except /api/health)
+    if (url.pathname.startsWith('/api/') && url.pathname !== '/api/health') {
+      const headerToken = req.headers['x-atlas-token'];
+      const cookies = parseCookies(req.headers.cookie);
+      const cookieToken = cookies.atlas_token;
+      const queryToken = url.searchParams.get('token');
+      const providedToken = headerToken || cookieToken || queryToken;
+
+      if (enforceStrictToken && providedToken !== sessionToken) {
+        return {
+          allowed: false,
+          status: 401,
+          error: 'UNAUTHORIZED_LOCAL_API_TOKEN'
+        };
+      }
+    }
+
+    return { allowed: true };
+  };
+
   const server = http.createServer(async (req, res) => {
     try {
-      const url = new URL(req.url, 'http://localhost');
+      const url = new URL(req.url, 'http://127.0.0.1');
+
+      const securityCheck = verifyLocalRequestSecurity(req, url);
+      if (!securityCheck.allowed) {
+        return sendJson(res, securityCheck.status, {
+          ok: false,
+          error: securityCheck.error
+        });
+      }
+
+      // Lightweight readiness endpoint for macOS app launcher
+      if (url.pathname === '/api/health' && req.method === 'GET') {
+        return sendJson(res, 200, {
+          ok: true,
+          status: 'ready',
+          pid: process.pid,
+          platform: process.platform,
+          arch: process.arch
+        });
+      }
 
       // API routes
       if (url.pathname === '/api/bootstrap' && req.method === 'GET') {
         return sendJson(res, 200, {
           ok: true,
           platform: process.platform,
+          arch: process.arch,
           isDemoEnvironment: service.activeState.isDemoEnvironment,
           homeDir: service.platformServices.homeDir,
           quarantineVaultLocation: service.cleanupEngine.quarantineRoot,
@@ -238,10 +355,26 @@ export function createAtlasServer(options = {}) {
 
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath).toLowerCase();
-        res.writeHead(200, {
+        const headers = {
           'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-          'Cache-Control': 'no-store'
-        });
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff'
+        };
+
+        // Inject session token cookie and meta tag into index.html
+        if (relPath === '/index.html') {
+          headers['Set-Cookie'] = `atlas_token=${sessionToken}; HttpOnly; SameSite=Strict; Path=/`;
+          const rawHtml = fs.readFileSync(filePath, 'utf8');
+          const injectedHtml = rawHtml.replace(
+            '</head>',
+            `  <meta name="atlas-api-token" content="${sessionToken}" />\n</head>`
+          );
+          res.writeHead(200, headers);
+          res.end(injectedHtml);
+          return;
+        }
+
+        res.writeHead(200, headers);
         fs.createReadStream(filePath).pipe(res);
         return;
       }
@@ -255,5 +388,29 @@ export function createAtlasServer(options = {}) {
     }
   });
 
-  return { server, service, demoEnv };
+  const shutdown = () => {
+    return new Promise((resolve) => {
+      try {
+        service.cancelActiveScan();
+      } catch {
+        // Ignore
+      }
+      server.close(() => {
+        try {
+          service.sqliteStore.close();
+        } catch {
+          // Ignore
+        }
+        resolve();
+      });
+    });
+  };
+
+  return {
+    server,
+    service,
+    demoEnv,
+    sessionToken,
+    shutdown
+  };
 }

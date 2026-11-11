@@ -1,0 +1,92 @@
+name: Publish Verified macOS Release (Manual Only)
+
+# Explicitly triggered workflow only — never publishes a public release automatically (Requirement 16).
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to publish (e.g., v0.2.0)"
+        required: true
+        type: string
+      target_arch:
+        description: "Target architecture (arm64, x86_64, or universal)"
+        required: false
+        default: "arm64"
+        type: string
+      draft:
+        description: "Create as a draft release"
+        required: false
+        default: true
+        type: boolean
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish-macos-release:
+    name: Package, Verify & Publish macOS Release
+    runs-on: macos-14
+    env:
+      TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
+      APP_VERSION: ${{ inputs.release_tag }}
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Standalone Node.js Runtime (v22 LTS with node:sqlite)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+
+      - name: Run Portable Core & Loopback Security Tests
+        run: npm test
+
+      - name: Run Native macOS Swift XCTest Suite
+        run: swift test
+
+      - name: Build Self-Contained ArtifactAtlas.app, DMG, ZIP & SHA-256 Checksums
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: ./scripts/package-macos.sh
+
+      - name: Verify Mounted DMG & Read-Only End-to-End Workflow
+        run: ./scripts/verify-macos-bundle.sh
+
+      - name: Publish Verified Assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release_tag }}
+          IS_DRAFT: ${{ inputs.draft }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          FLAGS=(--title "Artifact Atlas ${TAG}" --notes-file -)
+          if [[ "$IS_DRAFT" == "true" ]]; then
+            FLAGS+=(--draft)
+          fi
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            FLAGS+=(--prerelease)
+          fi
+
+          cat <<EOF | gh release create "$TAG" \
+            dist/ArtifactAtlas-macOS.dmg \
+            dist/ArtifactAtlas-macOS.zip \
+            dist/SHA256SUMS.txt \
+            "${FLAGS[@]}"
+          ## Artifact Atlas ${TAG} (macOS)
+
+          Self-contained macOS desktop application (`ArtifactAtlas.app`) with bundled Node.js runtime, SQLite persistence, and native SwiftUI + WebKit shell.
+
+          ### SHA-256 Checksums
+          \`\`\`
+          $(cat dist/SHA256SUMS.txt)
+          \`\`\`
+          EOF

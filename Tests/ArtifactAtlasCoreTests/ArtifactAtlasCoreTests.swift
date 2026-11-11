@@ -48,4 +48,13 @@ final class ArtifactAtlasCoreTests: XCTestCase {
         )
         XCTAssertEqual(safeTmpRisk, .low)
     }
+
+    func testProtectedPathEnforcement() {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let platform = MacOSPlatformServices(homeDirectoryURL: tempHome)
+
+        XCTAssertTrue(platform.isProtectedPath("/System/Library/CoreServices"))
+        XCTAssertTrue(platform.isProtectedPath(tempHome.appendingPathComponent(".ssh/id_ed25519").path))
+        XCTAssertFalse(platform.isProtectedPath(tempHome.appendingPathComponent("Projects/demo/index.ts").path))
+    }
 }

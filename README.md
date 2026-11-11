@@ -2,94 +2,97 @@
 
 > **Know what created a file, why it exists, whether it is still needed, and what happens if it is removed.**
 
-**Artifact Atlas** is a local-first, privacy-preserving desktop explorer that discovers, traces, visualizes, and safely manages filesystem artifacts associated with AI applications and AI-assisted development workflows (`Claude Code`, `Claude Desktop`, `Cursor`, `Codex CLI`, and generic macOS `.app` bundles).
+**Artifact Atlas** is a local-first, privacy-preserving macOS desktop application that discovers, traces, visualizes, and safely manages filesystem artifacts associated with AI applications and AI-assisted development workflows (`Claude Code`, `Claude Desktop`, `Cursor`, `Codex CLI`, and generic macOS `.app` bundles).
+
+---
+
+## Installing the Standalone macOS Application (`.dmg` / `.zip`)
+
+The packaged `ArtifactAtlas.app` is **100% self-contained** and runs completely offline. It bundles the compiled native macOS SwiftUI + WebKit executable (`Contents/MacOS/ArtifactAtlasApp`), the standalone Node.js runtime (`Contents/Resources/runtime/node` with built-in SQLite), the custom `AppIcon.icns`, and all analysis and UI modules (`Contents/Resources/app/`). **Users do not need to install Node.js, Swift, Xcode, npm, or run terminal commands.**
+
+### Installation from `ArtifactAtlas-macOS.dmg`
+1. Download `ArtifactAtlas-macOS.dmg` (and optional `SHA256SUMS.txt` to verify checksum integrity via `shasum -a 256 -c SHA256SUMS.txt`).
+2. Double-click `ArtifactAtlas-macOS.dmg` to mount the **Artifact Atlas** disk image.
+3. Drag **`ArtifactAtlas.app`** into the **`Applications`** folder shortcut.
+4. Launch **Artifact Atlas** from `/Applications` or Spotlight.
+
+### macOS Gatekeeper Notice for Ad-Hoc Signed / Unsigned Builds
+When `ArtifactAtlas-macOS.dmg` or `ArtifactAtlas-macOS.zip` is built without an Apple Developer ID certificate and Apple Notarization credentials (`APPLE_DEVELOPER_ID_APPLICATION`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`), the packaging script applies an **ad-hoc code signature** (`codesign --sign -`).
+
+Because ad-hoc signed builds are not notarized by Apple, **macOS Gatekeeper** will display an *"ArtifactAtlas.app cannot be opened because the developer cannot be verified"* or *"is damaged / from an unidentified developer"* prompt when downloaded from a web browser (which attaches the `com.apple.quarantine` extended attribute).
+
+To open an ad-hoc signed build on macOS:
+1. **Via Finder / System Settings**:
+   - **Control-click (Right-click)** `ArtifactAtlas.app` in `/Applications` and select **Open**, or
+   - Open **System Settings → Privacy & Security**, scroll down to the Security section, and click **Open Anyway** next to `ArtifactAtlas.app`.
+2. **Or remove the browser download quarantine flag**:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/ArtifactAtlas.app
+   ```
 
 ---
 
 ## Core Principles & Safety Guarantees
 
-1. **100% Local-First & Privacy-First**: No cloud accounts, no telemetry, no external AI APIs, and zero uploading of conversation histories or file contents.
-2. **Passive Application Identification**: Dropped `.app` bundles are identified strictly via static bundle metadata (`Contents/Info.plist`) and are **never executed**.
-3. **Epistemic Honesty in Provenance**:
+1. **100% Local-First & Offline**: No cloud accounts, no telemetry, no external AI APIs, and zero uploading of conversation histories or file contents.
+2. **Loopback-Only & Token-Protected Local Engine**: When `ArtifactAtlas.app` launches, [`BackendProcessManager`](file:///home/antigravity/yazicmert/basket/Sources/ArtifactAtlasCore/Services/BackendProcessManager.swift) spawns the bundled runtime bound strictly to `127.0.0.1` (`loopback`) on an ephemeral port, protected by a per-session 256-bit `X-Atlas-Token`, `SameSite=Strict` cookie, and `Host`/`Origin` CSRF guards. Closing the app immediately terminates the child process (`--watch-stdin` + `--parent-pid` + `SIGTERM`).
+3. **Passive Application Identification**: Dropped `.app` bundles are identified strictly via static bundle metadata (`Contents/Info.plist`) and are **never executed**.
+4. **Epistemic Honesty in Provenance**:
    - **`VERIFIED`**: Backed by a direct tool-invocation record in an authoritative session transcript or composer ledger (`Write`, `Edit`, `MultiEdit`, `apply_patch`), or the authoritative transcript file itself.
    - **`INFERRED`**: Backed by indirect structural evidence (e.g., dedicated application cache/log container, session ID embedded in path, or build output derived from a verified source file).
    - **`UNKNOWN`**: Unattributed files are explicitly linked to an `UNKNOWN_ORIGIN` node. **Timestamp proximity alone never fabricates a conversation-to-file link.**
-4. **Multi-Factor Risk Classification**: Filename extension alone (e.g., `.tmp` or `.log`) never grants `LOW` deletion risk. The classifier evaluates canonical directory context, Git repository proximity, provenance confidence, physical hardlinks, and multi-session sharing.
-5. **Recoverable Quarantine over Permanent Deletion**: Selecting **Delete (Move to Quarantine)** runs a 10-step pre-flight verification (re-checking inode identity, file size, modification timestamp, permissions, and symlink traversal) and moves eligible files into a managed Quarantine Vault with both a SQLite record and an on-disk `manifest.json` recovery file.
+5. **Multi-Factor Risk Classification**: Filename extension alone (e.g., `.tmp` or `.log`) never grants `LOW` deletion risk. The classifier evaluates canonical directory context, Git repository proximity, provenance confidence, physical hardlinks, and multi-session sharing.
+6. **Recoverable Quarantine over Permanent Deletion**: Selecting **Delete (Move to Quarantine)** runs a 10-step pre-flight verification (re-checking inode identity, file size, modification timestamp, permissions, and symlink traversal) and moves eligible files into a managed Quarantine Vault (`~/Library/Application Support/ArtifactAtlas/quarantine-vault`) with both a SQLite record and an on-disk `manifest.json` recovery file.
 
 ---
 
-## Quick Start (Portable Core & Interactive Desktop UI)
+## Reproducible macOS Packaging & Verification
 
-Artifact Atlas runs with **zero external npm dependencies** on **Node.js 22.5+ / 24 LTS** (using built-in `node:sqlite`, `node:fs`, `node:crypto`, `node:http`, and `node:test`).
+### Build `ArtifactAtlas.app`, `.dmg`, `.zip`, and `SHA256SUMS.txt` on macOS
+On a macOS 14+ host (`arm64` by default, or set `TARGET_ARCH=x86_64` / `TARGET_ARCH=universal`):
 
-### 1. Run Automated Safety & Integration Tests
 ```bash
+# Build, code-sign, run --verify-workflow, and package DMG + ZIP + SHA256SUMS.txt:
+npm run package:macos
+
+# Mount the DMG read-only and run full end-to-end verification from the mounted volume:
+npm run verify:macos
+```
+
+Outputs are written to `dist/`:
+- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.2.0`, Min macOS: `14.0`)
+- `dist/ArtifactAtlas-macOS.dmg` (Compressed UDZO disk image with `/Applications` drag-install link)
+- `dist/ArtifactAtlas-macOS.zip` (`ditto` archive preserving bundle signatures and permissions)
+- `dist/SHA256SUMS.txt` (SHA-256 digests for release artifacts)
+
+### Optional Developer ID Signing & Apple Notarization
+When the following environment variables (or GitHub Actions Secrets) are provided, [`scripts/package-macos.sh`](file:///home/antigravity/yazicmert/basket/scripts/package-macos.sh) automatically signs with Hardened Runtime (`--options runtime`) using [`packaging/entitlements.plist`](file:///home/antigravity/yazicmert/basket/packaging/entitlements.plist) and notarizes/staples the DMG:
+- `APPLE_DEVELOPER_ID_APPLICATION` (e.g., `"Developer ID Application: Your Name (TEAMID)"`)
+- `APPLE_ID`
+- `APPLE_TEAM_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+
+### GitHub Actions Workflows
+- **Continuous macOS Build & Artifact Upload**: [`.github/workflows/macos-build.yml`](file:///home/antigravity/yazicmert/basket/.github/workflows/macos-build.yml) runs on `macos-14` (`arm64`), executes `npm test` and `swift test`, runs `scripts/package-macos.sh` and `scripts/verify-macos-bundle.sh`, and uploads `ArtifactAtlas-macOS.dmg`, `ArtifactAtlas-macOS.zip`, and `SHA256SUMS.txt` as downloadable workflow artifacts.
+- **Explicit Manual Release Publishing**: [`.github/workflows/macos-release.yml`](file:///home/antigravity/yazicmert/basket/.github/workflows/macos-release.yml) uses `workflow_dispatch` (manual trigger only) to publish verified builds to GitHub Releases.
+
+---
+
+## Developer Quick Start (Portable Core & CLI)
+
+```bash
+# 1. Run all unit, security, and child-process lifecycle tests
 npm test
-```
 
-### 2. Run the End-to-End Vertical Slice CLI Verification
-Executes the full lifecycle (**Drop `.app` → Discover artifacts → Build graph → Inspect multi-session provenance → Review cleanup → Quarantine → Restore**) against real files on disk in an isolated temporary sandbox:
-```bash
+# 2. Run the end-to-end vertical slice CLI demonstration
 npm run demo
-```
 
-### 3. Launch the Interactive Desktop UI
-```bash
+# 3. Launch the local loopback server directly
 npm start
-# Or specify a custom port or real home directory:
-node src/cli.js serve --port 4310
-```
-Then open `http://localhost:4310` to use the interactive Empty Workspace dropzone, Obsidian-inspired Knowledge Graph, Space Treemap, Provenance Inspector, and Quarantine Vault.
 
-### 4. Scan a Specific `.app` Bundle or Project Directory from CLI
-```bash
-node src/cli.js scan /Applications/Claude.app
-node src/cli.js scan ~/Projects/my-ai-workspace
-```
-
----
-
-## Native macOS Swift Target (`SwiftUI` + `SQLite3`)
-
-For native macOS 14+ (Sonoma / Sequoia) builds using Xcode 15.4+ or Swift 5.10+:
-
-```bash
-swift build
+# 4. Run native macOS Swift XCTests (on macOS 14+)
 swift test
-swift run ArtifactAtlasApp
 ```
-
-> **Environment Note**: When developing or running CI on a Linux host without Apple's macOS SDK (`AppKit`/`SwiftUI`), use the Portable Core commands (`npm test`, `npm run demo`, `npm start`) which exercise the complete 11-module architecture against real POSIX filesystems and SQLite.
-
----
-
-## Architecture Overview
-
-The repository is structured into 11 decoupled components (documented in detail in [ARCHITECTURE.md](file:///home/antigravity/yazicmert/basket/ARCHITECTURE.md)):
-
-| Component | Portable Core (`src/`) | Native macOS (`Sources/`) | Responsibility |
-| :--- | :--- | :--- | :--- |
-| **PlatformServices** | `src/platform/platform-services.js` | `MacOSPlatformServices` | Protected path guards, `lstat`/`realpath` symlink boundaries, physical inode (`dev:ino`) keys, Finder reveal |
-| **ApplicationDiscovery** | `src/discovery/application-discovery.js` | `MacOSApplicationDiscovery` | Passive `Contents/Info.plist` parsing without executing `.app` binaries |
-| **AdapterRegistry** | `src/adapters/adapter-registry.js` | `MacOSApplicationDiscovery` | Pluggable adapters for **Claude Code**, **Cursor**, **Codex CLI**, and **Generic macOS Apps** |
-| **Scanner** | `src/scanner/scanner.js` | `ArtifactAtlasCore` | Cancellable, permission-aware walker with symlink boundary enforcement |
-| **ArtifactIndexer** | `src/indexer/artifact-indexer.js` | `ArtifactAtlasCore` | Normalizes filesystem metadata and deduplicates physical hardlinks |
-| **ProvenanceEngine** | `src/provenance/provenance-engine.js` | `ArtifactAtlasCore` | Builds `VERIFIED`, `INFERRED`, and `UNKNOWN` provenance edges and multi-session `SHARED_WITH` links |
-| **ClassificationEngine** | `src/classification/classification-engine.js` | `MacOSArtifactClassifier` | Classifies 10 artifact types and 4 risk categories (`LOW`, `REVIEW`, `HIGH`, `PROTECTED`) |
-| **GraphEngine** | `src/graph/graph-engine.js` | `ArtifactAtlasCore` | Constructs 7-node-type, 8-edge-type Knowledge Graph, path tracer, and deduplicated Space Treemap |
-| **CleanupEngine** | `src/cleanup/cleanup-engine.js` | `ArtifactAtlasCore` | 10-step pre-flight validator, Quarantine Vault mover, `manifest.json` writer, and conflict-safe restore |
-| **Persistence** | `src/persistence/sqlite-store.js` | `SQLite3` | Transactional SQLite persistence with numbered schema migrations (`schema_migrations`) |
-| **DesktopUI** | `src/ui/` (`server.js` + `public/`) | `Sources/ArtifactAtlasApp/` | Empty dropzone, interactive Knowledge Graph canvas, Space Treemap, Provenance Inspector, Quarantine Vault |
-
----
-
-## macOS Permissions & Filesystem Boundaries
-
-- **Least-Privilege Access**: Artifact Atlas does **not** require Full Disk Access by default. It scans only known application support/cache/log locations (`~/Library/Application Support/<App>`, `~/Library/Caches/<BundleID>`, `~/Library/Logs/<App>`, `~/.claude`, `~/.cursor`, `~/.codex`) and user-authorized project workspaces.
-- **Protected System & Credential Denylist**: `/System`, `/bin`, `/sbin`, `/usr`, `/etc`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/Library/Keychains`, and `.git` object stores are strictly protected from cleanup.
-- **Symlink Escape Prevention**: Every directory and file is inspected with `lstat` (not `stat`). Symlinks pointing outside authorized scan boundaries are skipped and recorded in scan diagnostics.
-- **Physical Hardlink Deduplication**: Files sharing the same physical device and inode (`${dev}:${ino}`) are flagged with shared dependency warnings and counted only once in physical byte totals.
 
 ---
 
