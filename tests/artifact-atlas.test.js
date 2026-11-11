@@ -16,7 +16,13 @@ import { ArtifactAtlasService } from '../src/atlas-service.js';
 import { createDeterministicDemoEnvironment } from '../src/fixtures/demo-environment.js';
 
 function createTempSandbox(prefix = 'artifact-atlas-test-') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const rawDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  let dir = rawDir;
+  try {
+    dir = fs.realpathSync(rawDir);
+  } catch {
+    dir = rawDir;
+  }
   return {
     dir,
     cleanup() {

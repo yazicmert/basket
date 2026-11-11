@@ -30,7 +30,7 @@ permissions:
 jobs:
   publish-macos-release:
     name: Package, Verify & Publish macOS Release
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
       APP_VERSION: ${{ inputs.release_tag }}

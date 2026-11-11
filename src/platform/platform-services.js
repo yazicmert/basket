@@ -34,7 +34,12 @@ const HOME_PROTECTED_RELATIVES = [
 
 export class PlatformServices {
   constructor(options = {}) {
-    this.homeDir = path.resolve(options.homeDir || os.homedir());
+    const rawHome = path.resolve(options.homeDir || os.homedir());
+    try {
+      this.homeDir = fs.realpathSync(rawHome);
+    } catch {
+      this.homeDir = rawHome;
+    }
     this.platform = options.platform || process.platform;
   }
 
@@ -54,18 +59,19 @@ export class PlatformServices {
    */
   isWithinAuthorizedRoots(candidatePath, authorizedRoots = []) {
     const normalizedCandidate = path.resolve(candidatePath);
+    const realCandidate = this.resolveRealPathSafe(candidatePath);
     for (const root of authorizedRoots) {
       const normalizedRoot = path.resolve(root);
-      if (
-        normalizedCandidate === normalizedRoot ||
-        normalizedCandidate.startsWith(normalizedRoot + path.sep)
-      ) {
-        return true;
-      }
       const realRoot = this.resolveRealPathSafe(root);
       if (
+        normalizedCandidate === normalizedRoot ||
+        normalizedCandidate.startsWith(normalizedRoot + path.sep) ||
         normalizedCandidate === realRoot ||
-        normalizedCandidate.startsWith(realRoot + path.sep)
+        normalizedCandidate.startsWith(realRoot + path.sep) ||
+        realCandidate === normalizedRoot ||
+        realCandidate.startsWith(normalizedRoot + path.sep) ||
+        realCandidate === realRoot ||
+        realCandidate.startsWith(realRoot + path.sep)
       ) {
         return true;
       }
@@ -190,21 +196,32 @@ export class PlatformServices {
    */
   hasSymlinkedAncestor(targetPath, authorizedRoots = []) {
     const absTarget = path.resolve(targetPath);
+    const realTarget = this.resolveRealPathSafe(targetPath);
     const matchingRoot = authorizedRoots
       .map((r) => path.resolve(r))
-      .find((r) => absTarget === r || absTarget.startsWith(r + path.sep));
+      .find((r) => {
+        const realRoot = this.resolveRealPathSafe(r);
+        return (
+          absTarget === r ||
+          absTarget.startsWith(r + path.sep) ||
+          realTarget === realRoot ||
+          realTarget.startsWith(realRoot + path.sep)
+        );
+      });
 
     if (!matchingRoot) {
       return false;
     }
 
-    const rel = path.relative(matchingRoot, absTarget);
+    const effectiveRoot = this.resolveRealPathSafe(matchingRoot);
+    const effectiveTarget = absTarget.startsWith(effectiveRoot + path.sep) ? absTarget : realTarget;
+    const rel = path.relative(effectiveRoot, effectiveTarget);
     if (!rel || rel.startsWith('..')) {
       return false;
     }
 
     const parts = rel.split(path.sep);
-    let current = matchingRoot;
+    let current = effectiveRoot;
     for (let i = 0; i < parts.length - 1; i++) {
       current = path.join(current, parts[i]);
       try {

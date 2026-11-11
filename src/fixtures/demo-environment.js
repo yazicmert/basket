@@ -14,8 +14,13 @@ import path from 'node:path';
  * Clearly labeled as a deterministic Demo / Sandbox Fixture environment.
  */
 export function createDeterministicDemoEnvironment(rootDir) {
-  const baseDir = path.resolve(rootDir);
+  let baseDir = path.resolve(rootDir);
   fs.mkdirSync(baseDir, { recursive: true });
+  try {
+    baseDir = fs.realpathSync(baseDir);
+  } catch {
+    // Keep resolved path if realpath fails
+  }
 
   const homeDir = path.join(baseDir, 'sandbox-home');
   const appsDir = path.join(baseDir, 'Applications');
