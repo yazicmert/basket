@@ -42,7 +42,7 @@ To open an ad-hoc signed build on macOS:
    - **`INFERRED`**: Backed by indirect structural evidence (e.g., dedicated application cache/log container, session ID embedded in path, or build output derived from a verified source file).
    - **`UNKNOWN`**: Unattributed files are explicitly linked to an `UNKNOWN_ORIGIN` node. **Timestamp proximity alone never fabricates a conversation-to-file link.**
 5. **Multi-Factor Risk Classification**: Filename extension alone (e.g., `.tmp` or `.log`) never grants `LOW` deletion risk. The classifier evaluates canonical directory context, Git repository proximity, provenance confidence, physical hardlinks, and multi-session sharing.
-6. **Recoverable Quarantine over Permanent Deletion**: Selecting **Delete (Move to Quarantine)** runs a 10-step pre-flight verification (re-checking inode identity, file size, modification timestamp, permissions, and symlink traversal) and moves eligible files into a managed Quarantine Vault (`~/Library/Application Support/ArtifactAtlas/quarantine-vault`) with both a SQLite record and an on-disk `manifest.json` recovery file.
+6. **Recoverable Quarantine over Permanent Deletion**: Selecting **Delete (Move to Quarantine)** runs a 10-step pre-flight verification (re-checking inode identity, file size, modification timestamp, permissions, and symlink traversal) and moves eligible files into a managed Quarantine Vault (`~/Library/Application Support/ArtifactAtlas/quarantine-vault`) with both a SQLite record and an on-disk `manifest.json` recovery file. The manifest is written before the file moves, every payload carries a SHA-256 digest, and restoring with **Replace** moves the file currently at the destination into the vault instead of overwriting it.
 
 ---
 
@@ -93,6 +93,26 @@ npm start
 # 4. Run native macOS Swift XCTests (on macOS 14+)
 swift test
 ```
+
+Requires Node.js 22.13 or newer (built-in `node:sqlite`).
+
+### Quarantine & Restore from the CLI
+
+Both commands use a persistent index and vault (`~/.artifact-atlas` by default, or `--data-dir <dir>`).
+
+```bash
+# Step 1: review only. Prints the classification, warnings, and a confirmation token; nothing moves.
+node src/cli.js quarantine ~/Library/Caches/com.example.app/blob.bin --app /Applications/Example.app
+
+# Step 2: re-run with the printed token to move the file into the Quarantine Vault.
+node src/cli.js quarantine ~/Library/Caches/com.example.app/blob.bin --app /Applications/Example.app --confirm confirm_<token>
+
+# List vault entries and restore one (FAIL_IF_EXISTS | RENAME_RESTORED | OVERWRITE_IF_EXPLICIT).
+node src/cli.js restore --list
+node src/cli.js restore qent_<id> --strategy FAIL_IF_EXISTS
+```
+
+Files with `UNKNOWN` provenance or `HIGH` risk additionally need `--allow-high-risk`, one file at a time. `--workspace <dir>` sets the scan root (defaults to the file's parent directory).
 
 ---
 

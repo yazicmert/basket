@@ -28,7 +28,7 @@ export class ArtifactAtlasService {
     });
     this.indexer = new ArtifactIndexer();
     this.provenanceEngine = new ProvenanceEngine();
-    this.classificationEngine = new ClassificationEngine();
+    this.classificationEngine = new ClassificationEngine({ platformServices: this.platformServices });
     this.graphEngine = new GraphEngine();
     this.sqliteStore = new SQLiteStore(options.dbPath || ':memory:');
     this.cleanupEngine = new CleanupEngine({

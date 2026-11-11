@@ -47,6 +47,15 @@ final class ArtifactAtlasCoreTests: XCTestCase {
             provenance: .inferred
         )
         XCTAssertEqual(safeTmpRisk, .low)
+
+        // Cache container with UNKNOWN provenance must NOT be LOW risk
+        let (cacheType, unknownCacheRisk, _, _) = classifier.classify(
+            path: "/Users/demo/Library/Caches/com.example.app/blob.bin",
+            hasSharedDependencies: false,
+            provenance: .unknown
+        )
+        XCTAssertEqual(cacheType, .regenerableCache)
+        XCTAssertNotEqual(unknownCacheRisk, .low)
     }
 
     func testProtectedPathEnforcement() {

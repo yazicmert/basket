@@ -10,6 +10,7 @@ const SYSTEM_PROTECTED_PREFIXES = [
   '/sbin',
   '/usr',
   '/etc',
+  '/private/etc',
   '/dev',
   '/proc',
   '/sys',
@@ -237,17 +238,126 @@ export class PlatformServices {
   }
 
   /**
-   * Computes SHA-256 hash of a file up to maxBytes (default 64MB) for quarantine verification.
+   * Computes the SHA-256 hash of a regular file using bounded-memory chunked reads.
+   * There is no size cutoff: every quarantined payload (including multi-GB model weights)
+   * gets an integrity digest. Returns null only when the path is not a regular file.
    */
-  computeFileSha256(filePath, maxBytes = 64 * 1024 * 1024) {
+  computeFileSha256(filePath) {
     const st = fs.lstatSync(filePath);
-    if (!st.isFile() || st.size > maxBytes) {
+    if (!st.isFile()) {
       return null;
     }
     const hash = crypto.createHash('sha256');
-    const buffer = fs.readFileSync(filePath);
-    hash.update(buffer);
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      let bytesRead;
+      while ((bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
     return hash.digest('hex');
+  }
+
+  /**
+   * lstat-based existence check: true for dangling symlinks too (fs.existsSync follows links
+   * and would report them as absent, letting a rename silently replace them).
+   */
+  entryExists(targetPath) {
+    try {
+      fs.lstatSync(targetPath);
+      return true;
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Moves a regular file without ever overwriting an existing destination and without losing
+   * the source: same-volume moves are an atomic rename; cross-volume moves (EXDEV) copy with
+   * COPYFILE_EXCL, verify the copy's SHA-256 against the source digest, and only then unlink
+   * the source. A failed or mismatching copy is removed and the source is left untouched.
+   */
+  moveFileNoClobber(sourcePath, destinationPath, expectedSha256 = null) {
+    if (this.entryExists(destinationPath)) {
+      const err = new Error(`MOVE_DESTINATION_EXISTS: '${destinationPath}' already exists.`);
+      err.code = 'EEXIST';
+      throw err;
+    }
+    try {
+      fs.renameSync(sourcePath, destinationPath);
+      return { method: 'RENAME' };
+    } catch (err) {
+      if (err.code !== 'EXDEV') {
+        throw err;
+      }
+    }
+
+    const sourceStat = fs.lstatSync(sourcePath);
+    const sourceSha = expectedSha256 || this.computeFileSha256(sourcePath);
+    fs.copyFileSync(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
+    let copySha = null;
+    try {
+      copySha = this.computeFileSha256(destinationPath);
+    } catch {
+      copySha = null;
+    }
+    if (!sourceSha || copySha !== sourceSha) {
+      fs.rmSync(destinationPath, { force: true });
+      const err = new Error(
+        'MOVE_COPY_VERIFICATION_FAILED: Cross-volume copy did not match the source SHA-256; source left in place.'
+      );
+      err.code = 'ECOPYVERIFY';
+      throw err;
+    }
+    try {
+      fs.utimesSync(destinationPath, sourceStat.atime, sourceStat.mtime);
+      fs.chmodSync(destinationPath, sourceStat.mode & 0o7777);
+    } catch {
+      // Metadata preservation is best-effort on non-POSIX mounts
+    }
+    fs.unlinkSync(sourcePath);
+    return { method: 'COPY_VERIFY_UNLINK' };
+  }
+
+  /**
+   * Returns the nearest ancestor directory (inclusive) that contains a `.git` entry
+   * (directory, or gitfile for worktrees/submodules), or null. Uses lstat only.
+   */
+  findGitRepositoryRoot(startDir, cache = null) {
+    const visited = [];
+    let current = path.resolve(startDir);
+    let found = null;
+    for (;;) {
+      if (cache && cache.has(current)) {
+        found = cache.get(current);
+        break;
+      }
+      visited.push(current);
+      try {
+        fs.lstatSync(path.join(current, '.git'));
+        found = current;
+        break;
+      } catch {
+        // No .git here; keep walking up
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        break;
+      }
+      current = parent;
+    }
+    if (cache) {
+      for (const dir of visited) {
+        cache.set(dir, found);
+      }
+    }
+    return found;
   }
 
   /**

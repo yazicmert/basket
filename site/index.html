@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Artifact Atlas — AI Artifact Provenance &amp; Cleanup Explorer</title>
+<meta name="description" content="Local-first macOS app that shows which AI coding session created each file on your disk, and cleans up safely through a recoverable quarantine." />
+<style>
+  :root {
+    --bg: #0d1016; --panel: #151a23; --border: #262d3a; --text: #e8ecf3; --muted: #9aa5b8;
+    --accent: #2dd4bf; --accent-ink: #06211d; --warn: #fbbf24;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f7f8fa; --panel: #ffffff; --border: #dde2ea; --text: #151a23; --muted: #566175;
+      --accent: #0f9c8b; --accent-ink: #ffffff; --warn: #a16207; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 0 16px 64px; }
+  header { padding: 56px 0 28px; }
+  .brand { font-weight: 600; color: var(--accent); letter-spacing: .02em; }
+  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.15; margin: 10px 0 14px; letter-spacing: -.02em; }
+  .lead { color: var(--muted); font-size: 18px; max-width: 46em; margin: 0 0 26px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-block; padding: 11px 20px; border-radius: 9px; text-decoration: none; font-weight: 600;
+    border: 1px solid var(--border); color: var(--text); background: var(--panel); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .note { color: var(--muted); font-size: 14px; margin-top: 12px; }
+  .shot { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: 12px; margin: 30px 0 8px; }
+  h2 { font-size: 22px; margin: 44px 0 14px; letter-spacing: -.01em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 18px 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  ol { padding-left: 22px; } li { margin: 6px 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; overflow-x: auto; }
+  .warn { border-left: 3px solid var(--warn); padding: 2px 0 2px 14px; color: var(--muted); }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">Artifact Atlas</div>
+    <h1>Know which AI session created every file, before you delete it.</h1>
+    <p class="lead">
+      Artifact Atlas is a local-first macOS app that maps the files left behind by Claude Code, Cursor,
+      Codex CLI and other apps to the conversations and tool calls that produced them, then lets you
+      clean up through a recoverable quarantine instead of permanent deletion.
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/yazicmert/basket/releases">Download for macOS</a>
+      <a class="btn" href="https://github.com/yazicmert/basket">Source on GitHub</a>
+    </div>
+    <p class="note">macOS 14 or newer, Apple silicon. Runs fully offline; nothing leaves your Mac.</p>
+  </header>
+
+  <img class="shot" src="screenshot.png" width="1360" height="820"
+       alt="Artifact Atlas knowledge graph linking an AI application, its sessions and tool calls to the files they created, colored by cleanup risk." />
+
+  <h2>What it does</h2>
+  <div class="grid">
+    <div class="card"><h3>Traces provenance honestly</h3>
+      <p>A link is VERIFIED only when a session's tool ledger names the file. Indirect evidence is INFERRED, and everything else is shown as UNKNOWN origin. Timestamps alone never create a link.</p></div>
+    <div class="card"><h3>Classifies cleanup risk by context</h3>
+      <p>Risk comes from the directory, Git repository, provenance and sharing, never the file extension alone. Source code, credentials, transcripts and model weights are never low risk.</p></div>
+    <div class="card"><h3>Never deletes permanently</h3>
+      <p>Cleanup moves files into a Quarantine Vault with a SHA-256 digest and a manifest written before the move. Anything can be restored, and restoring never overwrites another file.</p></div>
+    <div class="card"><h3>Reads, never runs</h3>
+      <p>Apps are identified from their static bundle metadata. Scanned applications are never executed, and symlinks are never followed outside the folders you authorized.</p></div>
+    <div class="card"><h3>Shows real disk usage</h3>
+      <p>A graph and a treemap show where space goes. Hardlinked files are counted once, so reclaimable sizes are physical, not inflated.</p></div>
+    <div class="card"><h3>Keeps conversations private</h3>
+      <p>Only structural metadata is indexed: session IDs, timestamps, tool names and file paths. Prompts and replies are never stored.</p></div>
+  </div>
+
+  <h2>Install</h2>
+  <ol>
+    <li>Download <code>ArtifactAtlas-macOS.dmg</code> and open it.</li>
+    <li>Drag <strong>ArtifactAtlas.app</strong> into <strong>Applications</strong>.</li>
+    <li>The first time, Control-click the app and choose <strong>Open</strong>.</li>
+  </ol>
+  <p class="warn">Current builds are not notarized by Apple, so macOS asks for confirmation on first launch.
+    If it reports the app as damaged, clear the download flag:</p>
+  <pre>xattr -dr com.apple.quarantine /Applications/ArtifactAtlas.app</pre>
+
+  <h2>Run from source</h2>
+  <pre>git clone https://github.com/yazicmert/basket.git
+cd basket
+npm start        # opens the local UI on http://127.0.0.1:4310
+npm test</pre>
+  <p class="note">Requires Node.js 22.13 or newer. No npm dependencies.</p>
+
+  <footer>MIT licensed · <a href="https://github.com/yazicmert/basket/blob/main/ARCHITECTURE.md">Architecture</a> ·
+    <a href="https://github.com/yazicmert/basket/blob/main/ROADMAP.md">Roadmap</a></footer>
+</main>
+</body>
+</html>

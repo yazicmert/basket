@@ -8,7 +8,7 @@ import { createAtlasServer } from '../src/ui/server.js';
 
 test('HTTP Desktop UI Server & REST API end-to-end integration test', async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-server-test-'));
-  const { server, service } = createAtlasServer({ sandboxRoot });
+  const { server, service, sessionToken } = createAtlasServer({ sandboxRoot });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -23,8 +23,13 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     assert.ok(htmlText.includes('Drop an AI application to explore its artifacts.'));
     assert.ok(htmlText.includes('meta name="atlas-api-token"'));
 
-    // 2. Verify /api/bootstrap
-    const bootRes = await fetch(`${baseUrl}/api/bootstrap`);
+    assert.ok(htmlText.includes(`content="${sessionToken}"`));
+
+    // 2. Verify /api/bootstrap (token is always required, even without an explicit --api-token)
+    assert.equal((await fetch(`${baseUrl}/api/bootstrap`)).status, 401);
+    const bootRes = await fetch(`${baseUrl}/api/bootstrap`, {
+      headers: { 'X-Atlas-Token': sessionToken }
+    });
     const bootData = await bootRes.json();
     assert.equal(bootData.ok, true);
     assert.ok(bootData.availableBundles.length >= 4);
@@ -35,7 +40,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     // 3. Verify /api/app/identify
     const idRes = await fetch(`${baseUrl}/api/app/identify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
       body: JSON.stringify({ bundlePath: claudeBundle.bundlePath })
     });
     const idData = await idRes.json();
@@ -45,7 +50,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     // 4. Verify /api/scan/start
     const scanRes = await fetch(`${baseUrl}/api/scan/start`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
       body: JSON.stringify({ bundlePath: claudeBundle.bundlePath })
     });
     const scanData = await scanRes.json();
@@ -60,7 +65,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
 
     const traceRes = await fetch(`${baseUrl}/api/graph/trace`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
       body: JSON.stringify({ nodeId: lowRiskArt.id })
     });
     const traceData = await traceRes.json();
@@ -70,7 +75,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     // 6. Verify /api/cleanup/review & /api/cleanup/quarantine & /api/cleanup/restore
     const revRes = await fetch(`${baseUrl}/api/cleanup/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
       body: JSON.stringify({ artifactIds: [lowRiskArt.id] })
     });
     const revData = await revRes.json();
@@ -79,7 +84,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
 
     const qRes = await fetch(`${baseUrl}/api/cleanup/quarantine`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
       body: JSON.stringify({
         artifactIds: [lowRiskArt.id],
         confirmationToken: revData.review.confirmationToken
@@ -91,7 +96,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
 
     const restoreRes = await fetch(`${baseUrl}/api/cleanup/restore`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
       body: JSON.stringify({
         entryId: qData.quarantinedEntries[0].id,
         conflictStrategy: 'FAIL_IF_EXISTS'
@@ -112,8 +117,7 @@ test('Local API protection: enforces X-Atlas-Token authentication and blocks cro
   const secretToken = 'test_secret_token_998877';
   const { server, shutdown } = createAtlasServer({
     sandboxRoot,
-    apiToken: secretToken,
-    enforceToken: true
+    apiToken: secretToken
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
