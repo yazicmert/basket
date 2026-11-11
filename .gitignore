@@ -1,0 +1,31 @@
+# macOS & Xcode
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.build/
+DerivedData/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Node.js / Portable Runtime
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Artifact Atlas Local State & Test Artifacts
+.artifact-atlas/
+.tmp-tests/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+coverage/
+dist/

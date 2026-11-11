@@ -1,0 +1,21 @@
+{
+  "name": "artifact-atlas",
+  "version": "0.1.0",
+  "description": "Artifact Atlas — Local-First AI Artifact Provenance & Cleanup Explorer",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "artifact-atlas": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js serve",
+    "dev": "node src/cli.js serve --port 4310",
+    "demo": "node src/cli.js demo",
+    "scan": "node src/cli.js scan",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check src/cli.js && node --test tests/*.test.js"
+  }
+}
