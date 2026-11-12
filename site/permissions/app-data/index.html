@@ -7,7 +7,23 @@
 <meta name="description" content="The macOS prompt that appears when Artifact Atlas reads another application&#x27;s sandbox container." />
 <link rel="stylesheet" href="../../style.css" />
 </head>
-<body>
+<body class="doc">
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="../../">
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+        <line x1="5" y1="14" x2="10" y2="5" /><line x1="5" y1="14" x2="15.5" y2="12" stroke-dasharray="2.2 1.8" />
+        <circle cx="5" cy="14" r="3" fill="currentColor" /><circle cx="10" cy="5" r="2" fill="var(--surface)" /><circle cx="15.5" cy="12" r="2" fill="var(--surface)" />
+      </svg>
+      Artifact Atlas
+    </a>
+    <nav class="topnav" aria-label="Site">
+      <a class="optional" href="../../#install">Install</a>
+      <a href="../../permissions/" aria-current="page">Permissions</a>
+      <a href="https://github.com/yazicmert/basket">GitHub</a>
+    </nav>
+  </div>
+</div>
 <main>
   <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Data from other apps</nav>
   <h1 class="page-title">Data from other apps</h1>
@@ -34,9 +50,17 @@
   <p>Choose <strong>Don't Allow</strong> when macOS asks. To change an earlier answer, open System Settings → Privacy &amp; Security and turn off the ArtifactAtlas entry; where macOS lists it depends on the macOS version.</p>
   <h2>If you do not grant it</h2>
   <p>The scan continues, and the container is reported as unreadable. Leftovers inside it are not shown.</p>
-
-  <footer>MIT licensed · <a href="../../">Home</a> · <a href="../../permissions/">All permissions</a> ·
-    <a href="https://github.com/yazicmert/basket">Source on GitHub</a></footer>
 </main>
+
+<footer>
+  <div class="footer-inner">
+    <span>Artifact Atlas · MIT licensed</span>
+    <nav aria-label="Project">
+      <a href="../../">Home</a>
+      <a href="../../permissions/">All permissions</a>
+      <a href="https://github.com/yazicmert/basket">Source on GitHub</a>
+    </nav>
+  </div>
+</footer>
 </body>
 </html>

@@ -1,43 +1,728 @@
+/* Artifact Atlas site
+   Layout: a spec sheet. Each section is a label column beside a content column, separated by
+   hairlines. The palette and vocabulary are the app's own: neutral ink on a quiet surface,
+   color only for cleanup risk, line style for how a link is known. System fonts only, so the
+   page makes no third-party requests. */
+
+:root {
+  --surface: #fcfcfb;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f3f3f1;
+  --line: #e4e4e0;
+  --line-strong: #cfcfca;
+  --ink: #1b1b1a;
+  --ink-2: #5c5c58;
+  --ink-3: #777772;
+  --ink-inverse: #fcfcfb;
+  --hover: rgba(27, 27, 26, 0.05);
+
+  /* Cleanup risk. Always paired with a text label. */
+  --risk-safe: #0ca30c;
+  --risk-review: #fab219;
+  --risk-high: #d03b3b;
+  --risk-protected: #8b8b86;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 8px;
+  --page: 1080px;
+  --label-col: 220px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1016; --panel: #151a23; --border: #262d3a; --text: #e8ecf3; --muted: #9aa5b8;
-    --accent: #2dd4bf; --accent-ink: #06211d; --warn: #fbbf24;
+    --surface: #1a1a19;
+    --surface-raised: #222221;
+    --surface-sunken: #141413;
+    --line: #2e2e2c;
+    --line-strong: #40403d;
+    --ink: #ededeb;
+    --ink-2: #a8a8a3;
+    --ink-3: #8b8b86;
+    --ink-inverse: #1a1a19;
+    --hover: rgba(237, 237, 235, 0.07);
+    color-scheme: dark;
   }
-  @media (prefers-color-scheme: light) {
-    :root { --bg: #f7f8fa; --panel: #ffffff; --border: #dde2ea; --text: #151a23; --muted: #566175;
-      --accent: #0f9c8b; --accent-ink: #ffffff; --warn: #a16207; }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-padding-top: 72px;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: 16px/1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+ol,
+ul,
+dl,
+dd,
+figure,
+pre {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+code {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.08em 0.36em;
+  overflow-wrap: anywhere;
+}
+
+pre {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  overflow-x: auto;
+  line-height: 1.7;
+  font-size: 13.5px;
+}
+
+pre .c {
+  color: var(--ink-3);
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  backdrop-filter: saturate(1.4) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar-inner,
+main,
+.footer-inner {
+  max-width: var(--page);
+  margin-inline: auto;
+  padding-inline: max(20px, env(safe-area-inset-left, 0px)) max(20px, env(safe-area-inset-right, 0px));
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.wordmark svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.topnav a {
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.topnav a:hover,
+.topnav a[aria-current="page"] {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 550;
+  font-size: 15px;
+  text-decoration: none;
+  transition: background-color 0.12s, border-color 0.12s, opacity 0.12s;
+}
+
+.btn:hover {
+  border-color: var(--ink-3);
+}
+
+.btn.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-inverse);
+}
+
+.btn.primary:hover {
+  opacity: 0.86;
+}
+
+.btn.quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+  padding-inline: 10px;
+}
+
+.btn.quiet:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+/* ---------- Hero ---------- */
+
+.hero {
+  padding-block: 72px 40px;
+  display: grid;
+  gap: 22px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: clamp(34px, 6.2vw, 62px);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  font-weight: 650;
+  max-width: 17ch;
+  text-wrap: balance;
+}
+
+.lead {
+  color: var(--ink-2);
+  font-size: clamp(17px, 2vw, 19px);
+  line-height: 1.55;
+  max-width: 60ch;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.note {
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+/* ---------- Screenshot in a window frame ---------- */
+
+.window {
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 24px 60px -30px rgba(0, 0, 0, 0.35);
+}
+
+.window-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding-inline: 13px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+
+.window-bar i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+}
+
+.window-bar span {
+  margin-inline: auto;
+  padding-right: 47px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.window img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+figcaption {
+  margin-top: 12px;
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+/* ---------- Spec-sheet sections ---------- */
+
+.spec {
+  display: grid;
+  grid-template-columns: var(--label-col) minmax(0, 1fr);
+  gap: 16px 40px;
+  padding-block: 44px;
+  border-top: 1px solid var(--line);
+}
+
+.shot + .spec {
+  margin-top: 64px;
+}
+
+.spec > h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.5;
+}
+
+.spec > h2 small {
+  display: block;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--ink-3);
+}
+
+.spec-body {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.spec-body > p {
+  max-width: 65ch;
+  color: var(--ink-2);
+}
+
+/* Rows: sample | term | description. Used for the evidence key and the risk key. */
+
+.rows {
+  display: grid;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 56px 150px minmax(0, 1fr);
+  gap: 4px 18px;
+  align-items: baseline;
+  padding-block: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.row dt {
+  font-weight: 600;
+}
+
+.row dd {
+  color: var(--ink-2);
+  max-width: 60ch;
+}
+
+.sample {
+  align-self: center;
+  display: flex;
+  align-items: center;
+}
+
+.sample svg {
+  width: 56px;
+  height: 12px;
+  overflow: visible;
+}
+
+.sample line {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.sample circle {
+  fill: var(--ink);
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--risk-protected);
+}
+
+.dot.safe {
+  background: var(--risk-safe);
+}
+
+.dot.review {
+  background: var(--risk-review);
+}
+
+.dot.high {
+  background: var(--risk-high);
+}
+
+.dot.protected {
+  background: transparent;
+  border: 2px solid var(--risk-protected);
+}
+
+/* Principles: two columns of plain term/description pairs. */
+
+.principles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px 40px;
+}
+
+.principles h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.principles p {
+  color: var(--ink-2);
+  font-size: 15.5px;
+}
+
+/* Install steps: a real sequence, so they are numbered. */
+
+.steps {
+  list-style: none;
+  padding: 0;
+  counter-reset: step;
+  display: grid;
+}
+
+.steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 18px;
+  padding-block: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.steps li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-3);
+  padding-top: 3px;
+}
+
+.steps li > div {
+  max-width: 62ch;
+}
+
+.callout {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.callout strong {
+  color: var(--ink);
+}
+
+.callout pre {
+  background: var(--surface);
+}
+
+/* ---------- Footer ---------- */
+
+footer {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px 24px;
+  padding-block: 28px 44px;
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+.footer-inner nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+}
+
+/* ---------- Permission pages (body.doc) ---------- */
+
+.doc main {
+  max-width: 760px;
+  padding-block: 40px 56px;
+}
+
+.crumbs {
+  font-size: 14px;
+  color: var(--ink-3);
+}
+
+.crumbs a {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.crumbs a:hover {
+  color: var(--ink);
+}
+
+.page-title {
+  font-size: clamp(30px, 5vw, 42px);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin-block: 14px 14px;
+  max-width: none;
+}
+
+.doc main > .lead {
+  margin-bottom: 28px;
+}
+
+.doc main > h2 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-block: 36px 8px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.doc main > p,
+.doc main > ul,
+.doc main > ol {
+  color: var(--ink-2);
+  max-width: 66ch;
+}
+
+.doc main > p + p {
+  margin-top: 12px;
+}
+
+.doc main ul,
+.doc main ol {
+  padding-left: 22px;
+}
+
+.doc main li {
+  margin-block: 6px;
+}
+
+.doc main li::marker {
+  color: var(--ink-3);
+}
+
+.doc strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 12.5px;
+  line-height: 1.4;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-2);
+  margin-right: 6px;
+}
+
+.tag.req {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-inverse);
+}
+
+.warn {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--risk-review);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface-sunken);
+  padding: 12px 16px;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+/* Permission index: rows, not cards. */
+
+.doc main > .perm-list {
+  list-style: none;
+  padding: 0;
+  max-width: none;
+  border-top: 1px solid var(--line);
+}
+
+.perm-list li {
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.perm-list li:last-child {
+  border-bottom: 0;
+}
+
+.perm-list a.card {
+  display: grid;
+  gap: 6px;
+  padding: 18px 34px 18px 0;
+  text-decoration: none;
+  position: relative;
+}
+
+.perm-list a.card::after {
+  content: "→";
+  position: absolute;
+  right: 4px;
+  top: 18px;
+  color: var(--ink-3);
+  transition: transform 0.12s;
+}
+
+.perm-list a.card:hover::after {
+  transform: translateX(3px);
+  color: var(--ink);
+}
+
+.perm-list h3 {
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.perm-list p {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+/* ---------- Narrow screens ---------- */
+
+@media (max-width: 760px) {
+  .hero {
+    padding-block: 44px 28px;
   }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 0 16px 64px; }
-  header { padding: 56px 0 28px; }
-  .brand { font-weight: 600; color: var(--accent); letter-spacing: .02em; }
-  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.15; margin: 10px 0 14px; letter-spacing: -.02em; }
-  .lead { color: var(--muted); font-size: 18px; max-width: 46em; margin: 0 0 26px; }
-  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
-  .btn { display: inline-block; padding: 11px 20px; border-radius: 9px; text-decoration: none; font-weight: 600;
-    border: 1px solid var(--border); color: var(--text); background: var(--panel); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  .note { color: var(--muted); font-size: 14px; margin-top: 12px; }
-  .shot { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: 12px; margin: 30px 0 8px; }
-  h2 { font-size: 22px; margin: 44px 0 14px; letter-spacing: -.01em; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 18px 16px; }
-  .card h3 { margin: 0 0 6px; font-size: 16px; }
-  .card p { margin: 0; color: var(--muted); font-size: 15px; }
-  ol { padding-left: 22px; } li { margin: 6px 0; }
-  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
-  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; overflow-x: auto; }
-  .warn { border-left: 3px solid var(--warn); padding: 2px 0 2px 14px; color: var(--muted); }
-  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
-  a { color: var(--accent); }
-  nav.crumbs { padding: 28px 0 0; font-size: 14px; color: var(--muted); }
-  nav.crumbs a { text-decoration: none; }
-  .page-title { font-size: clamp(26px, 5vw, 36px); line-height: 1.2; margin: 14px 0 10px; letter-spacing: -.02em; }
-  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
-    border: 1px solid var(--border); color: var(--muted); margin-right: 6px; }
-  .tag.req { color: var(--accent); border-color: var(--accent); }
-  ul { padding-left: 22px; }
-  .perm-list { list-style: none; padding: 0; display: grid; gap: 12px; }
-  .perm-list a.card { display: block; text-decoration: none; color: inherit; }
-  .perm-list a.card:hover { border-color: var(--accent); }
+
+  .spec {
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: 32px;
+  }
+
+  .shot + .spec {
+    margin-top: 40px;
+  }
+
+  .principles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .row dd {
+    grid-column: 2;
+  }
+
+  .steps li {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .topnav a.optional {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
