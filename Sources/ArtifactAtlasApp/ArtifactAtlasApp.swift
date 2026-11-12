@@ -344,19 +344,28 @@ enum PackagedAppSelfVerifier {
             )
             guard let scanJson = try JSONSerialization.jsonObject(with: scanData) as? [String: Any],
                   let stateObj = scanJson["state"] as? [String: Any],
-                  let artifacts = stateObj["artifacts"] as? [[String: Any]],
                   let graphObj = stateObj["graph"] as? [String: Any],
+                  let statsObj = graphObj["stats"] as? [String: Any],
+                  let artifactCount = statsObj["artifactCount"] as? Int,
                   let nodes = graphObj["nodes"] as? [[String: Any]] else {
                 print("ERROR: Scan or graph construction failed")
                 manager.stop()
                 return 1
             }
-            print("   -> Indexed \(artifacts.count) artifacts and constructed \(nodes.count) graph nodes")
+            print("   -> Indexed \(artifactCount) artifacts and constructed \(nodes.count) graph nodes")
 
             // 4. Inspect Provenance
             print("[Verify 4/6] Tracing provenance paths for low-risk artifact...")
-            guard let lowRiskArtifact = artifacts.first(where: { ($0["cleanupClassification"] as? String) == "LOW" }),
-                  let lowRiskId = lowRiskArtifact["id"] as? String else {
+            // The file list stays in the backend; ask it which files are safe to remove.
+            let (safeData, _) = try performRequest(
+                url: baseURL.appendingPathComponent("api/selection/resolve"),
+                method: "POST",
+                token: token,
+                body: ["kind": "safe"]
+            )
+            guard let safeJson = try JSONSerialization.jsonObject(with: safeData) as? [String: Any],
+                  let safeIds = safeJson["artifactIds"] as? [String],
+                  let lowRiskId = safeIds.first else {
                 print("ERROR: No LOW risk artifact found")
                 manager.stop()
                 return 1
