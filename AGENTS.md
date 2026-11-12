@@ -20,12 +20,16 @@
 6. **Zero Raw Conversation Persistence**:
    - When parsing `.jsonl` transcripts or composer databases, extract only structural metadata (session ID, timestamps, workspace path, tool name, target file paths). Never copy user prompts or assistant prose into SQLite.
 
+7. **Never Scan the Real Home Folder Without Consent**:
+   - The UI server serves sandbox sample data until the user grants the `home-folder-scan` consent; the consent is persisted and revocable. Probing permission status must never trigger a macOS prompt or read file contents.
+
 ## 2. Project Layout
 
 - `src/` — Portable Core & Local Desktop Application (Node.js 24 ESM + built-in `node:sqlite`):
   - `src/models/` — Versioned domain models and enumerations.
   - `src/platform/` — `PlatformServices` (filesystem boundary guards, symlink checks, inode identity, Finder reveal).
-  - `src/discovery/` — `ApplicationDiscovery` (`.app/Contents/Info.plist` parser and app identity resolver).
+  - `src/platform/permissions.js` — Permission model (in-app home-folder-scan consent, macOS Full Disk Access probe, allowlisted System Settings / documentation targets). Every permission id must have a page under `site/permissions/<id>/`.
+  - `src/discovery/` — `ApplicationDiscovery` (`.app/Contents/Info.plist` XML/binary parser and app identity resolver) and `app-footprint.js` (generic per-app data location discovery by bundle identifier and name; strict matching only, attribution stays `INFERRED`).
   - `src/adapters/` — `AdapterRegistry` + `ClaudeCodeAdapter`, `CursorAdapter`, `CodexAdapter`, `GenericMacOSAppAdapter`.
   - `src/scanner/` — Cancellable, permission-aware filesystem `Scanner`.
   - `src/indexer/` — `ArtifactIndexer` with physical inode deduplication.
@@ -39,6 +43,7 @@
   - `src/ui/` — Local HTTP/IPC server (`server.js`) and Obsidian-inspired Knowledge Graph & Treemap UI (`public/`).
   - `src/cli.js` — Command-line entrypoint (`serve`, `scan`, `demo`, `quarantine`, `restore`).
 - `Sources/` & `Tests/` — Native macOS Swift Package (`ArtifactAtlasCore`, `ArtifactAtlasApp`, `ArtifactAtlasCoreTests`).
+- `site/` — Project site published to GitHub Pages (landing page and one page per permission).
 - `tests/` — Portable Core automated test suite executed via `node --test`.
 
 ## 3. Build, Run & Test Commands

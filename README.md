@@ -16,6 +16,18 @@ The packaged `ArtifactAtlas.app` is **100% self-contained** and runs completely 
 3. Drag **`ArtifactAtlas.app`** into the **`Applications`** folder shortcut.
 4. Launch **Artifact Atlas** from `/Applications` or Spotlight.
 
+### First Launch: Sample Data, Then Your Real Files
+Artifact Atlas starts on built-in sample data and reads nothing from your disk. The **Permissions** window lists what it needs to scan your real files, and each permission has its own page:
+
+| Permission | Type | Page |
+|---|---|---|
+| Scan my home folder | In-app consent, required for real scans | [home-folder-scan](https://yazicmert.github.io/basket/permissions/home-folder-scan/) |
+| Full Disk Access | macOS setting, recommended | [full-disk-access](https://yazicmert.github.io/basket/permissions/full-disk-access/) |
+| Data from other apps | macOS prompt, asked when needed | [app-data](https://yazicmert.github.io/basket/permissions/app-data/) |
+| Desktop, Documents and Downloads | macOS prompt, asked when needed | [files-and-folders](https://yazicmert.github.io/basket/permissions/files-and-folders/) |
+
+After you allow home folder scanning, drop any `.app` onto the window. Its data is located by bundle identifier and name across `~/Library` containers, sandbox containers, and hidden home folders (`~/.claude`, `~/.ollama`, `~/.config/<app>`, …), and the folder being scanned is shown live. Claude Code, Cursor and Codex CLI additionally get session-level provenance; for every other application, files are attributed to the application (`INFERRED`), not to a conversation.
+
 ### macOS Gatekeeper Notice for Ad-Hoc Signed / Unsigned Builds
 When `ArtifactAtlas-macOS.dmg` or `ArtifactAtlas-macOS.zip` is built without an Apple Developer ID certificate and Apple Notarization credentials (`APPLE_DEVELOPER_ID_APPLICATION`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`), the packaging script applies an **ad-hoc code signature** (`codesign --sign -`).
 
@@ -42,7 +54,7 @@ To open an ad-hoc signed build on macOS:
    - **`INFERRED`**: Backed by indirect structural evidence (e.g., dedicated application cache/log container, session ID embedded in path, or build output derived from a verified source file).
    - **`UNKNOWN`**: Unattributed files are explicitly linked to an `UNKNOWN_ORIGIN` node. **Timestamp proximity alone never fabricates a conversation-to-file link.**
 5. **Multi-Factor Risk Classification**: Filename extension alone (e.g., `.tmp` or `.log`) never grants `LOW` deletion risk. The classifier evaluates canonical directory context, Git repository proximity, provenance confidence, physical hardlinks, and multi-session sharing.
-6. **Recoverable Quarantine over Permanent Deletion**: Selecting **Delete (Move to Quarantine)** runs a 10-step pre-flight verification (re-checking inode identity, file size, modification timestamp, permissions, and symlink traversal) and moves eligible files into a managed Quarantine Vault (`~/Library/Application Support/ArtifactAtlas/quarantine-vault`) with both a SQLite record and an on-disk `manifest.json` recovery file. The manifest is written before the file moves, every payload carries a SHA-256 digest, and restoring with **Replace** moves the file currently at the destination into the vault instead of overwriting it.
+6. **Recoverable Quarantine over Permanent Deletion**: Selecting **Delete (Move to Quarantine)** runs a 10-step pre-flight verification (re-checking inode identity, file size, modification timestamp, permissions, and symlink traversal) and moves eligible files into a managed Quarantine Vault (`~/Library/Application Support/ArtifactAtlas/live/quarantine-vault` for real scans) with both a SQLite record and an on-disk `manifest.json` recovery file. The manifest is written before the file moves, every payload carries a SHA-256 digest, and restoring with **Replace** moves the file currently at the destination into the vault instead of overwriting it.
 
 ---
 
@@ -60,7 +72,7 @@ npm run verify:macos
 ```
 
 Outputs are written to `dist/`:
-- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.2.0`, Min macOS: `14.0`)
+- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.3.0`, Min macOS: `14.0`)
 - `dist/ArtifactAtlas-macOS.dmg` (Compressed UDZO disk image with `/Applications` drag-install link)
 - `dist/ArtifactAtlas-macOS.zip` (`ditto` archive preserving bundle signatures and permissions)
 - `dist/SHA256SUMS.txt` (SHA-256 digests for release artifacts)

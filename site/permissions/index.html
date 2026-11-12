@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Permissions — Artifact Atlas</title>
+<meta name="description" content="The permissions Artifact Atlas uses, why each is needed, and how to grant or remove it." />
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<main>
+  <nav class="crumbs"><a href="../">Artifact Atlas</a> / Permissions</nav>
+  <h1 class="page-title">Permissions</h1>
+  <p class="lead">Artifact Atlas reads nothing from your disk until you allow it. These are the four permissions involved, each with its own page.</p>
+  <ul class="perm-list">
+    <li><a class="card" href="home-folder-scan/"><h3>Scan my home folder</h3>
+      <p><span class="tag req">Required for real scans</span><span class="tag">Asked inside Artifact Atlas</span></p>
+      <p>The in-app consent that lets Artifact Atlas scan the data folders of the applications on your Mac.</p></a></li>
+    <li><a class="card" href="full-disk-access/"><h3>Full Disk Access</h3>
+      <p><span class="tag req">Recommended</span><span class="tag">macOS privacy setting</span></p>
+      <p>Why Artifact Atlas recommends macOS Full Disk Access and how to grant or remove it.</p></a></li>
+    <li><a class="card" href="app-data/"><h3>Data from other apps</h3>
+      <p><span class="tag req">Asked by macOS when needed</span><span class="tag">macOS privacy prompt</span></p>
+      <p>The macOS prompt that appears when Artifact Atlas reads another application's sandbox container.</p></a></li>
+    <li><a class="card" href="files-and-folders/"><h3>Desktop, Documents and Downloads</h3>
+      <p><span class="tag req">Asked by macOS when needed</span><span class="tag">macOS privacy prompt</span></p>
+      <p>The macOS prompts for Desktop, Documents and Downloads, and when Artifact Atlas triggers them.</p></a></li>
+  </ul>
+  <h2>What Artifact Atlas does not ask for</h2>
+  <ul>
+    <li>No network access: nothing is uploaded and there is no account.</li>
+    <li>No administrator password and no system extensions.</li>
+    <li>No permission to control other apps. Applications you drop are read, never run.</li>
+  </ul>
+
+  <footer>MIT licensed · <a href="../">Home</a> · <a href="../permissions/">All permissions</a> ·
+    <a href="https://github.com/yazicmert/basket">Source on GitHub</a></footer>
+</main>
+</body>
+</html>

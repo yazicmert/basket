@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { ArtifactAtlasService } from '../atlas-service.js';
 import { createDeterministicDemoEnvironment } from '../fixtures/demo-environment.js';
 import { RestoreConflictStrategy } from '../models/entities.js';
+import { execFile } from 'node:child_process';
+import { describePermissions, resolveOpenTarget } from '../platform/permissions.js';
+import { findKnownAppProfile } from '../discovery/app-footprint.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,59 +76,148 @@ export function createAtlasServer(options = {}) {
     return crypto.timingSafeEqual(digest, sessionTokenDigest);
   };
 
-  const service = new ArtifactAtlasService({
-    homeDir: options.homeDir || demoEnv.homeDir,
-    dbPath,
-    quarantineRoot,
-    isDemoEnvironment: !options.homeDir
+  // ---------------------------------------------------------------------------------------
+  // Data scope: "demo" (isolated sandbox fixtures) or "live" (the user's real home folder).
+  // Live scanning needs the user's explicit, persisted consent; until then every request is
+  // served from the sandbox. An explicit homeDir (CLI --home) pins the server to that home.
+  // ---------------------------------------------------------------------------------------
+  const explicitHomeDir = options.homeDir || null;
+  const liveHomeDir = explicitHomeDir || options.liveHomeDir || os.homedir();
+  const platform = options.platform || process.platform;
+  const settingsPath = path.join(defaultBaseDir, 'settings.json');
+
+  const loadSettings = () => {
+    try {
+      const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      return {
+        homeScanConsentAt: typeof raw.homeScanConsentAt === 'string' ? raw.homeScanConsentAt : null,
+        mode: raw.mode === 'live' ? 'live' : 'demo'
+      };
+    } catch {
+      return { homeScanConsentAt: null, mode: 'demo' };
+    }
+  };
+  const settings = loadSettings();
+  const saveSettings = () => {
+    fs.mkdirSync(defaultBaseDir, { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  };
+
+  const services = new Map();
+  const currentMode = () => {
+    if (explicitHomeDir) {
+      return 'live';
+    }
+    return settings.mode === 'live' && settings.homeScanConsentAt ? 'live' : 'demo';
+  };
+  const activeService = () => {
+    const mode = currentMode();
+    if (!services.has(mode)) {
+      const isPinnedHome = Boolean(explicitHomeDir);
+      services.set(
+        mode,
+        mode === 'live'
+          ? new ArtifactAtlasService({
+              homeDir: liveHomeDir,
+              platform,
+              dbPath: isPinnedHome ? dbPath : path.join(defaultBaseDir, 'live', 'atlas-index.sqlite'),
+              quarantineRoot: isPinnedHome
+                ? quarantineRoot
+                : path.join(defaultBaseDir, 'live', 'quarantine-vault'),
+              isDemoEnvironment: false
+            })
+          : new ArtifactAtlasService({
+              homeDir: demoEnv.homeDir,
+              dbPath,
+              quarantineRoot,
+              isDemoEnvironment: true
+            })
+      );
+    }
+    return services.get(mode);
+  };
+
+  const permissionsPayload = () => ({
+    mode: currentMode(),
+    canSwitchMode: !explicitHomeDir,
+    platform,
+    liveHomeDir,
+    permissions: describePermissions({
+      platform,
+      homeDir: liveHomeDir,
+      homeScanConsentAt: explicitHomeDir ? 'pinned-by-cli' : settings.homeScanConsentAt
+    })
   });
 
-  // Discover real macOS /Applications bundles if running on macOS, plus sandbox demo bundles
-  const discoverAvailableBundles = () => {
-    const bundles = [
-      {
-        ...demoEnv.appBundles.claude,
-        description: 'Anthropic AI coding assistant & desktop client (Multi-session JSONL provenance)',
-        isDemoFixture: true
-      },
-      {
-        ...demoEnv.appBundles.cursor,
-        description: 'AI-first code editor (workspaceStorage & Composer operation ledger)',
-        isDemoFixture: true
-      },
-      {
-        ...demoEnv.appBundles.codex,
-        description: 'OpenAI terminal coding agent (Rollout JSONL patch & shell ledger)',
-        isDemoFixture: true
-      },
-      {
-        ...demoEnv.appBundles.unsupported,
-        description: 'Third-party macOS app without AI session transcripts (Generic adapter fallback)',
-        isDemoFixture: true
-      }
-    ];
+  const demoBundles = () => [
+    {
+      ...demoEnv.appBundles.claude,
+      description: 'Anthropic AI coding assistant & desktop client (Multi-session JSONL provenance)',
+      isDemoFixture: true
+    },
+    {
+      ...demoEnv.appBundles.cursor,
+      description: 'AI-first code editor (workspaceStorage & Composer operation ledger)',
+      isDemoFixture: true
+    },
+    {
+      ...demoEnv.appBundles.codex,
+      description: 'OpenAI terminal coding agent (Rollout JSONL patch & shell ledger)',
+      isDemoFixture: true
+    },
+    {
+      ...demoEnv.appBundles.unsupported,
+      description: 'Third-party macOS app without AI session transcripts (Generic adapter fallback)',
+      isDemoFixture: true
+    }
+  ];
 
-    if (fs.existsSync('/Applications')) {
+  // Installed applications, listed by directory name only (bundles are never opened or run).
+  const installedBundles = () => {
+    const bundles = [];
+    const seen = new Set();
+    const appDirs = options.applicationDirs || [
+      '/Applications',
+      '/Applications/Utilities',
+      path.join(liveHomeDir, 'Applications')
+    ];
+    for (const appDir of appDirs) {
+      let entries = [];
       try {
-        const sysEntries = fs.readdirSync('/Applications', { withFileTypes: true });
-        for (const entry of sysEntries) {
-          if (entry.isDirectory() && entry.name.endsWith('.app')) {
-            bundles.push({
-              name: entry.name.replace(/\.app$/, ''),
-              bundleId: null,
-              bundlePath: path.join('/Applications', entry.name),
-              version: 'System Installed',
-              description: 'Installed in /Applications',
-              isDemoFixture: false
-            });
-          }
-        }
+        entries = fs.readdirSync(appDir, { withFileTypes: true });
       } catch {
-        // Ignore if /Applications cannot be listed
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.endsWith('.app')) {
+          continue;
+        }
+        const bundlePath = path.join(appDir, entry.name);
+        if (seen.has(bundlePath)) {
+          continue;
+        }
+        seen.add(bundlePath);
+        const name = entry.name.replace(/\.app$/, '');
+        const profile = findKnownAppProfile({ name });
+        bundles.push({
+          name,
+          bundleId: null,
+          bundlePath,
+          version: 'Installed',
+          description: `Installed in ${appDir}`,
+          isDemoFixture: false,
+          isKnownAIApp: Boolean(profile && profile.ai)
+        });
       }
     }
-    return bundles;
+    return bundles.sort(
+      (a, b) =>
+        Number(b.isKnownAIApp) - Number(a.isKnownAIApp) || a.name.localeCompare(b.name)
+    );
   };
+
+  const discoverAvailableBundles = () =>
+    currentMode() === 'live' ? installedBundles() : demoBundles();
 
   const sendJson = (res, statusCode, payload, extraHeaders = {}) => {
     const body = JSON.stringify(payload);
@@ -254,15 +346,15 @@ export function createAtlasServer(options = {}) {
       if (url.pathname === '/api/bootstrap' && req.method === 'GET') {
         return sendJson(res, 200, {
           ok: true,
-          platform: process.platform,
+          ...permissionsPayload(),
           arch: process.arch,
-          isDemoEnvironment: service.activeState.isDemoEnvironment,
-          homeDir: service.platformServices.homeDir,
-          quarantineVaultLocation: service.cleanupEngine.quarantineRoot,
+          isDemoEnvironment: activeService().activeState.isDemoEnvironment,
+          homeDir: activeService().platformServices.homeDir,
+          quarantineVaultLocation: activeService().cleanupEngine.quarantineRoot,
           availableBundles: discoverAvailableBundles(),
-          defaultWorkspacePath: demoEnv.workspaceDir,
-          activeState: service.activeState,
-          quarantineEntries: service.sqliteStore.listQuarantineEntries()
+          defaultWorkspacePath: currentMode() === 'demo' ? demoEnv.workspaceDir : '',
+          activeState: activeService().activeState,
+          quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
         });
       }
 
@@ -271,7 +363,7 @@ export function createAtlasServer(options = {}) {
         if (!body.bundlePath) {
           return sendJson(res, 400, { ok: false, error: 'bundlePath is required' });
         }
-        const application = service.identifyApplication(body.bundlePath);
+        const application = activeService().identifyApplication(body.bundlePath);
         return sendJson(res, 200, {
           ok: true,
           application
@@ -280,7 +372,7 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/scan/start' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const state = await service.scanAndAnalyze({
+        const state = await activeService().scanAndAnalyze({
           bundlePath: body.bundlePath || null,
           additionalWorkspacePaths: Array.isArray(body.workspacePaths)
             ? body.workspacePaths
@@ -292,18 +384,82 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           state,
-          quarantineEntries: service.sqliteStore.listQuarantineEntries()
+          quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
         });
       }
 
+      if (url.pathname === '/api/scan/progress' && req.method === 'GET') {
+        const svc = activeService();
+        return sendJson(res, 200, {
+          ok: true,
+          active: Boolean(svc.scanInProgress),
+          progress: svc.lastProgress
+        });
+      }
+
+      if (url.pathname === '/api/permissions' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, ...permissionsPayload() });
+      }
+
+      // Grant or revoke the in-app consent to scan the real home folder
+      if (url.pathname === '/api/permissions/home-folder-scan' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (explicitHomeDir) {
+          return sendJson(res, 409, { ok: false, error: 'HOME_SCOPE_PINNED_BY_CLI' });
+        }
+        activeService().cancelActiveScan();
+        if (body.granted === true) {
+          settings.homeScanConsentAt = new Date().toISOString();
+          settings.mode = 'live';
+        } else {
+          settings.homeScanConsentAt = null;
+          settings.mode = 'demo';
+        }
+        saveSettings();
+        return sendJson(res, 200, { ok: true, ...permissionsPayload() });
+      }
+
+      if (url.pathname === '/api/mode' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (explicitHomeDir) {
+          return sendJson(res, 409, { ok: false, error: 'HOME_SCOPE_PINNED_BY_CLI' });
+        }
+        if (body.mode !== 'demo' && body.mode !== 'live') {
+          return sendJson(res, 400, { ok: false, error: 'mode must be "demo" or "live"' });
+        }
+        if (body.mode === 'live' && !settings.homeScanConsentAt) {
+          return sendJson(res, 403, { ok: false, error: 'HOME_FOLDER_SCAN_CONSENT_REQUIRED' });
+        }
+        activeService().cancelActiveScan();
+        settings.mode = body.mode;
+        saveSettings();
+        return sendJson(res, 200, { ok: true, ...permissionsPayload() });
+      }
+
+      // Opens a permission's documentation page or System Settings pane (allowlisted targets only)
+      if (url.pathname === '/api/system/open' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const targetUrl = resolveOpenTarget(body.target);
+        if (!targetUrl) {
+          return sendJson(res, 400, { ok: false, error: 'UNKNOWN_OPEN_TARGET' });
+        }
+        if (platform !== 'darwin' || options.simulateSystemOpen) {
+          return sendJson(res, 200, { ok: true, opened: false, url: targetUrl });
+        }
+        const opened = await new Promise((resolve) => {
+          execFile('/usr/bin/open', [targetUrl], (err) => resolve(!err));
+        });
+        return sendJson(res, 200, { ok: true, opened, url: targetUrl });
+      }
+
       if (url.pathname === '/api/scan/cancel' && req.method === 'POST') {
-        const result = service.cancelActiveScan();
+        const result = activeService().cancelActiveScan();
         return sendJson(res, 200, { ok: true, ...result });
       }
 
       if (url.pathname === '/api/graph/trace' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const trace = service.inspectNodeProvenance(body.nodeId);
+        const trace = activeService().inspectNodeProvenance(body.nodeId);
         if (!trace) {
           return sendJson(res, 404, { ok: false, error: 'Node not found in active graph' });
         }
@@ -312,13 +468,13 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/finder/reveal' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const result = await service.platformServices.revealInFinder(body.path);
+        const result = await activeService().platformServices.revealInFinder(body.path);
         return sendJson(res, result.ok ? 200 : 404, result);
       }
 
       if (url.pathname === '/api/cleanup/review' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const review = service.prepareCleanupReview(
+        const review = activeService().prepareCleanupReview(
           body.artifactIds || [],
           Boolean(body.allowHighRiskSingleOverride)
         );
@@ -327,7 +483,7 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/cleanup/quarantine' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const result = service.executeQuarantine({
+        const result = activeService().executeQuarantine({
           artifactIds: body.artifactIds || [],
           confirmationToken: body.confirmationToken,
           allowHighRiskSingleOverride: Boolean(body.allowHighRiskSingleOverride)
@@ -335,29 +491,32 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           ...result,
-          activeState: service.activeState
+          activeState: activeService().activeState
         });
       }
 
       if (url.pathname === '/api/cleanup/restore' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const result = service.restoreQuarantineEntry({
+        const result = activeService().restoreQuarantineEntry({
           entryId: body.entryId,
           conflictStrategy: body.conflictStrategy || RestoreConflictStrategy.FAIL_IF_EXISTS
         });
         return sendJson(res, 200, {
           ok: true,
           ...result,
-          activeState: service.activeState
+          activeState: activeService().activeState
         });
       }
 
       if (url.pathname === '/api/demo/reset' && req.method === 'POST') {
+        if (currentMode() !== 'demo') {
+          return sendJson(res, 409, { ok: false, error: 'DEMO_RESET_ONLY_IN_SAMPLE_DATA_MODE' });
+        }
         fs.rmSync(sandboxRoot, { recursive: true, force: true });
         createDeterministicDemoEnvironment(sandboxRoot);
-        service.activeState.application = null;
-        service.activeState.graph = null;
-        service.activeState.artifacts = [];
+        activeService().activeState.application = null;
+        activeService().activeState.graph = null;
+        activeService().activeState.artifacts = [];
         return sendJson(res, 200, {
           ok: true,
           availableBundles: discoverAvailableBundles()
@@ -406,16 +565,20 @@ export function createAtlasServer(options = {}) {
 
   const shutdown = () => {
     return new Promise((resolve) => {
-      try {
-        service.cancelActiveScan();
-      } catch {
-        // Ignore
-      }
-      server.close(() => {
+      for (const svc of services.values()) {
         try {
-          service.sqliteStore.close();
+          svc.cancelActiveScan();
         } catch {
           // Ignore
+        }
+      }
+      server.close(() => {
+        for (const svc of services.values()) {
+          try {
+            svc.sqliteStore.close();
+          } catch {
+            // Ignore
+          }
         }
         resolve();
       });
@@ -424,7 +587,9 @@ export function createAtlasServer(options = {}) {
 
   return {
     server,
-    service,
+    get service() {
+      return activeService();
+    },
     demoEnv,
     sessionToken,
     shutdown

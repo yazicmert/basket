@@ -43,12 +43,16 @@ export class Scanner {
     const rawEntries = [];
     const seenInodes = new Map(); // physicalInodeKey -> first canonicalPath
     const visitedDirectories = new Set();
+    const indexedFilePaths = new Set();
+    let currentPath = null;
+    let lastProgressAt = 0;
 
     const emitProgress = () => {
       if (typeof onProgress === 'function') {
         onProgress({
           scanId: scanRecord.id,
           status: scanRecord.status,
+          currentPath,
           scannedLocationsCount: scanRecord.scannedLocations.length,
           discoveredArtifactCount: scanRecord.discoveredArtifactCount,
           totalLogicalBytes: scanRecord.totalLogicalBytes,
@@ -66,6 +70,53 @@ export class Scanner {
     const markTruncated = () => {
       scanRecord.truncated = true;
       scanRecord.maxFilesLimit = this.maxFiles;
+    };
+
+    const indexFile = (filePath, fileName, check) => {
+      const lstat = check.lstat;
+      if (indexedFilePaths.has(check.canonicalPath)) {
+        return;
+      }
+      // Also check read permission on the file if mode lacks owner read bit
+      const hasOwnerRead = (lstat.mode & 0o400) !== 0;
+      if (!hasOwnerRead) {
+        scanRecord.permissionLimitations.push({
+          path: filePath,
+          reason: 'File lacks read permissions (mode 000)',
+          code: 'EACCES'
+        });
+        return;
+      }
+      indexedFilePaths.add(check.canonicalPath);
+
+      const inodeKey = check.physicalInodeKey;
+      const isDuplicatePhysicalInode = seenInodes.has(inodeKey);
+      if (!isDuplicatePhysicalInode) {
+        seenInodes.set(inodeKey, check.canonicalPath);
+        scanRecord.totalPhysicalBytes += lstat.size;
+      } else {
+        scanRecord.deduplicatedHardlinkCount += 1;
+      }
+
+      scanRecord.totalLogicalBytes += lstat.size;
+      scanRecord.discoveredArtifactCount += 1;
+
+      rawEntries.push({
+        name: fileName,
+        canonicalPath: check.canonicalPath,
+        parentDir: path.dirname(check.canonicalPath),
+        extension: path.extname(fileName).toLowerCase(),
+        isDirectory: false,
+        sizeBytes: lstat.size,
+        physicalInodeKey: inodeKey,
+        hardlinkCount: Math.max(check.hardlinkCount, isDuplicatePhysicalInode ? 2 : 1),
+        isDuplicatePhysicalInode,
+        primaryInodePath: seenInodes.get(inodeKey),
+        mode: lstat.mode,
+        createdAt: lstat.birthtime ? lstat.birthtime.toISOString() : lstat.ctime.toISOString(),
+        modifiedAt: lstat.mtime.toISOString(),
+        mtimeMs: lstat.mtimeMs
+      });
     };
 
     const walkDirectory = async (dirPath) => {
@@ -112,6 +163,20 @@ export class Scanner {
       }
       visitedDirectories.add(dirRealPath);
       scanRecord.scannedLocations.push(dirRealPath);
+
+      // Live progress: report the directory being read and yield to the event loop so the
+      // progress endpoint and cancellation stay responsive during large scans.
+      currentPath = dirRealPath;
+      const nowMs = Date.now();
+      if (nowMs - lastProgressAt >= 40) {
+        lastProgressAt = nowMs;
+        emitProgress();
+        await new Promise((r) => setImmediate(r));
+        if (signal?.aborted) {
+          scanRecord.status = ScanStatus.CANCELLED;
+          return;
+        }
+      }
 
       // Test whether directory is readable (fs.accessSync R_OK + readdirSync)
       let dirEntries = [];
@@ -186,46 +251,7 @@ export class Scanner {
           }
           await walkDirectory(childPath);
         } else if (lstat.isFile()) {
-          // Also check read permission on the file if mode lacks owner read bit
-          const hasOwnerRead = (lstat.mode & 0o400) !== 0;
-          if (!hasOwnerRead) {
-            scanRecord.permissionLimitations.push({
-              path: childPath,
-              reason: 'File lacks read permissions (mode 000)',
-              code: 'EACCES'
-            });
-            continue;
-          }
-
-          const inodeKey = childCheck.physicalInodeKey;
-          const isDuplicatePhysicalInode = seenInodes.has(inodeKey);
-          if (!isDuplicatePhysicalInode) {
-            seenInodes.set(inodeKey, childCheck.canonicalPath);
-            scanRecord.totalPhysicalBytes += lstat.size;
-          } else {
-            scanRecord.deduplicatedHardlinkCount += 1;
-          }
-
-          scanRecord.totalLogicalBytes += lstat.size;
-          scanRecord.discoveredArtifactCount += 1;
-
-          rawEntries.push({
-            name: dirent.name,
-            canonicalPath: childCheck.canonicalPath,
-            parentDir: path.dirname(childCheck.canonicalPath),
-            extension: path.extname(dirent.name).toLowerCase(),
-            isDirectory: false,
-            sizeBytes: lstat.size,
-            physicalInodeKey: inodeKey,
-            hardlinkCount: Math.max(childCheck.hardlinkCount, isDuplicatePhysicalInode ? 2 : 1),
-            isDuplicatePhysicalInode,
-            primaryInodePath: seenInodes.get(inodeKey),
-            mode: lstat.mode,
-            createdAt: lstat.birthtime ? lstat.birthtime.toISOString() : lstat.ctime.toISOString(),
-            modifiedAt: lstat.mtime.toISOString(),
-            mtimeMs: lstat.mtimeMs
-          });
-
+          indexFile(childPath, dirent.name, childCheck);
           if (scanRecord.discoveredArtifactCount % 25 === 0) {
             emitProgress();
             await new Promise((r) => setImmediate(r));
@@ -244,6 +270,17 @@ export class Scanner {
       if (!fs.existsSync(root)) {
         continue;
       }
+      // A root may be a single file (e.g. a preferences .plist attributed to the application)
+      const rootCheck = this.platformServices.inspectEntry(root, normalizedRoots);
+      if (rootCheck.allowed && !rootCheck.isSymlink && rootCheck.lstat.isFile()) {
+        if (rawEntries.length >= this.maxFiles) {
+          markTruncated();
+        } else {
+          currentPath = root;
+          indexFile(root, path.basename(root), rootCheck);
+        }
+        continue;
+      }
       await walkDirectory(root);
     }
 
@@ -251,6 +288,7 @@ export class Scanner {
       scanRecord.status = ScanStatus.COMPLETED;
     }
     scanRecord.completedAt = new Date().toISOString();
+    currentPath = null;
     emitProgress();
 
     return {

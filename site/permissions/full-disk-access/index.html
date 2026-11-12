@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Full Disk Access — Artifact Atlas</title>
+<meta name="description" content="Why Artifact Atlas recommends macOS Full Disk Access and how to grant or remove it." />
+<link rel="stylesheet" href="../../style.css" />
+</head>
+<body>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Full Disk Access</nav>
+  <h1 class="page-title">Full Disk Access</h1>
+  <p><span class="tag req">Recommended</span><span class="tag">macOS privacy setting</span></p>
+
+  <h2>What it is</h2>
+  <p>Full Disk Access is a macOS privacy setting. macOS blocks apps from reading some folders in your home folder unless you add them to this list yourself. No app can turn it on for you, and macOS never shows a pop-up for it.</p>
+  <h2>Why Artifact Atlas asks for it</h2>
+  <p>Several places where applications leave data are protected by macOS: other apps' sandbox containers in <code>~/Library/Containers</code> and <code>~/Library/Group Containers</code>, and some folders in <code>~/Library</code>. Without Full Disk Access those folders look empty or unreadable, so leftovers stored there are missing from the scan. When that happens, Artifact Atlas tells you how many folders it could not read.</p>
+  <p>Granting it also covers the two on-demand permissions (<a href="../app-data/">Data from other apps</a> and <a href="../files-and-folders/">Desktop, Documents and Downloads</a>), so you are not interrupted by prompts during a scan.</p>
+  <h2>What is read</h2>
+  <p>The same things as the home folder scan: names, sizes and timestamps of files inside the dropped application's data folders. Full Disk Access only widens <em>which folders can be listed</em>. Artifact Atlas still scans only the folders that belong to the application you drop.</p>
+  <h2>What never happens</h2>
+  <ul>
+    <li>It does not scan Mail, Messages, Safari, Keychains or the privacy database itself. Those locations are permanently excluded in the app.</li>
+    <li>It does not read file contents beyond AI session metadata.</li>
+  </ul>
+  <h2>How to grant it</h2>
+  <ol>
+    <li>In Artifact Atlas, open <strong>Permissions</strong> and click <strong>Open System Settings</strong> on the Full Disk Access card. Or open System Settings → Privacy &amp; Security → Full Disk Access yourself.</li>
+    <li>Click <strong>+</strong>, choose <strong>ArtifactAtlas</strong> from Applications, and turn its switch on.</li>
+    <li>Quit and reopen Artifact Atlas. macOS applies the change on the next launch.</li>
+    <li>Back in <strong>Permissions</strong>, the card shows <em>Granted</em>.</li>
+  </ol>
+  <p class="warn">Current builds are not notarized. After installing a new version you may need to remove ArtifactAtlas from the list and add it again.</p>
+  <h2>How to take it back</h2>
+  <p>System Settings → Privacy &amp; Security → Full Disk Access: turn the ArtifactAtlas switch off, or select it and click <strong>−</strong>.</p>
+  <h2>If you do not grant it</h2>
+  <p>Scans still run. Leftovers in protected folders may be missing, and macOS may ask for the two on-demand permissions during a scan.</p>
+
+  <footer>MIT licensed · <a href="../../">Home</a> · <a href="../../permissions/">All permissions</a> ·
+    <a href="https://github.com/yazicmert/basket">Source on GitHub</a></footer>
+</main>
+</body>
+</html>

@@ -56,6 +56,7 @@ export class ArtifactAtlasService {
 
     this.currentScanAbortController = null;
     this.lastProgress = null;
+    this.scanInProgress = false;
   }
 
   /**
@@ -71,7 +72,17 @@ export class ArtifactAtlasService {
    * Step 2: Run full discovery, session provenance analysis, classification,
    * SQLite persistence, and Knowledge Graph + Treemap construction.
    */
-  async scanAndAnalyze({
+  async scanAndAnalyze(params = {}) {
+    this.lastProgress = null;
+    this.scanInProgress = true;
+    try {
+      return await this.runScanAndAnalyze(params);
+    } finally {
+      this.scanInProgress = false;
+    }
+  }
+
+  async runScanAndAnalyze({
     bundlePath = null,
     additionalWorkspacePaths = [],
     onProgress = null,

@@ -104,6 +104,8 @@ export function createApplicationModel(fields) {
     isSupportedAIApp: Boolean(fields.isSupportedAIApp),
     recognitionStatus: fields.recognitionStatus || 'GENERIC_SUPPORTED',
     knownDataDirectories: Array.isArray(fields.knownDataDirectories) ? fields.knownDataDirectories : [],
+    isKnownAIApp: Boolean(fields.isKnownAIApp),
+    unreadableContainers: Array.isArray(fields.unreadableContainers) ? fields.unreadableContainers : [],
     discoveredAt: fields.discoveredAt || new Date().toISOString()
   };
 }
