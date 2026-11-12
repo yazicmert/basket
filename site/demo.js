@@ -160,7 +160,21 @@
   tabQuarantine.id = 'demo-tab-quarantine';
   bar.appendChild(tabs);
   bar.appendChild(html('span', 'demo-badge', 'Sample data'));
+  var replay = html('button', 'demo-replay', 'Replay');
+  replay.type = 'button';
+  replay.id = 'demo-replay';
+  bar.appendChild(replay);
   root.appendChild(bar);
+
+  // The walkthrough is a real sequence, so its steps are numbered.
+  var STEPS = ['Drop an app', 'Scan', 'Trace a file', 'Quarantine', 'Restore'];
+  var stepper = html('ol', 'demo-steps');
+  var stepEls = STEPS.map(function (label) {
+    var li = html('li', null, label);
+    stepper.appendChild(li);
+    return li;
+  });
+  root.appendChild(stepper);
 
   var body = html('div', 'demo-body');
   var stage = html('div', 'demo-stage');
@@ -180,6 +194,44 @@
   var panel = html('aside', 'demo-panel');
   panel.setAttribute('aria-live', 'polite');
   body.appendChild(panel);
+
+  // Opening screens of the app, shown only while the walkthrough plays.
+  var intro = html('div', 'demo-intro');
+  intro.hidden = true;
+  intro.setAttribute('aria-hidden', 'true');
+
+  var dropView = html('div', 'demo-drop');
+  var dropzone = html('div', 'demo-dropzone');
+  dropzone.appendChild(html('strong', 'demo-drop-title', 'Drop an app to see what it left behind.'));
+  dropzone.appendChild(html('span', 'demo-muted', 'Apps are read, never run.'));
+  var fakeButtons = html('div', 'demo-drop-buttons');
+  fakeButtons.appendChild(html('span', 'demo-btn', 'Choose App\u2026'));
+  fakeButtons.appendChild(html('span', 'demo-btn ghost', 'Scan a project folder'));
+  dropzone.appendChild(fakeButtons);
+  dropView.appendChild(dropzone);
+  var tile = html('div', 'demo-tile');
+  tile.appendChild(html('span', 'demo-tile-icon', '>_'));
+  tile.appendChild(html('span', 'demo-tile-name', 'Claude Code.app'));
+  var cursor = el('svg', { viewBox: '0 0 16 20', 'class': 'demo-cursor' });
+  cursor.appendChild(el('path', { d: 'M1 1v15l4-3.6 2.7 6 2.4-1.1-2.7-5.9H13z' }));
+  tile.appendChild(cursor);
+  dropView.appendChild(tile);
+  intro.appendChild(dropView);
+
+  var scanView = html('div', 'demo-scan');
+  scanView.appendChild(html('strong', 'demo-scan-title', 'Scanning Claude Code\u2026'));
+  scanView.appendChild(html('span', 'demo-muted', 'Reading folder'));
+  var scanPath = html('code', 'demo-scan-path', 'Preparing\u2026');
+  scanView.appendChild(scanPath);
+  var scanTrack = html('div', 'demo-scan-track');
+  var scanFill = html('i');
+  scanTrack.appendChild(scanFill);
+  scanView.appendChild(scanTrack);
+  var scanMetrics = html('span', 'demo-muted demo-scan-metrics', '0 folders \u00b7 0 files \u00b7 0 B');
+  scanView.appendChild(scanMetrics);
+  intro.appendChild(scanView);
+
+  body.appendChild(intro);
   root.appendChild(body);
 
   // ---------- Map ----------
@@ -323,7 +375,7 @@
       button.addEventListener('click', function () { quarantine(sel.id); });
     }
     action.appendChild(button);
-    if (state.armed === sel.id) button.focus();
+    if (state.armed === sel.id && !tour.running) button.focus();
   }
 
   function quarantine(id) {
@@ -332,7 +384,7 @@
     state.armed = null;
     state.view = 'quarantine';
     render();
-    tabQuarantine.focus();
+    if (!tour.running) tabQuarantine.focus();
   }
 
   function restore(id) {
@@ -410,6 +462,135 @@
     if (ev.target === svg) select(null);
   });
 
+  // ---------- Walkthrough ----------
+
+  var SCAN_PATHS = [
+    '~/.claude/projects/neural-search-engine',
+    '~/.claude/logs',
+    '~/.claude/cache',
+    '~/.claude/tmp',
+    '~/Library/Application Support/Claude',
+    '~/Library/Caches/claude-code',
+    '~/Library/Logs/Claude',
+    '~/Projects/neural-search-engine/dist',
+    '~/Projects/neural-search-engine/src'
+  ];
+  var TOTAL_BYTES = files.reduce(function (sum, f) { return sum + f.size; }, 0);
+  var tour = { running: false, timers: [] };
+
+  function later(ms, fn) {
+    tour.timers.push(setTimeout(fn, ms));
+  }
+
+  function setStep(index) {
+    stepEls.forEach(function (li, i) {
+      li.classList.toggle('current', i === index);
+      li.classList.toggle('done', index != null && i < index);
+    });
+  }
+
+  function showIntro(view) {
+    intro.hidden = view == null;
+    intro.className = 'demo-intro' + (view ? ' ' + view : '');
+  }
+
+  function stopTour() {
+    tour.timers.forEach(clearTimeout);
+    tour.timers = [];
+    tour.running = false;
+    showIntro(null);
+    svg.classList.remove('reveal');
+    root.classList.remove('touring');
+    setStep(null);
+  }
+
+  function playTour() {
+    stopTour();
+    tour.running = true;
+    root.classList.add('touring');
+    state.quarantined = [];
+    state.selected = null;
+    state.armed = null;
+    state.view = 'map';
+    render();
+
+    // 1. The opening screen: an app is dragged onto the window.
+    setStep(0);
+    showIntro('drop');
+    later(60, function () { intro.classList.add('go'); });
+    later(1500, function () { intro.classList.add('over'); });
+
+    // 2. The scan reports the folder being read, with running totals.
+    later(2700, function () {
+      setStep(1);
+      showIntro('scan');
+      var ticks = SCAN_PATHS.length;
+      SCAN_PATHS.forEach(function (path, i) {
+        later(i * 300, function () {
+          var done = (i + 1) / ticks;
+          scanPath.textContent = path;
+          scanFill.style.width = Math.round(done * 100) + '%';
+          var seen = Math.round(files.length * done);
+          scanMetrics.textContent = (i + 1) + (i ? ' folders' : ' folder') + ' \u00b7 ' + seen + (seen === 1 ? ' file' : ' files') + ' \u00b7 ' +
+            formatBytes(Math.round(TOTAL_BYTES * done));
+        });
+      });
+    });
+
+    // 3. Results: the map draws itself, then one file is traced.
+    later(5700, function () {
+      setStep(2);
+      showIntro(null);
+      svg.classList.add('reveal');
+    });
+    later(7500, function () {
+      svg.classList.remove('reveal');
+      state.selected = 'f1';
+      render();
+    });
+
+    // 4 and 5. The file goes to quarantine and comes back.
+    later(10300, function () {
+      setStep(3);
+      quarantine('f1');
+    });
+    later(12900, function () {
+      setStep(4);
+      restore('f1');
+    });
+    later(15200, stopTour);
+  }
+
+  // Any interaction hands control to the visitor.
+  ['pointerdown', 'keydown', 'wheel'].forEach(function (type) {
+    root.addEventListener(type, function (ev) {
+      if (tour.running && !replay.contains(ev.target)) stopTour();
+    }, { capture: true, passive: true });
+  });
+  replay.addEventListener('click', playTour);
+
+  // Stagger the map's entrance: origin first, files last.
+  var order = { app: 0, workspace: 1, session: 2, unknown: 2, group: 3, file: 4 };
+  nodes.forEach(function (n, i) {
+    nodeEls[n.id].style.setProperty('--d', (order[n.kind] * 0.22 + (i % 5) * 0.05) + 's');
+  });
+  edgeEls.forEach(function (e) {
+    e.line.style.setProperty('--d', (order[byId[e.to].kind] * 0.22) + 's');
+  });
+
   root.classList.add('ready');
   render();
+
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) {
+    replay.textContent = 'Play walkthrough';
+  } else if ('IntersectionObserver' in window) {
+    var seen = new IntersectionObserver(function (entries) {
+      if (entries[0].isIntersecting) {
+        seen.disconnect();
+        playTour();
+      }
+    }, { threshold: 0.35 });
+    seen.observe(root);
+  }
 })();
