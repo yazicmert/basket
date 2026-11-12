@@ -20,7 +20,7 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     const htmlRes = await fetch(`${baseUrl}/`);
     assert.equal(htmlRes.status, 200);
     const htmlText = await htmlRes.text();
-    assert.ok(htmlText.includes('Drop an AI application to explore its artifacts.'));
+    assert.ok(htmlText.includes('Drop an app to see what it left behind.'));
     assert.ok(htmlText.includes('meta name="atlas-api-token"'));
 
     assert.ok(htmlText.includes(`content="${sessionToken}"`));

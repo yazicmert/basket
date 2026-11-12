@@ -1,5 +1,4 @@
 const uiState = {
-  theme: 'dark',
   bootstrap: null,
   activeState: null,
   quarantineEntries: [],
@@ -43,6 +42,97 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+const RISK_LABELS = {
+  LOW: 'Safe to remove',
+  REVIEW: 'Review first',
+  HIGH: 'High risk',
+  PROTECTED: 'Protected'
+};
+const ORIGIN_LABELS = {
+  VERIFIED: 'Recorded by a session',
+  INFERRED: 'Likely from this app',
+  UNKNOWN: 'Unknown origin'
+};
+const NODE_TYPE_LABELS = {
+  AI_APPLICATION: 'App',
+  WORKSPACE: 'Project folder',
+  SESSION: 'Session',
+  OPERATION: 'Tool call',
+  ARTIFACT: 'File',
+  ARTIFACT_GROUP: 'Group',
+  UNKNOWN_ORIGIN: 'Unknown origin'
+};
+const RISK_DOT_CLASS = {
+  LOW: 'dot-safe',
+  REVIEW: 'dot-review',
+  HIGH: 'dot-high',
+  PROTECTED: 'dot-protected'
+};
+
+/** "REGENERABLE_CACHE" -> "Regenerable cache" */
+function sentenceCase(value) {
+  const text = String(value || '').replace(/_/g, ' ').toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function riskBadge(risk) {
+  if (!RISK_LABELS[risk]) return '';
+  return `<span class="badge badge-${risk}">${RISK_LABELS[risk]}</span>`;
+}
+
+const ORIGIN_SHORT_LABELS = { VERIFIED: 'Recorded', INFERRED: 'Likely', UNKNOWN: 'Unknown' };
+
+function originShortBadge(confidence) {
+  if (!ORIGIN_SHORT_LABELS[confidence]) return '';
+  return `<span class="badge">${ORIGIN_SHORT_LABELS[confidence]}</span>`;
+}
+
+/** Explanations from the engine use inline code marks; show them as plain text. */
+function plain(text) {
+  return escapeHtml(String(text || '').replace(/`/g, ''));
+}
+
+function originBadge(confidence) {
+  if (!ORIGIN_LABELS[confidence]) return '';
+  return `<span class="badge">${ORIGIN_LABELS[confidence]}</span>`;
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** Canvas colors come from the same CSS tokens as the rest of the UI, in both themes. */
+let cachedThemeColors = null;
+function themeColors() {
+  if (!cachedThemeColors) {
+    const css = getComputedStyle(document.documentElement);
+    const read = (name) => css.getPropertyValue(name).trim();
+    cachedThemeColors = {
+      surface: read('--surface'),
+      ink: read('--ink'),
+      ink2: read('--ink-2'),
+      ink3: read('--ink-3'),
+      line: read('--line-strong'),
+      LOW: read('--risk-safe'),
+      REVIEW: read('--risk-review'),
+      HIGH: read('--risk-high'),
+      PROTECTED: read('--risk-protected')
+    };
+  }
+  return cachedThemeColors;
+}
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  cachedThemeColors = null;
+});
 
 function showToast(message) {
   const container = document.getElementById('toast-container');
@@ -112,6 +202,11 @@ async function initApp() {
 
   bindPermissionsEvents();
 
+  // Inside the macOS app (WKWebView) the real window controls overlap the top-left corner
+  if (/AppleWebKit/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent)) {
+    document.documentElement.classList.add('native-shell');
+  }
+
   const boot = await loadBootstrap();
   // First launch: explain the permissions before anything on the real disk is read
   if (boot && boot.canSwitchMode && boot.mode === 'demo' && !homeScanGranted(boot.permissions)) {
@@ -133,16 +228,16 @@ async function loadBootstrap() {
     const isLive = boot.mode === 'live';
     document.getElementById('demo-env-badge').classList.toggle('hidden', isLive);
     document.getElementById('live-env-badge').classList.toggle('hidden', !isLive);
-    document.getElementById('bundle-dock-caption').innerHTML = isLive
-      ? 'Drag any <code>.app</code> from Finder into the workspace above, or pick an installed application:'
-      : 'Sample applications (built-in demo data). Drag one into the workspace above, or click to inspect:';
+    document.getElementById('bundle-dock-caption').textContent = isLive
+      ? 'AI apps on this Mac'
+      : 'Sample apps';
     document.getElementById('custom-bundle-path-input').value = '';
 
     renderDraggableBundles(boot.availableBundles || []);
     updateQuarantineCountPill();
     return boot;
   } catch (err) {
-    showToast(`Failed to bootstrap: ${err.message}`);
+    showToast(`Could not start: ${err.message}`);
     return null;
   }
 }
@@ -152,12 +247,12 @@ async function loadBootstrap() {
    ========================================================================= */
 
 const PERMISSION_STATUS_LABELS = {
-  GRANTED: ['Granted', 'badge-VERIFIED'],
-  NOT_GRANTED: ['Not granted', 'badge-UNKNOWN'],
-  ASKED_ON_DEMAND: ['macOS asks when needed', 'badge-INFERRED'],
-  COVERED_BY_FULL_DISK_ACCESS: ['Covered by Full Disk Access', 'badge-VERIFIED'],
-  NOT_APPLICABLE: ['Not needed on this system', 'badge-INFERRED'],
-  UNKNOWN: ['Could not be checked', 'badge-INFERRED']
+  GRANTED: 'Allowed',
+  NOT_GRANTED: 'Not allowed',
+  ASKED_ON_DEMAND: 'macOS asks when needed',
+  COVERED_BY_FULL_DISK_ACCESS: 'Covered by Full Disk Access',
+  NOT_APPLICABLE: 'Not needed on this system',
+  UNKNOWN: 'Could not be checked'
 };
 
 function homeScanGranted(permissions = []) {
@@ -184,13 +279,14 @@ function renderPermissionsModal(payload) {
   document.getElementById('permissions-intro').textContent = !payload.canSwitchMode
     ? `The home folder is fixed by the command line to ${payload.liveHomeDir}.`
     : isLive
-      ? `Artifact Atlas is scanning your real home folder (${payload.liveHomeDir}). Nothing is uploaded, and files are only ever moved to the recoverable Quarantine Vault after you confirm.`
-      : 'Artifact Atlas is showing built-in sample data. To see the leftovers of the applications on this Mac, allow it to scan your home folder. Each permission below has its own page explaining exactly what it is used for.';
+      ? 'Artifact Atlas can read your home folder. Nothing leaves this Mac, and files are only moved to Quarantine after you confirm.'
+      : 'You are looking at sample data. To see what the apps on this Mac left behind, allow Artifact Atlas to read your home folder.';
 
   const list = document.getElementById('permissions-list');
   list.innerHTML = '';
   for (const perm of payload.permissions) {
-    const [label, badgeClass] = PERMISSION_STATUS_LABELS[perm.status] || [perm.status, 'badge-INFERRED'];
+    const label = PERMISSION_STATUS_LABELS[perm.status] || perm.status;
+    const isGranted = perm.status === 'GRANTED' || perm.status === 'COVERED_BY_FULL_DISK_ACCESS';
     const card = document.createElement('div');
     card.className = 'permission-card';
     card.dataset.permissionId = perm.id;
@@ -199,8 +295,8 @@ function renderPermissionsModal(payload) {
     if (perm.id === 'home-folder-scan' && payload.canSwitchMode) {
       actions.push(
         perm.status === 'GRANTED'
-          ? '<button class="secondary-btn" data-action="revoke-home" type="button">Stop Scanning My Home Folder</button>'
-          : '<button class="primary-btn" data-action="grant-home" type="button">Allow Scanning My Home Folder</button>'
+          ? '<button class="secondary-btn" data-action="revoke-home" type="button">Stop Scanning</button>'
+          : '<button class="primary-btn" data-action="grant-home" type="button">Allow</button>'
       );
     }
     if (perm.settingsUrl && payload.platform === 'darwin') {
@@ -210,8 +306,8 @@ function renderPermissionsModal(payload) {
 
     card.innerHTML = `
       <div class="permission-card-head">
-        <span class="permission-card-title">${escapeHtml(perm.title)}<span class="permission-tag">${perm.required ? 'Required for real scans' : 'Recommended'}</span></span>
-        <span class="badge ${badgeClass}">${escapeHtml(label)}</span>
+        <span class="permission-card-title">${escapeHtml(perm.title)}<span class="permission-tag">${perm.required ? 'Required' : 'Optional'}</span></span>
+        <span class="permission-status ${isGranted ? 'is-granted' : ''}">${escapeHtml(label)}</span>
       </div>
       <p class="permission-card-summary">${escapeHtml(perm.summary)}</p>
       <div class="permission-card-actions">${actions.join('')}</div>
@@ -233,7 +329,7 @@ function renderPermissionsModal(payload) {
   }
 
   document.getElementById('done-permissions-modal-btn').textContent =
-    granted || !payload.canSwitchMode ? 'Done' : 'Continue with Sample Data';
+    granted || !payload.canSwitchMode ? 'Done' : 'Use Sample Data';
 }
 
 async function openPermissionsModal() {
@@ -254,8 +350,8 @@ async function setHomeScanConsent(granted) {
     await loadBootstrap();
     showToast(
       granted
-        ? 'Real scanning enabled. Drop an application to see its leftovers.'
-        : 'Switched back to built-in sample data.'
+        ? 'Ready. Drop an app to see what it left behind.'
+        : 'Back to sample data.'
     );
   } catch (err) {
     showToast(`Could not change permission: ${err.message}`);
@@ -285,13 +381,6 @@ function bindPermissionsEvents() {
 }
 
 function bindTopBarEvents() {
-  document.getElementById('theme-toggle-btn').addEventListener('click', () => {
-    uiState.theme = uiState.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', uiState.theme);
-    document.getElementById('theme-icon-label').textContent =
-      uiState.theme === 'dark' ? 'Light Mode' : 'Dark Mode';
-  });
-
   document.getElementById('back-to-dropzone-btn').addEventListener('click', () => {
     document.getElementById('explorer-view').classList.add('hidden');
     document.getElementById('scanning-view').classList.add('hidden');
@@ -321,7 +410,7 @@ function renderDraggableBundles(bundles) {
     : bundles;
   if (bundles.length > 0 && dockBundles.length === 0) {
     dockList.innerHTML =
-      '<span class="bundle-pill-meta">No known AI applications found in /Applications. Drop any .app here or use “Choose Application…”.</span>';
+      '<div class="empty-note">No known AI apps found. Drop any app here, or use Choose App.</div>';
   }
 
   bundles.forEach((b) => {
@@ -332,8 +421,8 @@ function renderDraggableBundles(bundles) {
     pill.setAttribute('role', 'listitem');
     pill.dataset.bundlePath = b.bundlePath;
     pill.innerHTML = `
-      <span class="bundle-pill-name">${escapeHtml(b.name)}.app</span>
-      <span class="bundle-pill-meta">${escapeHtml(b.bundleId || b.version)}</span>
+      <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
+      <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
     `;
 
     pill.addEventListener('dragstart', (e) => {
@@ -354,11 +443,8 @@ function renderDraggableBundles(bundles) {
     item.className = 'modal-bundle-item';
     item.dataset.bundlePath = b.bundlePath;
     item.innerHTML = `
-      <div>
-        <div style="font-weight:600">${escapeHtml(b.name)}.app <span style="font-weight:400;color:var(--text-muted)">v${escapeHtml(b.version)}</span></div>
-        <div style="font-size:11px;color:var(--text-secondary)">${escapeHtml(b.description || b.bundlePath)}</div>
-      </div>
-      <code>${escapeHtml(b.bundleId || 'macOS Bundle')}</code>
+      <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
+      <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
     `;
     item.addEventListener('click', async () => {
       document.getElementById('custom-bundle-path-input').value = b.bundlePath;
@@ -415,7 +501,7 @@ async function handleDroppedOrSelectedBundle(bundlePath) {
       workspacePath: uiState.pendingWorkspacePath
     });
   } catch (err) {
-    showToast(`Bundle Recognition Error: ${err.message}`);
+    showToast(`Could not read this app: ${err.message}`);
   }
 }
 
@@ -446,23 +532,18 @@ async function previewIdentifiedBundleInModal(bundlePath) {
     const app = res.application;
     uiState.pendingBundlePath = app.bundlePath;
     previewEl.classList.remove('hidden');
+    const folderCount = app.knownDataDirectories.filter((d) => d.matchedBy || d.role).length;
     previewEl.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <strong>${escapeHtml(app.name)} (v${escapeHtml(app.version)})</strong>
-        <span class="badge ${app.isSupportedAIApp ? 'badge-VERIFIED' : 'badge-INFERRED'}">
-          ${escapeHtml(app.recognitionStatus)}
-        </span>
-      </div>
+      <strong>${escapeHtml(app.name)} ${escapeHtml(app.version)}</strong>
       <div class="kv-list">
-        <div class="kv-item"><span class="kv-key">Bundle Identifier:</span><span class="kv-val">${escapeHtml(app.bundleId || 'None')}</span></div>
-        <div class="kv-item"><span class="kv-key">Executable Path (Not Executed):</span><span class="kv-val">${escapeHtml(app.executablePath || 'N/A')}</span></div>
-        <div class="kv-item"><span class="kv-key">Adapter:</span><span class="kv-val">${escapeHtml(app.adapterId)}</span></div>
-        <div class="kv-item"><span class="kv-key">Candidate Data Roots:</span><span class="kv-val">${app.knownDataDirectories.length} locations</span></div>
+        <div class="kv-item"><span class="kv-key">Identifier</span><span class="kv-val mono">${escapeHtml(app.bundleId || 'None')}</span></div>
+        <div class="kv-item"><span class="kv-key">Data folders to check</span><span class="kv-val">${folderCount}</span></div>
+        <div class="kv-item"><span class="kv-key">Session tracing</span><span class="kv-val">${app.isSupportedAIApp ? 'Supported' : 'Not available for this app'}</span></div>
       </div>
     `;
   } catch (err) {
     previewEl.classList.remove('hidden');
-    previewEl.innerHTML = `<div style="color:var(--accent-coral)">${escapeHtml(err.message)}</div>`;
+    previewEl.innerHTML = `<div>${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -476,8 +557,9 @@ async function executeScan({ bundlePath, workspacePath }) {
   document.getElementById('explorer-view').classList.add('hidden');
   document.getElementById('scanning-view').classList.remove('hidden');
 
-  document.getElementById('scan-status-title').textContent =
-    `Identifying ${bundlePath ? bundlePath.split('/').pop() : 'Workspace'} & Scanning…`;
+  document.getElementById('scan-status-title').textContent = `Scanning ${
+    bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'folder'
+  }…`;
   document.getElementById('scan-current-path').textContent = 'Preparing…';
   document.getElementById('scan-metric-roots').textContent = '0';
   document.getElementById('scan-metric-count').textContent = '0';
@@ -543,12 +625,9 @@ function transitionToExplorerView() {
   const state = uiState.activeState;
   const app = state.application;
 
-  document.getElementById('active-app-name').textContent = app
-    ? app.name
-    : 'Workspace Analysis';
-  document.getElementById('active-app-meta').textContent = app
-    ? `${app.bundleId || app.adapterId} • v${app.version} • ${state.scan.discoveredArtifactCount} artifacts (${formatBytes(state.scan.totalPhysicalBytes)} physical)`
-    : `${state.scan.discoveredArtifactCount} artifacts (${formatBytes(state.scan.totalPhysicalBytes)} physical)`;
+  document.getElementById('active-app-name').textContent = app ? app.name : 'Project folder';
+  document.getElementById('active-app-meta').textContent =
+    `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(state.scan.totalPhysicalBytes)}`;
 
   renderScanNoticesBanner(state);
   loadGraphFromState(state.graph);
@@ -565,37 +644,25 @@ function renderScanNoticesBanner(state) {
 
   if (state.application && !state.application.isSupportedAIApp) {
     notices.push(
-      `Generic macOS Adapter active for ${state.application.name}: application-level caches and saved state were discovered, while conversation-level provenance is marked UNKNOWN.`
+      `Files are linked to ${state.application.name} as a whole. Linking them to individual sessions is not available for this app.`
     );
   }
   if (state.application && (state.application.unreadableContainers || []).length > 0) {
     notices.push(
-      `${state.application.unreadableContainers.length} Library folder(s) could not be read, so some leftovers may be missing. Grant Full Disk Access under Permissions and scan again.`
+      `${pluralize(state.application.unreadableContainers.length, 'folder')} could not be read, so some files may be missing. Allow Full Disk Access under Permissions and scan again.`
     );
   }
   if (state.application && state.scan.discoveredArtifactCount === 0) {
-    notices.push(
-      `No data folders were found for ${state.application.name} in this home folder.`
-    );
+    notices.push(`No data folders were found for ${state.application.name}.`);
   }
   if (state.scan.truncated) {
     notices.push(
-      `Scan stopped at the ${state.scan.maxFilesLimit}-file limit: results and size totals are PARTIAL, and files beyond the limit were not analyzed.`
+      `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
     );
   }
   if (state.scan.permissionLimitations.length > 0) {
     notices.push(
-      `${state.scan.permissionLimitations.length} protected/unreadable path(s) skipped due to permissions.`
-    );
-  }
-  if (state.scan.skippedSymlinks.length > 0) {
-    notices.push(
-      `${state.scan.skippedSymlinks.length} symlink(s) outside authorized boundaries safely skipped.`
-    );
-  }
-  if (state.scan.deduplicatedHardlinkCount > 0) {
-    notices.push(
-      `${state.scan.deduplicatedHardlinkCount} physical hardlink(s) deduplicated (${formatBytes(state.scan.totalLogicalBytes)} logical → ${formatBytes(state.scan.totalPhysicalBytes)} physical).`
+      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped.`
     );
   }
 
@@ -603,7 +670,7 @@ function renderScanNoticesBanner(state) {
     banner.classList.add('hidden');
   } else {
     banner.classList.remove('hidden');
-    banner.innerHTML = `<span>${escapeHtml(notices.join('  •  '))}</span>`;
+    banner.textContent = notices.join(' ');
   }
 }
 
@@ -619,6 +686,8 @@ function loadGraphFromState(graphData) {
     vy: 0
   }));
   uiState.edges = graphData.edges.map((e) => ({ ...e }));
+  // Fit the whole map into view once the layout has settled, unless the user moves it first
+  uiState.fitCameraAtTick = uiState.animTick + 150;
 
   const canvas = document.getElementById('knowledge-graph-canvas');
   if (canvas) {
@@ -734,53 +803,39 @@ function stepGraphPhysics() {
   }
 }
 
-function getNodeColor(node) {
-  switch (node.nodeType) {
-    case 'AI_APPLICATION':
-      return '#38bdf8';
-    case 'WORKSPACE':
-      return '#60a5fa';
-    case 'SESSION':
-      return '#2dd4bf';
-    case 'OPERATION':
-      return '#a3e635';
-    case 'ARTIFACT_GROUP':
-      return '#e2e8f0';
-    case 'UNKNOWN_ORIGIN':
-      return '#94a3b8';
-    case 'ARTIFACT':
-      if (node.riskCategory === 'LOW') return '#34d399';
-      if (node.riskCategory === 'REVIEW') return '#fbbf24';
-      return '#f87171';
-    default:
-      return '#94a3b8';
-  }
-}
+/** Centers and scales the map so every visible item fits inside the canvas. */
+function fitCameraToGraph() {
+  const canvas = document.getElementById('knowledge-graph-canvas');
+  const nodes = uiState.nodes.filter(isNodeVisibleByFilter);
+  if (!canvas || nodes.length === 0) return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
 
-function getEdgeStyle(edge, isHighlighted) {
-  if (edge.confidence === 'VERIFIED') {
-    return {
-      color: isHighlighted ? '#34d399' : 'rgba(52, 211, 153, 0.35)',
-      dash: [],
-      width: isHighlighted ? 2.6 : 1.2
-    };
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x - n.radius);
+    maxX = Math.max(maxX, n.x + n.radius);
+    minY = Math.min(minY, n.y - n.radius);
+    maxY = Math.max(maxY, n.y + n.radius + 30);
   }
-  if (edge.confidence === 'INFERRED') {
-    return {
-      color: isHighlighted ? '#fbbf24' : 'rgba(251, 191, 36, 0.35)',
-      dash: [6, 4],
-      width: isHighlighted ? 2.4 : 1.2
-    };
-  }
-  return {
-    color: isHighlighted ? '#f87171' : 'rgba(248, 113, 113, 0.35)',
-    dash: [2, 4],
-    width: isHighlighted ? 2.4 : 1.2
+  const scale = Math.min(
+    (rect.width - 96) / Math.max(1, maxX - minX),
+    (rect.height - 120) / Math.max(1, maxY - minY),
+    1.1
+  );
+  uiState.camera = {
+    scale: Math.max(0.2, scale),
+    x: -((minX + maxX) / 2) * Math.max(0.2, scale),
+    y: -((minY + maxY) / 2) * Math.max(0.2, scale) - 10
   };
 }
 
 function renderGraphCanvas() {
   uiState.animTick += 1;
+  if (uiState.fitCameraAtTick && uiState.animTick >= uiState.fitCameraAtTick && uiState.activeTab === 'graph') {
+    uiState.fitCameraAtTick = null;
+    fitCameraToGraph();
+  }
   if (uiState.activeTab === 'graph' && uiState.nodes.length > 0) {
     stepGraphPhysics();
     drawGraph();
@@ -788,6 +843,11 @@ function renderGraphCanvas() {
   requestAnimationFrame(renderGraphCanvas);
 }
 
+/**
+ * Map drawing. Color means cleanup risk and nothing else: files are filled with their risk
+ * color, everything structural (app, folders, sessions, tool calls) is drawn in neutral ink.
+ * Line style shows how a link is known: solid = recorded, dashed = likely, dotted = unknown.
+ */
 function drawGraph() {
   const canvas = document.getElementById('knowledge-graph-canvas');
   if (!canvas) return;
@@ -795,12 +855,12 @@ function drawGraph() {
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.width / dpr;
   const height = canvas.height / dpr;
+  const colors = themeColors();
 
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
 
-  const isLight = uiState.theme === 'light';
   const visibleNodeIds = new Set(
     uiState.nodes.filter(isNodeVisibleByFilter).map((n) => n.id)
   );
@@ -816,7 +876,7 @@ function drawGraph() {
   ctx.translate(width / 2 + uiState.camera.x, height / 2 + uiState.camera.y);
   ctx.scale(uiState.camera.scale, uiState.camera.scale);
 
-  // 1. Draw Edges
+  // Links
   for (const edge of uiState.edges) {
     if (!visibleNodeIds.has(edge.sourceId) || !visibleNodeIds.has(edge.targetId)) {
       continue;
@@ -828,42 +888,34 @@ function drawGraph() {
     const isHighlighted = highlightedEdges ? highlightedEdges.has(edge.id) : false;
     const isDimmed = highlightedEdges && !isHighlighted;
 
-    const style = getEdgeStyle(edge, isHighlighted);
     ctx.save();
-    ctx.globalAlpha = isDimmed ? 0.12 : 1.0;
-    ctx.strokeStyle = style.color;
-    ctx.lineWidth = style.width;
-    ctx.setLineDash(style.dash);
-
+    ctx.globalAlpha = isDimmed ? 0.1 : isHighlighted ? 1 : 0.4;
+    ctx.strokeStyle = isHighlighted ? colors.ink : colors.ink3;
+    ctx.lineWidth = isHighlighted ? 1.6 : 1;
+    ctx.setLineDash(
+      edge.confidence === 'VERIFIED' ? [] : edge.confidence === 'INFERRED' ? [6, 4] : [1.5, 4]
+    );
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
     ctx.lineTo(target.x, target.y);
     ctx.stroke();
 
-    // Animated provenance flow particle along highlighted edges
     if (isHighlighted) {
-      const t = ((uiState.animTick * 0.012) % 1);
-      const px = source.x + (target.x - source.x) * t;
-      const py = source.y + (target.y - source.y) * t;
       ctx.setLineDash([]);
-      ctx.fillStyle = style.color;
-      ctx.beginPath();
-      ctx.arc(px, py, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Edge semantic label at midpoint
-      const mx = (source.x + target.x) / 2;
-      const my = (source.y + target.y) / 2;
-      ctx.font = '600 9.5px "SF Mono", monospace';
-      ctx.fillStyle = isLight ? '#0f172a' : '#e2e8f0';
+      ctx.font = `${10 / uiState.camera.scale}px -apple-system, sans-serif`;
+      ctx.fillStyle = colors.ink2;
       ctx.textAlign = 'center';
-      ctx.fillText(edge.edgeType, mx, my - 5);
+      ctx.fillText(
+        String(edge.edgeType || '').replace(/_/g, ' ').toLowerCase(),
+        (source.x + target.x) / 2,
+        (source.y + target.y) / 2 - 5
+      );
     }
-
     ctx.restore();
   }
 
-  // 2. Draw Nodes
+  // Items
+  const showFileLabels = uiState.camera.scale >= 0.95;
   for (const node of uiState.nodes) {
     if (!visibleNodeIds.has(node.id)) continue;
 
@@ -871,54 +923,77 @@ function drawGraph() {
       uiState.selectedNodeId === node.id || uiState.selectedArtifactIds.has(node.id);
     const isHighlighted = highlightedNodes ? highlightedNodes.has(node.id) : true;
     const isDimmed = highlightedNodes && !isHighlighted;
-    const color = getNodeColor(node);
+    const isFile = node.nodeType === 'ARTIFACT';
+    const r = node.radius;
 
     ctx.save();
-    ctx.globalAlpha = isDimmed ? 0.18 : 1.0;
+    ctx.globalAlpha = isDimmed ? 0.15 : 1;
 
-    // Outer glow ring for selected or multi-session shared artifacts
     if (isSelected) {
       ctx.beginPath();
-      ctx.arc(node.x, node.y, node.radius + 6, 0, Math.PI * 2);
-      ctx.strokeStyle = '#2dd4bf';
-      ctx.lineWidth = 2.5;
+      ctx.arc(node.x, node.y, r + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = colors.ink;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
-    } else if (
-      node.nodeType === 'ARTIFACT' &&
-      node.metadata?.sessionIds?.length > 1
-    ) {
-      // Multi-parent shared artifact double ring
+    } else if (isFile && node.metadata?.sessionIds?.length > 1) {
+      // Shared by more than one session
       ctx.beginPath();
-      ctx.arc(node.x, node.y, node.radius + 4, 0, Math.PI * 2);
-      ctx.strokeStyle = '#fbbf24';
-      ctx.setLineDash([3, 3]);
-      ctx.lineWidth = 1.6;
+      ctx.arc(node.x, node.y, r + 4, 0, Math.PI * 2);
+      ctx.strokeStyle = colors.ink3;
+      ctx.setLineDash([2, 3]);
+      ctx.lineWidth = 1;
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    // Node body
     ctx.beginPath();
-    if (node.nodeType === 'WORKSPACE' || node.nodeType === 'ARTIFACT_GROUP') {
-      const r = node.radius;
-      ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 6);
+    const isSquare = node.nodeType === 'WORKSPACE' || node.nodeType === 'ARTIFACT_GROUP';
+    if (isSquare) {
+      ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 5);
     } else {
-      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+      ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
     }
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = isLight ? '#ffffff' : '#090d16';
-    ctx.lineWidth = 2;
-    ctx.stroke();
 
-    // Node label
-    ctx.font =
-      node.nodeType === 'AI_APPLICATION' || node.nodeType === 'SESSION'
-        ? '600 11.5px -apple-system, sans-serif'
-        : '500 10.5px -apple-system, sans-serif';
-    ctx.fillStyle = isLight ? '#0f172a' : '#f1f5f9';
-    ctx.textAlign = 'center';
-    ctx.fillText(node.label, node.x, node.y + node.radius + 14);
+    const isHollow =
+      isSquare || node.nodeType === 'UNKNOWN_ORIGIN' || node.nodeType === 'OPERATION';
+    if (isHollow) {
+      ctx.fillStyle = colors.surface;
+      ctx.fill();
+      ctx.strokeStyle = node.nodeType === 'WORKSPACE' ? colors.ink : colors.ink3;
+      ctx.lineWidth = 1.5;
+      if (node.nodeType === 'UNKNOWN_ORIGIN') ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      ctx.fillStyle = isFile
+        ? colors[node.riskCategory] || colors.PROTECTED
+        : node.nodeType === 'AI_APPLICATION'
+          ? colors.ink
+          : node.nodeType === 'SESSION'
+            ? colors.ink2
+            : colors.ink3;
+      ctx.fill();
+      // Surface-colored ring keeps overlapping marks separate
+      ctx.strokeStyle = colors.surface;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    const isStructural = !isFile && node.nodeType !== 'OPERATION';
+    const showLabel =
+      isStructural ||
+      isSelected ||
+      uiState.hoveredNode === node ||
+      (highlightedNodes && isHighlighted) ||
+      showFileLabels;
+    if (showLabel) {
+      // Labels keep a constant on-screen size at any zoom level
+      const labelPx = (node.nodeType === 'AI_APPLICATION' ? 12 : 11) / uiState.camera.scale;
+      ctx.font = `${node.nodeType === 'AI_APPLICATION' ? '600 ' : ''}${labelPx}px -apple-system, sans-serif`;
+      ctx.fillStyle = isStructural || isSelected ? colors.ink : colors.ink2;
+      ctx.textAlign = 'center';
+      ctx.fillText(node.label, node.x, node.y + r + 3 + labelPx);
+    }
 
     ctx.restore();
   }
@@ -966,6 +1041,7 @@ function initGraphCanvas() {
       uiState.draggingNode = hit;
     } else {
       uiState.isPanning = true;
+      uiState.fitCameraAtTick = null;
       uiState.panStart = {
         x: e.clientX - uiState.camera.x,
         y: e.clientY - uiState.camera.y
@@ -996,12 +1072,14 @@ function initGraphCanvas() {
         tooltip.classList.remove('hidden');
         tooltip.style.left = `${Math.min(rect.width - 260, e.clientX - rect.left + 14)}px`;
         tooltip.style.top = `${Math.max(12, e.clientY - rect.top + 14)}px`;
+        const tooltipMeta = [
+          NODE_TYPE_LABELS[hit.nodeType] || sentenceCase(hit.nodeType),
+          hit.nodeType === 'ARTIFACT' ? RISK_LABELS[hit.riskCategory] : null,
+          hit.sizeBytes ? formatBytes(hit.sizeBytes) : null
+        ].filter(Boolean);
         tooltip.innerHTML = `
-          <div style="font-weight:600;margin-bottom:2px;">${escapeHtml(hit.label)}</div>
-          <div style="color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;">
-            ${escapeHtml(hit.nodeType)} • ${escapeHtml(hit.confidence)}
-            ${hit.sizeBytes ? ' • ' + formatBytes(hit.sizeBytes) : ''}
-          </div>
+          <div>${escapeHtml(hit.label)}</div>
+          <div class="tooltip-meta">${escapeHtml(tooltipMeta.join(' · '))}</div>
         `;
       } else {
         tooltip.classList.add('hidden');
@@ -1034,6 +1112,7 @@ function initGraphCanvas() {
     (e) => {
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      uiState.fitCameraAtTick = null;
       uiState.camera.scale = Math.max(0.22, Math.min(2.6, uiState.camera.scale * factor));
     },
     { passive: false }
@@ -1060,7 +1139,7 @@ async function selectNodeInGraph(node, multiSelect = false) {
     renderNodeInspector(node, res.trace);
     updateContextualToolbar();
   } catch (err) {
-    showToast(`Trace error: ${err.message}`);
+    showToast(`Could not load details: ${err.message}`);
   }
 }
 
@@ -1069,7 +1148,6 @@ function clearNodeSelection() {
   uiState.selectedArtifactIds.clear();
   uiState.activeTrace = null;
   uiState.focusMode = false;
-  document.getElementById('toggle-focus-mode-btn').textContent = 'Focus Mode: Off';
   document.getElementById('toggle-focus-mode-btn').classList.remove('active');
   document.getElementById('inspector-detail-content').classList.add('hidden');
   document.getElementById('inspector-empty-state').classList.remove('hidden');
@@ -1087,14 +1165,12 @@ function renderGlobalInspectorSummary() {
 
   box.innerHTML = `
     <div class="inspector-section">
-      <div class="inspector-section-title">Current Knowledge Graph Summary</div>
+      <div class="inspector-section-title">This scan</div>
       <div class="kv-list">
-        <div class="kv-item"><span class="kv-key">Total Graph Nodes:</span><span class="kv-val">${g.stats.totalNodes}</span></div>
-        <div class="kv-item"><span class="kv-key">Total Provenance Edges:</span><span class="kv-val">${g.stats.totalEdges}</span></div>
-        <div class="kv-item"><span class="kv-key">Verified Provenance:</span><span class="kv-val">${g.stats.verifiedArtifactCount} artifacts</span></div>
-        <div class="kv-item"><span class="kv-key">Inferred Provenance:</span><span class="kv-val">${g.stats.inferredArtifactCount} artifacts</span></div>
-        <div class="kv-item"><span class="kv-key">Unknown Origin:</span><span class="kv-val">${g.stats.unknownArtifactCount} artifacts</span></div>
-        <div class="kv-item"><span class="kv-key">Low-Risk Reclaimable:</span><span class="kv-val">${formatBytes(g.treemap.reclaimablePhysicalBytes)}</span></div>
+        <div class="kv-item"><span class="kv-key">Safe to remove</span><span class="kv-val">${formatBytes(g.treemap.reclaimablePhysicalBytes)}</span></div>
+        <div class="kv-item"><span class="kv-key">Recorded by a session</span><span class="kv-val">${pluralize(g.stats.verifiedArtifactCount, 'file')}</span></div>
+        <div class="kv-item"><span class="kv-key">Likely from this app</span><span class="kv-val">${pluralize(g.stats.inferredArtifactCount, 'file')}</span></div>
+        <div class="kv-item"><span class="kv-key">Unknown origin</span><span class="kv-val">${pluralize(g.stats.unknownArtifactCount, 'file')}</span></div>
       </div>
     </div>
   `;
@@ -1115,16 +1191,16 @@ function renderNodeInspector(node, trace) {
             (ev) => `
           <div class="evidence-card">
             <div class="evidence-card-header">
-              <span>${escapeHtml(ev.sourceType)}</span>
-              <span class="badge badge-${escapeHtml(ev.confidence)}">${escapeHtml(ev.confidence)}</span>
+              <span>${escapeHtml(sentenceCase(ev.sourceType))}</span>
+              ${originShortBadge(ev.confidence)}
             </div>
-            <div style="color:var(--text-secondary);margin-bottom:4px;">${escapeHtml(ev.summary)}</div>
-            ${ev.sourceRef ? `<div><code>${escapeHtml(ev.sourceRef)}</code></div>` : ''}
+            <div class="row-detail">${plain(ev.summary)}</div>
+            ${ev.sourceRef ? `<div class="row-path mono">${escapeHtml(ev.sourceRef)}</div>` : ''}
           </div>
         `
           )
           .join('')
-      : `<div style="color:var(--text-muted)">Direct node metadata record.</div>`;
+      : '';
 
   const hopsHtml =
     trace?.provenanceHops?.length > 0
@@ -1133,26 +1209,23 @@ function renderNodeInspector(node, trace) {
             (hop) => `
           <div class="hop-card">
             <div class="hop-card-header">
-              <span>${escapeHtml(hop.edgeType)} → ${escapeHtml(hop.toNodeLabel)}</span>
-              <span class="badge badge-${escapeHtml(hop.confidence)}">${escapeHtml(hop.confidence)}</span>
+              <span>${escapeHtml(sentenceCase(hop.edgeType))} ${escapeHtml(hop.toNodeLabel)}</span>
+              ${originShortBadge(hop.confidence)}
             </div>
-            <div style="color:var(--text-secondary);font-size:11.5px;">${escapeHtml(hop.explanation || hop.toNodeType)}</div>
+            ${hop.explanation ? `<div class="row-detail">${plain(hop.explanation)}</div>` : ''}
           </div>
         `
           )
           .join('')
-      : `<div style="color:var(--text-muted)">Root anchor node.</div>`;
+      : '';
 
   const sharedHtml =
     isArtifact && Array.isArray(meta.sharedDependencyIndicators) && meta.sharedDependencyIndicators.length > 0
       ? `
       <div class="inspector-section">
-        <div class="inspector-section-title">Shared Dependencies &amp; Multi-Session Links</div>
+        <div class="inspector-section-title">Also used elsewhere</div>
         ${meta.sharedDependencyIndicators
-          .map(
-            (ind) =>
-              `<div class="evidence-card" style="border-color:var(--accent-amber)">${escapeHtml(ind)}</div>`
-          )
+          .map((ind) => `<div class="inspector-note">${escapeHtml(ind)}</div>`)
           .join('')}
       </div>
     `
@@ -1161,42 +1234,41 @@ function renderNodeInspector(node, trace) {
   const cleanupSectionHtml = isArtifact
     ? `
       <div class="inspector-section">
-        <div class="inspector-section-title">Cleanup Classification &amp; Impact</div>
-        <div class="badge-row">
-          <span class="badge badge-${escapeHtml(meta.cleanupClassification)}">Risk: ${escapeHtml(meta.cleanupClassification)}</span>
-          <span class="badge badge-${escapeHtml(meta.provenanceConfidence)}">Origin: ${escapeHtml(meta.provenanceConfidence)}</span>
-          <span class="badge">${escapeHtml(meta.artifactType)}</span>
-        </div>
-        <p style="margin-bottom:8px;color:var(--text-primary);">${escapeHtml(meta.cleanupExplanation)}</p>
-        <p style="color:var(--text-secondary);font-size:12px;">
-          <strong>Deletion Consequence:</strong> ${escapeHtml(meta.deletionConsequences)}
-        </p>
+        <div class="inspector-section-title">If you remove it</div>
+        <div class="inspector-note">${plain(meta.cleanupExplanation)}</div>
+        <div class="inspector-note">${plain(meta.deletionConsequences)}</div>
       </div>
     `
     : '';
 
   detail.innerHTML = `
-    <div>
-      <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(node.nodeType)}</div>
-      <h3 style="font-size:16px;font-weight:600;word-break:break-all;margin:2px 0 6px;">${escapeHtml(node.label)}</h3>
-      <div class="badge-row">
-        <span class="badge badge-${escapeHtml(node.confidence)}">${escapeHtml(node.confidence)}</span>
-        <span class="badge badge-${escapeHtml(node.riskCategory)}">${escapeHtml(node.riskCategory)}</span>
+    <div class="inspector-head">
+      <div>
+        <div class="inspector-kicker">${escapeHtml(
+          isArtifact
+            ? sentenceCase(meta.artifactType)
+            : NODE_TYPE_LABELS[node.nodeType] || sentenceCase(node.nodeType)
+        )}</div>
+        <h3 class="inspector-title">${escapeHtml(node.label)}</h3>
       </div>
+      ${
+        isArtifact
+          ? `<div class="badge-row">${riskBadge(meta.cleanupClassification)}${originBadge(meta.provenanceConfidence)}</div>`
+          : ''
+      }
       <div class="kv-list">
-        ${
-          meta.canonicalPath
-            ? `<div class="kv-item"><span class="kv-key">Canonical Path:</span><span class="kv-val">${escapeHtml(meta.canonicalPath)}</span></div>`
-            : ''
-        }
         ${
           isArtifact
             ? `
-          <div class="kv-item"><span class="kv-key">Physical Size:</span><span class="kv-val">${formatBytes(meta.sizeBytes)}</span></div>
-          <div class="kv-item"><span class="kv-key">Inode Identity:</span><span class="kv-val">${escapeHtml(meta.physicalInodeKey || 'N/A')} (nlink=${meta.hardlinkCount || 1})</span></div>
-          <div class="kv-item"><span class="kv-key">Modified:</span><span class="kv-val">${escapeHtml(meta.modifiedAt || 'Unknown')}</span></div>
-          <div class="kv-item"><span class="kv-key">Sessions Linked:</span><span class="kv-val">${meta.sessionIds?.length || 0}</span></div>
+          <div class="kv-item"><span class="kv-key">Size</span><span class="kv-val">${formatBytes(meta.sizeBytes)}</span></div>
+          <div class="kv-item"><span class="kv-key">Modified</span><span class="kv-val">${escapeHtml(formatDate(meta.modifiedAt) || 'Unknown')}</span></div>
+          <div class="kv-item"><span class="kv-key">Sessions</span><span class="kv-val">${meta.sessionIds?.length || 0}</span></div>
         `
+            : ''
+        }
+        ${
+          meta.canonicalPath
+            ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.canonicalPath)}</span></div>`
             : ''
         }
       </div>
@@ -1205,15 +1277,23 @@ function renderNodeInspector(node, trace) {
     ${cleanupSectionHtml}
     ${sharedHtml}
 
-    <div class="inspector-section">
-      <div class="inspector-section-title">Provenance Evidence Records</div>
+    ${
+      evidenceHtml
+        ? `<div class="inspector-section">
+      <div class="inspector-section-title">How we know</div>
       ${evidenceHtml}
-    </div>
+    </div>`
+        : ''
+    }
 
-    <div class="inspector-section">
-      <div class="inspector-section-title">Traced Provenance Path (${trace?.provenanceHops?.length || 0} Hops)</div>
+    ${
+      hopsHtml
+        ? `<div class="inspector-section">
+      <div class="inspector-section-title">Where it came from</div>
       ${hopsHtml}
-    </div>
+    </div>`
+        : ''
+    }
   `;
 }
 
@@ -1245,10 +1325,6 @@ function bindExplorerControls() {
     uiState.searchQuery = e.target.value.trim();
   });
 
-  document.getElementById('filter-node-type').addEventListener('change', (e) => {
-    uiState.filterNodeType = e.target.value;
-  });
-
   document.getElementById('filter-confidence').addEventListener('change', (e) => {
     uiState.filterConfidence = e.target.value;
   });
@@ -1259,11 +1335,10 @@ function bindExplorerControls() {
 
   document.getElementById('toggle-focus-mode-btn').addEventListener('click', (e) => {
     if (!uiState.activeTrace) {
-      showToast('Select a node in the graph first to enable Focus Mode.');
+      showToast('Select an item on the map first.');
       return;
     }
     uiState.focusMode = !uiState.focusMode;
-    e.currentTarget.textContent = `Focus Mode: ${uiState.focusMode ? 'On' : 'Off'}`;
     e.currentTarget.classList.toggle('active', uiState.focusMode);
   });
 
@@ -1274,11 +1349,15 @@ function bindExplorerControls() {
     );
     uiState.selectedArtifactIds = new Set(lowRiskArtifacts.map((a) => a.id));
     updateContextualToolbar();
-    showToast(`Selected ${lowRiskArtifacts.length} low-risk regenerable artifact(s).`);
+    showToast(
+      lowRiskArtifacts.length > 0
+        ? `Selected ${pluralize(lowRiskArtifacts.length, 'file')} that ${lowRiskArtifacts.length === 1 ? 'is' : 'are'} safe to remove.`
+        : 'Nothing here is marked safe to remove.'
+    );
   });
 
   document.getElementById('reset-camera-btn').addEventListener('click', () => {
-    uiState.camera = { x: 0, y: 0, scale: 0.72 };
+    fitCameraToGraph();
   });
 
   document.getElementById('treemap-group-by').addEventListener('change', (e) => {
@@ -1288,7 +1367,7 @@ function bindExplorerControls() {
 
   document.getElementById('cancel-scan-btn').addEventListener('click', async () => {
     await apiRequest('/api/scan/cancel', 'POST');
-    showToast('Scan cancelled.');
+    showToast('Scan canceled.');
   });
 }
 
@@ -1296,49 +1375,68 @@ function renderTreemapView() {
   const tm = uiState.activeState?.graph?.treemap;
   if (!tm) return;
 
+  const keepBytes = tm.highRiskPhysicalBytes + tm.protectedOrUncertainPhysicalBytes;
+  const shares = [
+    ['dot-safe', tm.reclaimablePhysicalBytes, 'Safe to remove'],
+    ['dot-review', tm.reviewPhysicalBytes, 'Review first'],
+    ['dot-high', keepBytes, 'High risk or protected']
+  ].filter(([, bytes]) => bytes > 0);
+
   const strip = document.getElementById('treemap-summary-strip');
   strip.innerHTML = `
-    <div class="treemap-stat-card">
-      <span class="metric-label">Total Physical Usage</span>
-      <span class="metric-value">${formatBytes(tm.totalPhysicalBytes)}</span>
+    <div class="size-totals">
+      <div class="size-total">
+        <span class="metric-value">${formatBytes(tm.totalPhysicalBytes)}</span>
+        <span class="metric-label">Total</span>
+      </div>
+      <div class="size-total">
+        <span class="metric-value">${formatBytes(tm.reclaimablePhysicalBytes)}</span>
+        <span class="badge badge-LOW">Safe to remove</span>
+      </div>
+      <div class="size-total">
+        <span class="metric-value">${formatBytes(tm.reviewPhysicalBytes)}</span>
+        <span class="badge badge-REVIEW">Review first</span>
+      </div>
+      <div class="size-total">
+        <span class="metric-value">${formatBytes(keepBytes)}</span>
+        <span class="badge badge-HIGH">High risk or protected</span>
+      </div>
     </div>
-    <div class="treemap-stat-card">
-      <span class="metric-label">Reclaimable (LOW Risk)</span>
-      <span class="metric-value" style="color:var(--accent-emerald)">${formatBytes(tm.reclaimablePhysicalBytes)}</span>
-    </div>
-    <div class="treemap-stat-card">
-      <span class="metric-label">Review Required</span>
-      <span class="metric-value" style="color:var(--accent-amber)">${formatBytes(tm.reviewPhysicalBytes)}</span>
-    </div>
-    <div class="treemap-stat-card">
-      <span class="metric-label">High Risk / Protected</span>
-      <span class="metric-value" style="color:var(--accent-coral)">${formatBytes(tm.highRiskPhysicalBytes + tm.protectedOrUncertainPhysicalBytes)}</span>
+    <div class="risk-share-bar" role="img" aria-label="Share of disk space by risk">
+      ${shares
+        .map(
+          ([cls, bytes, label]) =>
+            `<span class="${cls}" style="flex:${bytes} 1 0" title="${label}: ${formatBytes(bytes)}"></span>`
+        )
+        .join('')}
     </div>
   `;
 
   const grid = document.getElementById('treemap-grid-container');
   grid.innerHTML = '';
 
-  const cells = tm[uiState.treemapGroupBy] || tm.byGroup || [];
-  const totalBytes = Math.max(1, tm.totalPhysicalBytes);
+  const cells = [...(tm[uiState.treemapGroupBy] || tm.byGroup || [])].sort(
+    (a, b) => b.bytes - a.bytes
+  );
+  const maxBytes = Math.max(1, ...cells.map((c) => c.bytes));
 
   cells.forEach((cell) => {
-    const sharePct = Math.max(14, Math.min(100, Math.round((cell.bytes / totalBytes) * 100)));
+    const risk = cell.riskCategory || 'REVIEW';
     const tile = document.createElement('div');
-    tile.className = `treemap-tile risk-${cell.riskCategory || 'REVIEW'}`;
-    tile.style.flex = `${sharePct} 1 ${Math.max(180, sharePct * 3.5)}px`;
+    tile.className = 'treemap-tile';
+    tile.title = `${cell.label}: ${formatBytes(cell.bytes)} · ${RISK_LABELS[risk] || ''}`;
     tile.innerHTML = `
-      <div>
-        <div style="font-weight:600;font-size:13.5px;margin-bottom:4px;">${escapeHtml(cell.label)}</div>
-        <div style="font-size:11.5px;color:var(--text-secondary)">${cell.artifactCount} artifact(s)</div>
+      <div class="size-row-label">
+        <div class="size-row-name">${escapeHtml(cell.label)}</div>
+        <div class="size-row-count">${pluralize(cell.artifactCount, 'file')}</div>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px;">
-        <span style="font-family:var(--font-mono);font-size:15px;font-weight:600;">${formatBytes(cell.bytes)}</span>
-        <span style="font-size:11px;color:var(--text-muted)">${ ((cell.bytes / totalBytes) * 100).toFixed(1) }%</span>
+      <div class="size-row-track">
+        <div class="size-row-bar ${RISK_DOT_CLASS[risk] || 'dot-review'}" style="width:${Math.max(0.5, (cell.bytes / maxBytes) * 100)}%"></div>
       </div>
+      <div class="size-row-value">${formatBytes(cell.bytes)}</div>
     `;
 
-    // Clicking a Treemap region focuses the corresponding nodes in the Knowledge Graph (Section 6)
+    // Clicking a row selects its files on the map
     tile.addEventListener('click', async () => {
       document.getElementById('tab-graph-btn').click();
       const targetNodeId =
@@ -1362,40 +1460,34 @@ function renderQuarantineVaultView() {
   if (!listEl) return;
 
   if (!uiState.quarantineEntries || uiState.quarantineEntries.length === 0) {
-    listEl.innerHTML = `
-      <div class="evidence-card" style="padding:20px;text-align:center;color:var(--text-secondary)">
-        No artifacts are currently in quarantine. Select low-risk artifacts in the Knowledge Graph and choose <strong>Delete (Move to Quarantine)</strong> to safely reclaim space.
-      </div>
-    `;
+    listEl.innerHTML = `<div class="empty-note">Nothing in Quarantine. Select files on the map and choose Move to Quarantine.</div>`;
     return;
   }
 
   listEl.innerHTML = '';
   uiState.quarantineEntries.forEach((entry) => {
+    const isHeld = entry.status === 'QUARANTINED';
     const row = document.createElement('div');
     row.className = 'quarantine-row-card';
+    row.title = `SHA-256 ${entry.sha256 || 'not recorded'}`;
     row.innerHTML = `
-      <div style="min-width:0;flex:1;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-          <strong style="font-size:13.5px;">${escapeHtml(entry.artifactName)}</strong>
-          <span class="badge badge-${escapeHtml(entry.riskCategory)}">${escapeHtml(entry.riskCategory)}</span>
-          <span class="badge">${escapeHtml(entry.status)}</span>
-          <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-secondary)">${formatBytes(entry.sizeBytes)}</span>
+      <div class="quarantine-row-main">
+        <div class="quarantine-row-title">
+          <strong>${escapeHtml(entry.artifactName)}</strong>
+          <span>${formatBytes(entry.sizeBytes)}</span>
+          <span class="metric-label">${
+            isHeld
+              ? `Removed ${escapeHtml(formatDate(entry.quarantinedAt))}`
+              : `Restored ${escapeHtml(formatDate(entry.restoredAt))}`
+          }</span>
         </div>
-        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);word-break:break-all;">
-          Original Path: ${escapeHtml(entry.originalPath)}
-        </div>
-        <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);margin-top:2px;">
-          Manifest: ${escapeHtml(entry.manifestPath)} • SHA-256: ${escapeHtml((entry.sha256 || '').slice(0, 16))}…
-        </div>
+        <div class="quarantine-row-path mono">${escapeHtml(entry.originalPath)}</div>
       </div>
-      <div>
-        ${
-          entry.status === 'QUARANTINED'
-            ? `<button class="primary-btn restore-entry-btn" data-entry-id="${escapeHtml(entry.id)}" type="button">Restore to Original Path</button>`
-            : `<span style="font-size:11.5px;color:var(--text-muted)">Restored ${escapeHtml(entry.restoredAt || '')}</span>`
-        }
-      </div>
+      ${
+        isHeld
+          ? `<button class="secondary-btn restore-entry-btn" data-entry-id="${escapeHtml(entry.id)}" type="button">Put Back</button>`
+          : ''
+      }
     `;
     listEl.appendChild(row);
   });
@@ -1417,11 +1509,11 @@ function renderQuarantineVaultView() {
         updateQuarantineCountPill();
         showToast(
           res.displacedEntry
-            ? `Restored artifact to ${res.restoredToPath}; the file that was there is now recoverable in the Quarantine Vault.`
-            : `Restored artifact to ${res.restoredToPath}`
+            ? 'Put back. The file that was there is now in Quarantine.'
+            : 'Put back.'
         );
       } catch (err) {
-        showToast(`Restore blocked: ${err.message}`);
+        showToast(`Could not put it back: ${err.message}`);
       }
     });
   });
@@ -1448,7 +1540,7 @@ function updateContextualToolbar() {
   }
 
   toolbar.classList.remove('hidden');
-  document.getElementById('selected-count-badge').textContent = `${count} artifact${count > 1 ? 's' : ''} selected`;
+  document.getElementById('selected-count-badge').textContent = `${pluralize(count, 'file')} selected`;
 
   const seenInodes = new Set();
   let physicalBytes = 0;
@@ -1462,7 +1554,7 @@ function updateContextualToolbar() {
       }
     }
   }
-  document.getElementById('selected-size-label').textContent = `${formatBytes(physicalBytes)} physical`;
+  document.getElementById('selected-size-label').textContent = formatBytes(physicalBytes);
 }
 
 function bindContextualToolbarEvents() {
@@ -1498,9 +1590,9 @@ function bindContextualToolbarEvents() {
         uiState.selectedArtifactIds.add(id);
       }
       updateContextualToolbar();
-      showToast(`Added ${uiState.activeTrace.relatedArtifactIds.length} related artifact(s) to selection.`);
+      showToast(`Added ${pluralize(uiState.activeTrace.relatedArtifactIds.length, 'related file')}.`);
     } else {
-      showToast('No additional related artifacts found for this node.');
+      showToast('No related files found.');
     }
   });
 
@@ -1532,48 +1624,44 @@ async function openCleanupReviewModal(allowHighRiskSingleOverride = false) {
 
     confirmBtn.disabled = review.totalEligibleCount === 0;
 
-    const eligibleHtml =
-      review.eligibleItems.length > 0
-        ? review.eligibleItems
-            .map(
-              (item) => `
-            <div class="evidence-card" style="border-left:3px solid var(--accent-emerald)">
+    const eligibleHtml = review.eligibleItems
+      .map(
+        (item) => `
+            <div class="evidence-card">
               <div class="evidence-card-header">
-                <span>${escapeHtml(item.name)} (${formatBytes(item.sizeBytes)})</span>
-                <span class="badge badge-${escapeHtml(item.riskCategory)}">${escapeHtml(item.riskCategory)}</span>
+                <span>${escapeHtml(item.name)}</span>
+                <span>${formatBytes(item.sizeBytes)}</span>
               </div>
-              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:4px;">${escapeHtml(item.canonicalPath)}</div>
-              <div style="color:var(--text-secondary)">${escapeHtml(item.explanation)}</div>
+              <div class="badge-row">${riskBadge(item.riskCategory)}${originBadge(item.provenanceConfidence)}</div>
+              <div class="row-path mono">${escapeHtml(item.canonicalPath)}</div>
+              <div class="row-detail">${plain(item.explanation)}</div>
               ${
                 item.warnings?.length > 0
-                  ? `<div style="color:var(--accent-amber);margin-top:4px;">Warning: ${escapeHtml(item.warnings.join('; '))}</div>`
+                  ? `<div class="row-warning">Note: ${escapeHtml(item.warnings.join(' '))}</div>`
                   : ''
               }
             </div>
           `
-            )
-            .join('')
-        : `<div style="color:var(--text-muted)">No eligible artifacts in current selection.</div>`;
+      )
+      .join('');
 
     const blockedHtml =
       review.blockedItems.length > 0
         ? `
         <div>
-          <div class="field-label" style="color:var(--accent-coral);margin-bottom:6px;">
-            Blocked by Safety Policy (${review.totalBlockedCount} item${review.totalBlockedCount > 1 ? 's' : ''}):
-          </div>
+          <div class="field-label">Not moved (${review.totalBlockedCount})</div>
           ${review.blockedItems
             .map(
               (b) => `
-              <div class="evidence-card" style="border-left:3px solid var(--accent-coral)">
+              <div class="evidence-card">
                 <div class="evidence-card-header">
                   <span>${escapeHtml(b.name)}</span>
-                  <span class="badge badge-HIGH">${escapeHtml(b.code)}</span>
+                  ${riskBadge(b.riskCategory)}
                 </div>
-                <div style="color:var(--text-secondary)">${escapeHtml((b.reasons || []).join(' '))}</div>
+                <div class="row-detail">${plain((b.reasons || []).join(' '))}</div>
                 ${
                   b.code === 'HIGH_RISK_CONFIRMATION_REQUIRED' && !review.isBulkRequest
-                    ? `<button id="override-high-risk-btn" class="danger-outline-btn" style="margin-top:8px;" type="button">Acknowledge High-Risk &amp; Allow Single-File Quarantine</button>`
+                    ? `<div><button id="override-high-risk-btn" class="secondary-btn" type="button">Move It Anyway</button></div>`
                     : ''
                 }
               </div>
@@ -1585,22 +1673,22 @@ async function openCleanupReviewModal(allowHighRiskSingleOverride = false) {
         : '';
 
     body.innerHTML = `
-      <div class="identified-app-preview">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <strong>Operation: ${escapeHtml(review.operationLabel)}</strong>
-          <span style="font-family:var(--font-mono);font-weight:600;color:var(--accent-emerald)">
-            ${review.totalEligibleCount} eligible • ${formatBytes(review.totalReclaimableBytes)}
-          </span>
+      <div class="review-summary">
+        <div class="review-summary-head">
+          <span>${pluralize(review.totalEligibleCount, 'file')} will be moved</span>
+          <span>${formatBytes(review.totalReclaimableBytes)}</span>
         </div>
-        <div style="font-size:11.5px;color:var(--text-secondary);margin-top:4px;">
-          Files are verified via 10 pre-flight checks (inode, mtime, size, symlink boundary, and permission guards) and moved to <code>${escapeHtml(review.quarantineVaultLocation)}</code> with a durable recovery manifest.
-        </div>
+        <div class="row-detail">Each file is checked again right before it moves. You can put files back from Quarantine at any time.</div>
       </div>
 
-      <div>
-        <div class="field-label" style="margin-bottom:6px;">Eligible for Recoverable Quarantine (${review.totalEligibleCount}):</div>
+      ${
+        eligibleHtml
+          ? `<div>
+        <div class="field-label">To be moved</div>
         ${eligibleHtml}
-      </div>
+      </div>`
+          : ''
+      }
 
       ${blockedHtml}
     `;
@@ -1614,7 +1702,7 @@ async function openCleanupReviewModal(allowHighRiskSingleOverride = false) {
 
     modal.classList.remove('hidden');
   } catch (err) {
-    showToast(`Cleanup review error: ${err.message}`);
+    showToast(`Could not prepare the review: ${err.message}`);
   }
 }
 
@@ -1669,11 +1757,9 @@ function bindModalEvents() {
       renderQuarantineVaultView();
       updateQuarantineCountPill();
 
-      showToast(
-        `Moved ${res.quarantinedEntries.length} artifact(s) to Quarantine Vault (Batch ${res.batchId}).`
-      );
+      showToast(`Moved ${pluralize(res.quarantinedEntries.length, 'file')} to Quarantine.`);
     } catch (err) {
-      showToast(`Quarantine error: ${err.message}`);
+      showToast(`Could not move to Quarantine: ${err.message}`);
     }
   });
 
@@ -1688,9 +1774,9 @@ function bindModalEvents() {
       renderDraggableBundles(res.availableBundles || []);
       closeSettings();
       document.getElementById('back-to-dropzone-btn').click();
-      showToast('Sandbox fixtures reset to initial state.');
+      showToast('Sample data reset.');
     } catch (err) {
-      showToast(`Reset error: ${err.message}`);
+      showToast(`Could not reset: ${err.message}`);
     }
   });
 }
@@ -1700,15 +1786,15 @@ function openSettingsModal() {
   const body = document.getElementById('settings-modal-body');
   const boot = uiState.bootstrap || {};
 
+  const isLive = boot.mode === 'live';
+  document.getElementById('reset-demo-sandbox-btn').classList.toggle('hidden', isLive);
   body.innerHTML = `
     <div class="kv-list">
-      <div class="kv-item"><span class="kv-key">Privacy &amp; Telemetry:</span><span class="kv-val">100% Local-First (Zero Network / Zero Telemetry)</span></div>
-      <div class="kv-item"><span class="kv-key">Application Execution Policy:</span><span class="kv-val">Never Execute Dropped .app Binaries</span></div>
-      <div class="kv-item"><span class="kv-key">Symlink Boundary Policy:</span><span class="kv-val">Reject Out-of-Boundary Symlinks (lstat + realpath)</span></div>
-      <div class="kv-item"><span class="kv-key">Hardlink Accounting:</span><span class="kv-val">Deduplicate by Physical Inode (dev:ino)</span></div>
-      <div class="kv-item"><span class="kv-key">Active Home Scope:</span><span class="kv-val">${escapeHtml(boot.homeDir || '')}</span></div>
-      <div class="kv-item"><span class="kv-key">Quarantine Vault Path:</span><span class="kv-val">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
+      <div class="kv-item"><span class="kv-key">Showing</span><span class="kv-val">${isLive ? 'Your Mac' : 'Sample data'}</span></div>
+      <div class="kv-item"><span class="kv-key">Home folder</span><span class="kv-val mono">${escapeHtml(boot.homeDir || '')}</span></div>
+      <div class="kv-item"><span class="kv-key">Quarantine folder</span><span class="kv-val mono">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
     </div>
+    <p class="inspector-note">Nothing leaves this Mac. Apps you drop are read, never opened. Removed files go to Quarantine and can be put back.</p>
   `;
   modal.classList.remove('hidden');
 }
