@@ -5,7 +5,10 @@
   'use strict';
 
   var root = document.getElementById('demo');
-  if (!root || !document.createElementNS) return;
+  var Icons = window.AtlasIcons;
+  if (!root || !document.createElementNS || !Icons) return;
+  var mac = document.getElementById('mac');
+  var desktop = document.getElementById('mac-desktop');
 
   var SVG = 'http://www.w3.org/2000/svg';
   var RISK = {
@@ -22,12 +25,12 @@
     { id: 'sA', kind: 'session', label: 'Session Alpha', x: 596, y: 262 },
     { id: 'sB', kind: 'session', label: 'Session Beta', x: 318, y: 176 },
     { id: 'unk', kind: 'unknown', label: 'Unknown origin', x: 150, y: 96 },
-    { id: 'gLogs', kind: 'group', label: 'Diagnostic Logs', x: 708, y: 238 },
-    { id: 'gCache', kind: 'group', label: 'Regenerable Caches', x: 372, y: 446 },
-    { id: 'gTmp', kind: 'group', label: 'Temporary Files', x: 612, y: 404 },
-    { id: 'gHist', kind: 'group', label: 'Session Histories', x: 232, y: 366 },
-    { id: 'gBuild', kind: 'group', label: 'Build Outputs', x: 176, y: 250 },
-    { id: 'gSrc', kind: 'group', label: 'Source & User Content', x: 690, y: 110 },
+    { id: 'gLogs', kind: 'group', type: 'LOG', label: 'Diagnostic Logs', x: 708, y: 238 },
+    { id: 'gCache', kind: 'group', type: 'REGENERABLE_CACHE', label: 'Regenerable Caches', x: 372, y: 446 },
+    { id: 'gTmp', kind: 'group', type: 'TEMP_FILE', label: 'Temporary Files', x: 612, y: 404 },
+    { id: 'gHist', kind: 'group', type: 'SESSION_HISTORY', label: 'Session Histories', x: 232, y: 366 },
+    { id: 'gBuild', kind: 'group', type: 'BUILD_OUTPUT', label: 'Build Outputs', x: 176, y: 250 },
+    { id: 'gSrc', kind: 'group', type: 'USER_CONTENT', label: 'Source & User Content', x: 690, y: 110 },
 
     { id: 'f1', kind: 'file', label: 'mcp-transport-sess_alpha_01.log', x: 806, y: 300, size: 14848, risk: 'safe',
       group: 'gLogs', sessions: [['sA', 'likely']],
@@ -66,6 +69,37 @@
 
   var byId = {};
   nodes.forEach(function (n) { byId[n.id] = n; });
+  // A file has the artifact type of its group. The two files of unknown origin are typed here.
+  var LOOSE_TYPES = { f10: 'UNKNOWN', f11: 'LOG' };
+  nodes.forEach(function (n) {
+    if (n.kind === 'file') n.type = n.group ? byId[n.group].type : LOOSE_TYPES[n.id];
+  });
+
+  // Sample apps the opening screen offers, as in the real app.
+  var SAMPLE_APPS = [['Claude Code', 'terminal'], ['Cursor', 'pointer'], ['Codex CLI', 'braces'], ['NebulaSketch', 'app']];
+
+  function iconOf(n) {
+    if (n.kind === 'app') return Icons.forApp({ name: n.label });
+    if (n.kind === 'workspace') return 'folder';
+    if (n.kind === 'session') return 'session';
+    if (n.kind === 'unknown') return 'unknown';
+    return Icons.forArtifactType(n.type);
+  }
+
+  function iconEl(name, size) {
+    var span = document.createElement('span');
+    span.className = 'demo-icon';
+    span.innerHTML = Icons.svg(name, size || 14);
+    return span;
+  }
+
+  // An application tile: a glyph on an ink square, like the app's own fallback icon.
+  function appTileEl(icon, size) {
+    var t = document.createElement('span');
+    t.className = 'demo-appicon';
+    t.innerHTML = Icons.svg(icon, size || 15);
+    return t;
+  }
   var files = nodes.filter(function (n) { return n.kind === 'file'; });
 
   // Edges: [from, to, strength]
@@ -146,6 +180,7 @@
   root.textContent = '';
   var bar = html('div', 'demo-bar');
   var appName = html('div', 'demo-app');
+  appName.appendChild(appTileEl('terminal', 15));
   appName.appendChild(html('strong', null, 'Claude Code'));
   var totals = html('span', 'demo-muted');
   appName.appendChild(totals);
@@ -209,17 +244,69 @@
   fakeButtons.appendChild(html('span', 'demo-btn ghost', 'Scan a project folder'));
   dropzone.appendChild(fakeButtons);
   dropView.appendChild(dropzone);
+  var sampleList = html('div', 'demo-samples');
+  SAMPLE_APPS.forEach(function (app) {
+    var row = html('div', 'demo-sample');
+    row.appendChild(appTileEl(app[1], 13));
+    row.appendChild(html('span', null, app[0]));
+    sampleList.appendChild(row);
+  });
+  dropzone.appendChild(sampleList);
+
+  // The Mac around the window: a Finder window to drag from, the Dock, and the dragged icon.
+  var finderSource = null;
   var tile = html('div', 'demo-tile');
-  tile.appendChild(html('span', 'demo-tile-icon', '>_'));
-  tile.appendChild(html('span', 'demo-tile-name', 'Claude Code.app'));
+  tile.hidden = true;
+  tile.setAttribute('aria-hidden', 'true');
+  tile.appendChild(appTileEl('terminal', 24));
+  tile.appendChild(html('span', 'demo-tile-name', 'Claude Code'));
   var cursor = el('svg', { viewBox: '0 0 16 20', 'class': 'demo-cursor' });
   cursor.appendChild(el('path', { d: 'M1 1v15l4-3.6 2.7 6 2.4-1.1-2.7-5.9H13z' }));
   tile.appendChild(cursor);
-  dropView.appendChild(tile);
+
+  if (desktop) {
+    var finder = html('div', 'finder');
+    finder.setAttribute('aria-hidden', 'true');
+    var finderBar = html('div', 'window-bar');
+    finderBar.innerHTML = '<i></i><i></i><i></i><span>Applications</span>';
+    finder.appendChild(finderBar);
+    var finderGrid = html('div', 'finder-grid');
+    SAMPLE_APPS.forEach(function (app, i) {
+      var item = html('div', 'finder-item');
+      var icon = appTileEl(app[1], 22);
+      item.appendChild(icon);
+      item.appendChild(html('span', null, app[0]));
+      finderGrid.appendChild(item);
+      if (i === 0) finderSource = icon;
+    });
+    finder.appendChild(finderGrid);
+    desktop.appendChild(finder);
+    desktop.appendChild(tile);
+
+    var dock = document.getElementById('mac-dock');
+    if (dock) {
+      [['folder', ''], ['terminal', ''], ['pointer', ''], ['braces', ''], ['atlas', 'running']].forEach(function (d) {
+        var slot = html('span', 'dock-item ' + d[1]);
+        slot.appendChild(appTileEl(d[0], 20));
+        dock.appendChild(slot);
+      });
+    }
+    var clock = document.getElementById('mac-clock');
+    if (clock) {
+      try {
+        var now = new Date();
+        clock.textContent = now.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' +
+          now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      } catch (err) { /* keep the static text */ }
+    }
+  }
   intro.appendChild(dropView);
 
   var scanView = html('div', 'demo-scan');
-  scanView.appendChild(html('strong', 'demo-scan-title', 'Scanning Claude Code\u2026'));
+  var scanTitle = html('strong', 'demo-scan-title');
+  scanTitle.appendChild(appTileEl('terminal', 15));
+  scanTitle.appendChild(document.createTextNode('Scanning Claude Code\u2026'));
+  scanView.appendChild(scanTitle);
   scanView.appendChild(html('span', 'demo-muted', 'Reading folder'));
   var scanPath = html('code', 'demo-scan-path', 'Preparing\u2026');
   scanView.appendChild(scanPath);
@@ -249,16 +336,23 @@
     var g = el('g', { 'class': 'demo-node ' + n.kind + (n.risk ? ' ' + n.risk : ''), tabindex: '0', role: 'button' });
     g.setAttribute('aria-label', n.label + (n.risk ? ', ' + RISK[n.risk] : ''));
     var shape;
-    if (n.kind === 'app') shape = el('circle', { cx: n.x, cy: n.y, r: 11 });
-    else if (n.kind === 'session') shape = el('circle', { cx: n.x, cy: n.y, r: 7 });
-    else if (n.kind === 'unknown') shape = el('circle', { cx: n.x, cy: n.y, r: 9 });
-    else if (n.kind === 'file') shape = el('circle', { cx: n.x, cy: n.y, r: 6.5 });
-    else shape = el('rect', { x: n.x - 8, y: n.y - 8, width: 16, height: 16, rx: n.kind === 'group' ? 4 : 2 });
-    g.appendChild(el('circle', { cx: n.x, cy: n.y, r: 18, 'class': 'demo-hit' }));
+    var glyphSize;
+    if (n.kind === 'app') { shape = el('circle', { cx: n.x, cy: n.y, r: 15 }); glyphSize = 17; }
+    else if (n.kind === 'session') { shape = el('circle', { cx: n.x, cy: n.y, r: 10.5 }); glyphSize = 12.5; }
+    else if (n.kind === 'unknown') { shape = el('circle', { cx: n.x, cy: n.y, r: 11 }); glyphSize = 13; }
+    else if (n.kind === 'file') { shape = el('circle', { cx: n.x, cy: n.y, r: 9.5 }); glyphSize = 11.5; }
+    else { shape = el('rect', { x: n.x - 11, y: n.y - 11, width: 22, height: 22, rx: n.kind === 'group' ? 6 : 3 }); glyphSize = 14; }
+    g.appendChild(el('circle', { cx: n.x, cy: n.y, r: 21, 'class': 'demo-hit' }));
     g.appendChild(shape);
+    var glyph = el('g', {
+      'class': 'demo-glyph',
+      transform: 'translate(' + (n.x - glyphSize / 2) + ' ' + (n.y - glyphSize / 2) + ') scale(' + (glyphSize / 24) + ')'
+    });
+    Icons.paths[iconOf(n)].forEach(function (d) { glyph.appendChild(el('path', { d: d })); });
+    g.appendChild(glyph);
     var anchor = n.x > 700 ? 'end' : n.x < 130 ? 'start' : 'middle';
-    var tx = anchor === 'end' ? n.x + 10 : anchor === 'start' ? n.x - 10 : n.x;
-    g.appendChild(el('text', { x: tx, y: n.y + (n.kind === 'app' ? 30 : 25), 'text-anchor': anchor }, n.label));
+    var tx = anchor === 'end' ? n.x + 12 : anchor === 'start' ? n.x - 12 : n.x;
+    g.appendChild(el('text', { x: tx, y: n.y + (n.kind === 'app' ? 33 : 29), 'text-anchor': anchor }, n.label));
     g.addEventListener('click', function () { select(n.id); });
     g.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(n.id); }
@@ -301,7 +395,10 @@
       return;
     }
     var kindLabel = { app: 'Application', workspace: 'Workspace', session: 'Session', group: 'Group', unknown: 'Origin', file: 'File' };
-    panel.appendChild(html('div', 'demo-kind', kindLabel[sel.kind]));
+    var kind = html('div', 'demo-kind');
+    kind.appendChild(iconEl(iconOf(sel), 14));
+    kind.appendChild(document.createTextNode(kindLabel[sel.kind]));
+    panel.appendChild(kind);
     panel.appendChild(html('h3', 'demo-title', sel.label));
 
     if (sel.kind !== 'file') {
@@ -405,6 +502,7 @@
     state.quarantined.forEach(function (id) {
       var f = byId[id];
       var row = html('div', 'demo-qrow');
+      row.appendChild(iconEl(iconOf(f), 18));
       var text = html('div', 'demo-qtext');
       text.appendChild(html('strong', null, f.label));
       text.appendChild(html('span', 'demo-muted', formatBytes(f.size) + ' · manifest written, SHA-256 recorded'));
@@ -476,7 +574,29 @@
     '~/Projects/neural-search-engine/src'
   ];
   var TOTAL_BYTES = files.reduce(function (sum, f) { return sum + f.size; }, 0);
-  var tour = { running: false, timers: [] };
+  var tour = { running: false, timers: [], drag: null };
+
+  // Moves the app icon from the Finder window (or the desktop corner) into the drop zone.
+  function playDrag() {
+    if (!desktop || !tile.animate) return;
+    tile.hidden = false;
+    var d = desktop.getBoundingClientRect();
+    var to = dropzone.getBoundingClientRect();
+    var from = finderSource && finderSource.offsetParent ? finderSource.getBoundingClientRect() : null;
+    var w = tile.offsetWidth;
+    var x0 = (from ? from.left + from.width / 2 : d.left + d.width * 0.14) - d.left - w / 2;
+    var y0 = (from ? from.top + from.height / 2 : d.top + d.height * 0.9) - d.top - 20;
+    var x1 = to.left + to.width / 2 - d.left - w / 2;
+    var y1 = to.top + to.height / 2 - d.top - 20;
+    var at = function (x, y, scale) { return 'translate(' + x + 'px,' + y + 'px) scale(' + scale + ')'; };
+    tour.drag = tile.animate([
+      { transform: at(x0, y0, 0.85), opacity: 0, offset: 0 },
+      { transform: at(x0, y0, 1.08), opacity: 1, offset: 0.12 },
+      { transform: at(x1, y1, 1.08), opacity: 1, offset: 0.7 },
+      { transform: at(x1, y1, 1), opacity: 1, offset: 0.84 },
+      { transform: at(x1, y1, 0.5), opacity: 0, offset: 1 }
+    ], { duration: 2300, easing: 'ease-in-out', fill: 'forwards' });
+  }
 
   function later(ms, fn) {
     tour.timers.push(setTimeout(fn, ms));
@@ -498,6 +618,9 @@
     tour.timers.forEach(clearTimeout);
     tour.timers = [];
     tour.running = false;
+    if (tour.drag) { tour.drag.cancel(); tour.drag = null; }
+    tile.hidden = true;
+    if (mac) mac.classList.remove('finder-open');
     showIntro(null);
     svg.classList.remove('reveal');
     root.classList.remove('touring');
@@ -514,51 +637,54 @@
     state.view = 'map';
     render();
 
-    // 1. The opening screen: an app is dragged onto the window.
+    // 1. The opening screen: an app is dragged from Finder onto the window.
     setStep(0);
     showIntro('drop');
-    later(60, function () { intro.classList.add('go'); });
-    later(1500, function () { intro.classList.add('over'); });
+    if (mac) mac.classList.add('finder-open');
+    later(450, playDrag);
+    later(1950, function () { intro.classList.add('over'); });
+    later(2750, function () { if (mac) mac.classList.remove('finder-open'); });
 
     // 2. The scan reports the folder being read, with running totals.
-    later(2700, function () {
+    later(3000, function () {
       setStep(1);
+      tile.hidden = true;
       showIntro('scan');
       var ticks = SCAN_PATHS.length;
       SCAN_PATHS.forEach(function (path, i) {
         later(i * 300, function () {
           var done = (i + 1) / ticks;
+          var seen = Math.round(files.length * done);
           scanPath.textContent = path;
           scanFill.style.width = Math.round(done * 100) + '%';
-          var seen = Math.round(files.length * done);
-          scanMetrics.textContent = (i + 1) + (i ? ' folders' : ' folder') + ' \u00b7 ' + seen + (seen === 1 ? ' file' : ' files') + ' \u00b7 ' +
-            formatBytes(Math.round(TOTAL_BYTES * done));
+          scanMetrics.textContent = (i + 1) + (i ? ' folders' : ' folder') + ' \u00b7 ' + seen +
+            (seen === 1 ? ' file' : ' files') + ' \u00b7 ' + formatBytes(Math.round(TOTAL_BYTES * done));
         });
       });
     });
 
     // 3. Results: the map draws itself, then one file is traced.
-    later(5700, function () {
+    later(6000, function () {
       setStep(2);
       showIntro(null);
       svg.classList.add('reveal');
     });
-    later(7500, function () {
+    later(7900, function () {
       svg.classList.remove('reveal');
       state.selected = 'f1';
       render();
     });
 
     // 4 and 5. The file goes to quarantine and comes back.
-    later(10300, function () {
+    later(10700, function () {
       setStep(3);
       quarantine('f1');
     });
-    later(12900, function () {
+    later(13300, function () {
       setStep(4);
       restore('f1');
     });
-    later(15200, stopTour);
+    later(15600, stopTour);
   }
 
   // Any interaction hands control to the visitor.
