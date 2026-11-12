@@ -72,6 +72,7 @@
 
   var NODE_TYPE_ICON = {
     WORKSPACE: 'folder',
+    FOLDER: 'folder',
     SESSION: 'session',
     OPERATION: 'tool',
     UNKNOWN_ORIGIN: 'unknown'

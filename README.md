@@ -35,8 +35,8 @@ Because ad-hoc signed builds are not notarized by Apple, **macOS Gatekeeper** wi
 
 To open an ad-hoc signed build on macOS:
 1. **Via Finder / System Settings**:
-   - **Control-click (Right-click)** `ArtifactAtlas.app` in `/Applications` and select **Open**, or
-   - Open **System Settings → Privacy & Security**, scroll down to the Security section, and click **Open Anyway** next to `ArtifactAtlas.app`.
+   - Open the app once and dismiss the warning, then open **System Settings → Privacy & Security**, scroll down to the Security section, and click **Open Anyway** next to `ArtifactAtlas.app`.
+   - On macOS 14 you can instead **Control-click** `ArtifactAtlas.app` in `/Applications` and select **Open**. macOS 15 and later no longer offer this.
 2. **Or remove the browser download quarantine flag**:
    ```bash
    xattr -dr com.apple.quarantine /Applications/ArtifactAtlas.app
@@ -72,7 +72,7 @@ npm run verify:macos
 ```
 
 Outputs are written to `dist/`:
-- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.4.1`, Min macOS: `14.0`)
+- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.4.2`, Min macOS: `14.0`)
 - `dist/ArtifactAtlas-macOS.dmg` (Compressed UDZO disk image with `/Applications` drag-install link)
 - `dist/ArtifactAtlas-macOS.zip` (`ditto` archive preserving bundle signatures and permissions)
 - `dist/SHA256SUMS.txt` (SHA-256 digests for release artifacts)

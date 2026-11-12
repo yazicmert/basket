@@ -58,10 +58,18 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     assert.ok(scanData.state.graph.nodes.length > 10);
 
     // 5. Verify /api/graph/trace on a low-risk artifact
-    const lowRiskArt = scanData.state.artifacts.find(
-      (a) => a.cleanupClassification === 'LOW'
-    );
-    assert.ok(lowRiskArt);
+    // The file list stays on the server; the UI asks for ids by description
+    const safeRes = await fetch(`${baseUrl}/api/selection/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
+      body: JSON.stringify({ kind: 'safe' })
+    });
+    const safeData = await safeRes.json();
+    assert.ok(safeData.artifactIds.length > 0);
+    assert.equal(safeData.summary.count, safeData.artifactIds.length);
+    assert.ok(safeData.summary.physicalBytes > 0);
+    const lowRiskArt = { id: safeData.artifactIds[0] };
+    assert.equal(scanData.state.artifacts, undefined);
 
     const traceRes = await fetch(`${baseUrl}/api/graph/trace`, {
       method: 'POST',

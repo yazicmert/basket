@@ -74,6 +74,52 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     }
 }
 
+/// WKWebView takes over drags itself, so a SwiftUI `.onDrop` placed around it never fires and
+/// the page only receives a file name without its path. This subclass handles file drops
+/// natively and hands the dropped item's path to the page.
+final class DropAwareWebView: WKWebView {
+    var onFileDrop: ((URL) -> Void)?
+
+    private func droppedFileURL(_ sender: NSDraggingInfo) -> URL? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]
+        return urls?.first
+    }
+
+    private func setDropHighlight(_ on: Bool) {
+        let call = on ? "add" : "remove"
+        evaluateJavaScript("document.getElementById('app-dropzone')?.classList.\(call)('drag-over');", completionHandler: nil)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedFileURL(sender) != nil else { return super.draggingEntered(sender) }
+        setDropHighlight(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedFileURL(sender) != nil else { return super.draggingUpdated(sender) }
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDropHighlight(false)
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if droppedFileURL(sender) != nil { return true }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let url = droppedFileURL(sender) else { return super.performDragOperation(sender) }
+        setDropHighlight(false)
+        onFileDrop?(url)
+        return true
+    }
+}
+
 struct AtlasWebViewContainer: NSViewRepresentable {
     let url: URL
     let coordinator: WebViewCoordinator
@@ -85,7 +131,17 @@ struct AtlasWebViewContainer: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = DropAwareWebView(frame: .zero, configuration: config)
+        webView.registerForDraggedTypes([.fileURL])
+        let coordinator = context.coordinator
+        webView.onFileDrop = { url in
+            // The dropped application is only identified by its path; it is never opened or run.
+            if url.path.hasSuffix(".app") {
+                coordinator.sendDroppedAppPath(url.path)
+            } else {
+                coordinator.sendPickedWorkspacePath(url.path)
+            }
+        }
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         webView.load(URLRequest(url: url))
@@ -288,19 +344,28 @@ enum PackagedAppSelfVerifier {
             )
             guard let scanJson = try JSONSerialization.jsonObject(with: scanData) as? [String: Any],
                   let stateObj = scanJson["state"] as? [String: Any],
-                  let artifacts = stateObj["artifacts"] as? [[String: Any]],
                   let graphObj = stateObj["graph"] as? [String: Any],
+                  let statsObj = graphObj["stats"] as? [String: Any],
+                  let artifactCount = statsObj["artifactCount"] as? Int,
                   let nodes = graphObj["nodes"] as? [[String: Any]] else {
                 print("ERROR: Scan or graph construction failed")
                 manager.stop()
                 return 1
             }
-            print("   -> Indexed \(artifacts.count) artifacts and constructed \(nodes.count) graph nodes")
+            print("   -> Indexed \(artifactCount) artifacts and constructed \(nodes.count) graph nodes")
 
             // 4. Inspect Provenance
             print("[Verify 4/6] Tracing provenance paths for low-risk artifact...")
-            guard let lowRiskArtifact = artifacts.first(where: { ($0["cleanupClassification"] as? String) == "LOW" }),
-                  let lowRiskId = lowRiskArtifact["id"] as? String else {
+            // The file list stays in the backend; ask it which files are safe to remove.
+            let (safeData, _) = try performRequest(
+                url: baseURL.appendingPathComponent("api/selection/resolve"),
+                method: "POST",
+                token: token,
+                body: ["kind": "safe"]
+            )
+            guard let safeJson = try JSONSerialization.jsonObject(with: safeData) as? [String: Any],
+                  let safeIds = safeJson["artifactIds"] as? [String],
+                  let lowRiskId = safeIds.first else {
                 print("ERROR: No LOW risk artifact found")
                 manager.stop()
                 return 1

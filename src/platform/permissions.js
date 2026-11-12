@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { RELEASES_PAGE_URL } from './update-check.js';
 import path from 'node:path';
 
 /**
@@ -118,6 +119,9 @@ export function describePermissions({ platform, homeDir, homeScanConsentAt = nul
  */
 export function resolveOpenTarget(target) {
   const [kind, id] = String(target || '').split(':');
+  if (kind === 'update' && id === 'latest') {
+    return RELEASES_PAGE_URL;
+  }
   const definition = listPermissionDefinitions().find((d) => d.id === id);
   if (kind === 'docs' && id === 'overview') {
     return `${SITE_BASE_URL}/permissions/`;

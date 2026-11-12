@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 APP_NAME="ArtifactAtlas"
 APP_DISPLAY_NAME="Artifact Atlas"
 BUNDLE_ID="com.artifactatlas.desktop"
-APP_VERSION="${APP_VERSION:-0.4.1}"
+APP_VERSION="${APP_VERSION:-0.4.2}"
 BUILD_NUMBER="${BUILD_NUMBER:-200}"
 MIN_MACOS_VERSION="14.0"
 TARGET_ARCH="${TARGET_ARCH:-$(uname -m)}"
@@ -105,6 +105,15 @@ fi
 
 echo "==> [5/8] Bundling Artifact Atlas backend engine & UI assets..."
 cp "$ROOT_DIR/package.json" "$BUNDLED_APP_DIR/package.json"
+# The app reports this file's version when it checks for updates, so it must match the
+# version this bundle is built as (a release is built from its tag).
+APP_VERSION="$APP_VERSION" "$RUNTIME_DIR/node" -e '
+  const fs = require("fs");
+  const file = process.argv[1];
+  const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+  pkg.version = process.env.APP_VERSION;
+  fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+' "$BUNDLED_APP_DIR/package.json"
 cp -R "$ROOT_DIR/src" "$BUNDLED_APP_DIR/src"
 
 cat > "$CONTENTS_DIR/Info.plist" <<EOF
