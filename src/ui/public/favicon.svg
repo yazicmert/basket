@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .bg { fill: #1b1b1a } .ink { fill: #fcfcfb } .line { stroke: #fcfcfb } .ring { fill: #1b1b1a; stroke: #fcfcfb } .safe { stroke: #1b1b1a }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #ededeb } .ink { fill: #1a1a19 } .line { stroke: #1a1a19 } .ring { fill: #ededeb; stroke: #1a1a19 } .safe { stroke: #ededeb }
+    }
+  </style>
+  <rect class="bg" width="64" height="64" rx="14" />
+  <path class="line" d="M20 45 34 18" fill="none" stroke-width="4" stroke-linecap="round" />
+  <path class="line" d="M20 45 51 38" fill="none" stroke-width="4" stroke-dasharray="4 6.5" />
+  <circle class="safe" cx="34" cy="18" r="7" fill="#0ca30c" stroke-width="2.5" />
+  <circle class="ring" cx="51" cy="38" r="5.5" stroke-width="3.5" />
+  <circle class="ink" cx="20" cy="45" r="8.5" />
+</svg>

@@ -60,50 +60,60 @@ func renderIconPNG(size: Int, to fileURL: URL) throws {
     let rect = CGRect(x: pad, y: pad, width: s - pad * 2, height: s - pad * 2)
     let corner = s * 0.22
 
-    // Rounded squircle background (#0B101B)
+    // The mark matches the favicon (site/favicon.svg): an ink tile with a provenance link.
+    // Coordinates below are on the favicon's 64-unit grid, with y measured from the top.
+    let ink = CGColor(red: 0.106, green: 0.106, blue: 0.102, alpha: 1.0)
+    let paper = CGColor(red: 0.988, green: 0.988, blue: 0.984, alpha: 1.0)
+    let safeGreen = CGColor(red: 0.047, green: 0.639, blue: 0.047, alpha: 1.0)
+    let unit = rect.width / 64.0
+    func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        return CGPoint(x: rect.minX + x * unit, y: rect.maxY - y * unit)
+    }
+    func disc(_ center: CGPoint, _ radius: CGFloat) -> CGRect {
+        return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+    }
+
+    // Rounded ink tile
     let bgPath = CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
     ctx.addPath(bgPath)
-    ctx.setFillColor(CGColor(red: 0.05, green: 0.08, blue: 0.13, alpha: 1.0))
+    ctx.setFillColor(ink)
     ctx.fillPath()
 
-    // Subtle border
-    ctx.addPath(bgPath)
-    ctx.setStrokeColor(CGColor(red: 0.18, green: 0.83, blue: 0.75, alpha: 0.45))
-    ctx.setLineWidth(max(1.0, s * 0.02))
+    let hub = point(20, 45)
+    let recorded = point(34, 18)
+    let likely = point(51, 38)
+
+    // Recorded link: solid
+    ctx.setStrokeColor(paper)
+    ctx.setLineWidth(4 * unit)
+    ctx.setLineCap(.round)
+    ctx.move(to: hub)
+    ctx.addLine(to: recorded)
     ctx.strokePath()
 
-    // Constellation provenance graph edges
-    let center = CGPoint(x: s * 0.50, y: s * 0.50)
-    let satellites: [CGPoint] = [
-        CGPoint(x: s * 0.28, y: s * 0.68),
-        CGPoint(x: s * 0.72, y: s * 0.68),
-        CGPoint(x: s * 0.26, y: s * 0.32),
-        CGPoint(x: s * 0.74, y: s * 0.32)
-    ]
-
-    ctx.setStrokeColor(CGColor(red: 0.20, green: 0.83, blue: 0.60, alpha: 0.85))
-    ctx.setLineWidth(max(1.2, s * 0.032))
-    for pt in satellites {
-        ctx.move(to: center)
-        ctx.addLine(to: pt)
-    }
+    // Likely link: dashed
+    ctx.setLineCap(.butt)
+    ctx.setLineDash(phase: 0, lengths: [4 * unit, 6.5 * unit])
+    ctx.move(to: hub)
+    ctx.addLine(to: likely)
     ctx.strokePath()
+    ctx.setLineDash(phase: 0, lengths: [])
 
-    // Center hub node
-    let hubRadius = s * 0.11
-    ctx.setFillColor(CGColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 1.0))
-    ctx.fillEllipse(in: CGRect(x: center.x - hubRadius, y: center.y - hubRadius, width: hubRadius * 2, height: hubRadius * 2))
+    // A file that is safe to remove
+    ctx.setFillColor(ink)
+    ctx.fillEllipse(in: disc(recorded, 8.25 * unit))
+    ctx.setFillColor(safeGreen)
+    ctx.fillEllipse(in: disc(recorded, 7 * unit))
 
-    // Satellite artifact nodes
-    let satRadius = s * 0.065
-    for (idx, pt) in satellites.enumerated() {
-        if idx % 2 == 0 {
-            ctx.setFillColor(CGColor(red: 0.20, green: 0.83, blue: 0.60, alpha: 1.0))
-        } else {
-            ctx.setFillColor(CGColor(red: 0.98, green: 0.75, blue: 0.14, alpha: 1.0))
-        }
-        ctx.fillEllipse(in: CGRect(x: pt.x - satRadius, y: pt.y - satRadius, width: satRadius * 2, height: satRadius * 2))
-    }
+    // A file whose link is only likely: hollow
+    ctx.setFillColor(paper)
+    ctx.fillEllipse(in: disc(likely, 7.25 * unit))
+    ctx.setFillColor(ink)
+    ctx.fillEllipse(in: disc(likely, 3.75 * unit))
+
+    // The application
+    ctx.setFillColor(paper)
+    ctx.fillEllipse(in: disc(hub, 8.5 * unit))
 
     NSGraphicsContext.restoreGraphicsState()
 

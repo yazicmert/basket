@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Artifact Atlas — AI Artifact Provenance &amp; Cleanup Explorer</title>
 <meta name="description" content="Local-first macOS app that shows which AI coding session created each file on your disk, and cleans up safely through a recoverable quarantine." />
-<link rel="stylesheet" href="style.css" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
 <div class="topbar">
@@ -144,14 +147,13 @@
   <section class="spec" id="supported">
     <h2>Supported apps <small>And any other .app</small></h2>
     <div class="spec-body">
-      <p>Claude Code, Cursor and Codex CLI get session-level tracing: each file is linked to the session and tool call that wrote it. The other apps listed here are found through their known data folders, and anything else you drop is located by its bundle identifier and name.</p>
+      <p>Claude Code, Cursor and Codex (in the ChatGPT app or the CLI) get session-level tracing: each file is linked to the session and tool call that wrote it. The other apps listed here are found through their known data folders, and anything else you drop is located by its bundle identifier and name.</p>
       <div class="marquee">
         <div class="marquee-track">
           <ul>
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code<small>sessions</small></li>
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex CLI<small>sessions</small></li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>ChatGPT</li>
+            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>ChatGPT and Codex<small>sessions</small></li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/windsurf.svg);mask-image:url(logos/windsurf.svg)"></i></span>Windsurf</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/ollama.svg);mask-image:url(logos/ollama.svg)"></i></span>Ollama</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/lmstudio.svg);mask-image:url(logos/lmstudio.svg)"></i></span>LM Studio</li>
@@ -161,8 +163,7 @@
           <ul aria-hidden="true">
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code<small>sessions</small></li>
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex CLI<small>sessions</small></li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>ChatGPT</li>
+            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>ChatGPT and Codex<small>sessions</small></li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/windsurf.svg);mask-image:url(logos/windsurf.svg)"></i></span>Windsurf</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/ollama.svg);mask-image:url(logos/ollama.svg)"></i></span>Ollama</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/lmstudio.svg);mask-image:url(logos/lmstudio.svg)"></i></span>LM Studio</li>
@@ -298,7 +299,7 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js" defer></script>
-<script src="demo.js" defer></script>
+<script src="icons.js?v=4" defer></script>
+<script src="demo.js?v=4" defer></script>
 </body>
 </html>
