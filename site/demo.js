@@ -76,6 +76,11 @@
   });
 
   // Sample apps the opening screen offers, as in the real app.
+  var KIND_LABELS = {
+    REGENERABLE_CACHE: 'Regenerable caches', TEMP_FILE: 'Temporary files', LOG: 'Logs',
+    BUILD_OUTPUT: 'Build outputs', SESSION_HISTORY: 'Session histories',
+    USER_CONTENT: 'Source and user content', UNKNOWN: 'Unclassified'
+  };
   var SAMPLE_APPS = [['Claude Code', 'terminal'], ['Cursor', 'pointer'], ['Codex CLI', 'braces'], ['NebulaSketch', 'app']];
 
   function iconOf(n) {
@@ -202,7 +207,7 @@
   root.appendChild(bar);
 
   // The walkthrough is a real sequence, so its steps are numbered.
-  var STEPS = ['Drop an app', 'Scan', 'Trace a file', 'Quarantine', 'Restore'];
+  var STEPS = ['Drop an app', 'Scan', 'See the totals', 'Trace a file', 'Quarantine', 'Restore'];
   var stepper = html('ol', 'demo-steps');
   var stepEls = STEPS.map(function (label) {
     var li = html('li', null, label);
@@ -387,11 +392,71 @@
     return line;
   }
 
+  // Totals for the scan, shown while nothing is selected.
+  function statRow(lead, label, value) {
+    var row = html('div', 'demo-stat');
+    row.appendChild(lead);
+    row.appendChild(html('span', 'demo-stat-label', label));
+    row.appendChild(html('span', 'demo-muted', value));
+    return row;
+  }
+
+  function countAndSize(list) {
+    var bytes = list.reduce(function (sum, f) { return sum + f.size; }, 0);
+    return list.length + (list.length === 1 ? ' file' : ' files') + ' \u00b7 ' + formatBytes(bytes);
+  }
+
+  function renderStats() {
+    var live = files.filter(function (f) { return !isQuarantined(f.id); });
+    var total = live.reduce(function (sum, f) { return sum + f.size; }, 0);
+    panel.appendChild(html('div', 'demo-kind', 'This scan'));
+    var head = html('div', 'demo-total');
+    head.appendChild(html('strong', null, formatBytes(total)));
+    head.appendChild(html('span', 'demo-muted', live.length + ' files \u00b7 2 sessions'));
+    panel.appendChild(head);
+
+    var bar = html('div', 'demo-share');
+    ['safe', 'review', 'high'].forEach(function (risk) {
+      var bytes = live.filter(function (f) { return f.risk === risk; })
+        .reduce(function (sum, f) { return sum + f.size; }, 0);
+      var seg = html('i', 'dot ' + risk);
+      seg.style.width = (total ? (bytes / total) * 100 : 0) + '%';
+      bar.appendChild(seg);
+    });
+    panel.appendChild(bar);
+
+    panel.appendChild(html('h4', 'demo-sub', 'By cleanup risk'));
+    ['safe', 'review', 'high', 'protected'].forEach(function (risk) {
+      var list = live.filter(function (f) { return f.risk === risk; });
+      panel.appendChild(statRow(html('i', 'dot ' + risk), RISK[risk], countAndSize(list)));
+    });
+
+    panel.appendChild(html('h4', 'demo-sub', 'By origin'));
+    [['recorded', 'Recorded by a session'], ['likely', 'Likely from this app'], ['unknown', 'Unknown origin']].forEach(function (o) {
+      var list = live.filter(function (f) {
+        if (!f.sessions.length) return o[0] === 'unknown';
+        var recorded = f.sessions.some(function (x) { return x[1] === 'recorded'; });
+        return o[0] === (recorded ? 'recorded' : 'likely');
+      });
+      panel.appendChild(statRow(html('i', 'demo-line ' + o[0]), o[1], list.length + (list.length === 1 ? ' file' : ' files')));
+    });
+
+    panel.appendChild(html('h4', 'demo-sub', 'By kind'));
+    var kinds = {};
+    live.forEach(function (f) { (kinds[f.type] = kinds[f.type] || []).push(f); });
+    Object.keys(kinds).sort(function (a, b) {
+      var size = function (k) { return kinds[k].reduce(function (sum, f) { return sum + f.size; }, 0); };
+      return size(b) - size(a);
+    }).forEach(function (type) {
+      panel.appendChild(statRow(iconEl(Icons.forArtifactType(type), 14), KIND_LABELS[type], countAndSize(kinds[type])));
+    });
+  }
+
   function renderPanel() {
     panel.textContent = '';
     var sel = byId[state.selected];
     if (!sel) {
-      panel.appendChild(html('p', 'demo-muted', 'Select a file on the map to see where it came from.'));
+      renderStats();
       return;
     }
     var kindLabel = { app: 'Application', workspace: 'Workspace', session: 'Session', group: 'Group', unknown: 'Origin', file: 'File' };
@@ -663,28 +728,29 @@
       });
     });
 
-    // 3. Results: the map draws itself, then one file is traced.
+    // 3 and 4. Results: the map draws itself beside the scan totals, then one file is traced.
     later(6000, function () {
       setStep(2);
       showIntro(null);
       svg.classList.add('reveal');
     });
-    later(7900, function () {
-      svg.classList.remove('reveal');
+    later(7900, function () { svg.classList.remove('reveal'); });
+    later(9400, function () {
+      setStep(3);
       state.selected = 'f1';
       render();
     });
 
     // 4 and 5. The file goes to quarantine and comes back.
-    later(10700, function () {
-      setStep(3);
+    later(12200, function () {
+      setStep(4);
       quarantine('f1');
     });
-    later(13300, function () {
-      setStep(4);
+    later(14800, function () {
+      setStep(5);
       restore('f1');
     });
-    later(15600, stopTour);
+    later(17100, stopTour);
   }
 
   // Any interaction hands control to the visitor.

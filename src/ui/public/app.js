@@ -1237,21 +1237,108 @@ function clearNodeSelection() {
    PROVENANCE & EVIDENCE INSPECTOR (Sections 5, 7, 8, 9)
    ========================================================================= */
 
+// Totals for the finished scan. Sizes are physical (hardlinked data counted once) and come
+// from the server; counts are taken from the files on the map.
+function summarizeScan() {
+  const g = uiState.activeState?.graph;
+  if (!g) return null;
+  const tm = g.treemap || {};
+  const fileNodes = (g.nodes || []).filter((n) => n.nodeType === 'ARTIFACT');
+  const countByRisk = { LOW: 0, REVIEW: 0, HIGH: 0, PROTECTED: 0 };
+  for (const n of fileNodes) {
+    if (countByRisk[n.riskCategory] !== undefined) countByRisk[n.riskCategory] += 1;
+  }
+  const largest = fileNodes.reduce((top, n) => (!top || n.sizeBytes > top.sizeBytes ? n : top), null);
+  return {
+    fileCount: fileNodes.length,
+    totalBytes: uiState.activeState.scan?.totalPhysicalBytes || 0,
+    risks: [
+      { key: 'LOW', count: countByRisk.LOW, bytes: tm.reclaimablePhysicalBytes || 0 },
+      { key: 'REVIEW', count: countByRisk.REVIEW, bytes: tm.reviewPhysicalBytes || 0 },
+      { key: 'HIGH', count: countByRisk.HIGH, bytes: tm.highRiskPhysicalBytes || 0 },
+      { key: 'PROTECTED', count: countByRisk.PROTECTED, bytes: null }
+    ],
+    origins: [
+      { key: 'VERIFIED', label: 'Recorded by a session', count: g.stats.verifiedArtifactCount },
+      { key: 'INFERRED', label: 'Likely from this app', count: g.stats.inferredArtifactCount },
+      { key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }
+    ],
+    kinds: [...(tm.byGroup || [])].sort((x, y) => y.bytes - x.bytes),
+    sessionCount: (g.nodes || []).filter((n) => n.nodeType === 'SESSION').length,
+    largest
+  };
+}
+
 function renderGlobalInspectorSummary() {
   const box = document.getElementById('inspector-global-stats');
-  const g = uiState.activeState?.graph;
-  if (!g) return;
+  const sum = summarizeScan();
+  if (!sum) return;
+
+  const share = (bytes) => (sum.totalBytes > 0 ? Math.max(0, (bytes / sum.totalBytes) * 100) : 0);
+  const riskRows = sum.risks
+    .map(
+      (r) => `
+        <div class="kv-item">
+          <span class="kv-key"><span class="legend-dot ${RISK_DOT_CLASS[r.key]}"></span>${escapeHtml(RISK_LABELS[r.key])}</span>
+          <span class="kv-val">${pluralize(r.count, 'file')}${r.bytes === null ? '' : ` · ${formatBytes(r.bytes)}`}</span>
+        </div>`
+    )
+    .join('');
+  const originRows = sum.origins
+    .map(
+      (o) => `
+        <div class="kv-item">
+          <span class="kv-key"><span class="origin-line origin-${o.key}"></span>${escapeHtml(o.label)}</span>
+          <span class="kv-val">${pluralize(o.count, 'file')}</span>
+        </div>`
+    )
+    .join('');
+  const kindRows = sum.kinds
+    .map(
+      (k) => `
+        <div class="kv-item">
+          <span class="kv-key">${iconSvg(Icons.forArtifactType(k.artifactType), 14)}${escapeHtml(k.label)}</span>
+          <span class="kv-val">${pluralize(k.artifactCount, 'file')} · ${formatBytes(k.bytes)}</span>
+        </div>`
+    )
+    .join('');
 
   box.innerHTML = `
     <div class="inspector-section">
       <div class="inspector-section-title">This scan</div>
-      <div class="kv-list">
-        <div class="kv-item"><span class="kv-key">Safe to remove</span><span class="kv-val">${formatBytes(g.treemap.reclaimablePhysicalBytes)}</span></div>
-        <div class="kv-item"><span class="kv-key">Recorded by a session</span><span class="kv-val">${pluralize(g.stats.verifiedArtifactCount, 'file')}</span></div>
-        <div class="kv-item"><span class="kv-key">Likely from this app</span><span class="kv-val">${pluralize(g.stats.inferredArtifactCount, 'file')}</span></div>
-        <div class="kv-item"><span class="kv-key">Unknown origin</span><span class="kv-val">${pluralize(g.stats.unknownArtifactCount, 'file')}</span></div>
+      <div class="scan-total">
+        <span class="scan-total-value">${formatBytes(sum.totalBytes)}</span>
+        <span class="scan-total-meta">${pluralize(sum.fileCount, 'file')} · ${pluralize(sum.sessionCount, 'session')}</span>
+      </div>
+      <div class="scan-share-bar" role="img" aria-label="Share of disk space by cleanup risk">
+        <span class="dot-safe" style="width:${share(sum.risks[0].bytes)}%"></span>
+        <span class="dot-review" style="width:${share(sum.risks[1].bytes)}%"></span>
+        <span class="dot-high" style="width:${share(sum.risks[2].bytes)}%"></span>
       </div>
     </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">By cleanup risk</div>
+      <div class="kv-list">${riskRows}</div>
+    </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">By origin</div>
+      <div class="kv-list">${originRows}</div>
+    </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">By kind</div>
+      <div class="kv-list">${kindRows}</div>
+    </div>
+    ${
+      sum.largest
+        ? `<div class="inspector-section">
+            <div class="inspector-section-title">Largest file</div>
+            <div class="kv-list"><div class="kv-item">
+              <span class="kv-key kv-key-wrap">${escapeHtml(sum.largest.label)}</span>
+              <span class="kv-val">${formatBytes(sum.largest.sizeBytes)}</span>
+            </div></div>
+          </div>`
+        : ''
+    }
   `;
 }
 
