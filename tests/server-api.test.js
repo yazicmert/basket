@@ -8,7 +8,7 @@ import { createAtlasServer } from '../src/ui/server.js';
 
 test('HTTP Desktop UI Server & REST API end-to-end integration test', async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-server-test-'));
-  const { server, service, sessionToken } = createAtlasServer({ sandboxRoot });
+  const { server, service, sessionToken } = createAtlasServer({ sandboxRoot, dataDir: sandboxRoot });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -117,6 +117,7 @@ test('Local API protection: enforces X-Atlas-Token authentication and blocks cro
   const secretToken = 'test_secret_token_998877';
   const { server, shutdown } = createAtlasServer({
     sandboxRoot,
+    dataDir: sandboxRoot,
     apiToken: secretToken
   });
 

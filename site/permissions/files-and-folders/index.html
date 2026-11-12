@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Desktop, Documents and Downloads — Artifact Atlas</title>
+<meta name="description" content="The macOS prompts for Desktop, Documents and Downloads, and when Artifact Atlas triggers them." />
+<link rel="stylesheet" href="../../style.css" />
+</head>
+<body>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Desktop, Documents and Downloads</nav>
+  <h1 class="page-title">Desktop, Documents and Downloads</h1>
+  <p><span class="tag req">Asked by macOS when needed</span><span class="tag">macOS privacy prompt</span></p>
+
+  <h2>What it is</h2>
+  <p>macOS asks separately before an app reads your Desktop, Documents or Downloads folders. The prompt names the folder, for example: ArtifactAtlas would like to access files in your Documents folder.</p>
+  <h2>Why Artifact Atlas asks for it</h2>
+  <p>AI coding tools record which project folder each session worked in. When such a project lives in Desktop, Documents or Downloads, Artifact Atlas scans it to link the files the session created to that session.</p>
+  <h2>What is read</h2>
+  <p>Only project folders that an AI session of the dropped application worked in, or a folder you chose yourself with <strong>Select Project Directory</strong>. File names, sizes and timestamps only.</p>
+  <h2>What never happens</h2>
+  <ul>
+    <li>It does not scan the whole Desktop, Documents or Downloads folder.</li>
+    <li>Source code, Git data, credentials and documents are classified as protected and cannot be cleaned up in bulk.</li>
+  </ul>
+  <h2>How to grant it</h2>
+  <ol>
+    <li>Run a scan. If a session's project is in one of these folders, macOS shows the prompt.</li>
+    <li>Click <strong>Allow</strong>.</li>
+  </ol>
+  <p>If you granted <a href="../full-disk-access/">Full Disk Access</a>, these prompts do not appear.</p>
+  <h2>How to take it back</h2>
+  <p>System Settings → Privacy &amp; Security → Files and Folders → ArtifactAtlas: turn off the folder.</p>
+  <h2>If you do not grant it</h2>
+  <p>The scan continues without that project folder. Files there are not shown, and the application's own data folders are unaffected.</p>
+
+  <footer>MIT licensed · <a href="../../">Home</a> · <a href="../../permissions/">All permissions</a> ·
+    <a href="https://github.com/yazicmert/basket">Source on GitHub</a></footer>
+</main>
+</body>
+</html>

@@ -35,6 +35,14 @@
 
 ## Post-MVP Horizons
 
+### Milestone 5.5 — Real-Disk Scanning for Any Application (Completed, needs validation on real Macs)
+- [x] Consent-gated "live" data scope with a permissions window and one documentation page per permission.
+- [x] Generic footprint discovery for any `.app` (Library containers, sandbox and group containers, hidden home and XDG folders).
+- [x] Live scan progress showing the folder currently being read.
+- [x] Binary `Info.plist` support; Cursor sessions read from the real `state.vscdb` composer index.
+- [ ] Validate adapters and known-app locations against real installs of each supported application.
+- [ ] Cursor and Codex file-level provenance from their real on-disk formats.
+
 ### Milestone 6 — Opt-In Live Provenance Monitor
 - Implement `LiveMonitorProvider` using macOS `FSEvents` + active session JSONL tailing so file mutations occurring during an active Claude Code or Cursor tool invocation are correlated in real time.
 - Maintain strict opt-in consent and zero privileged kernel hooks.

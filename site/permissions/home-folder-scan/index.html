@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scan my home folder — Artifact Atlas</title>
+<meta name="description" content="The in-app consent that lets Artifact Atlas scan the data folders of the applications on your Mac." />
+<link rel="stylesheet" href="../../style.css" />
+</head>
+<body>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Scan my home folder</nav>
+  <h1 class="page-title">Scan my home folder</h1>
+  <p><span class="tag req">Required for real scans</span><span class="tag">Asked inside Artifact Atlas</span></p>
+
+  <h2>What it is</h2>
+  <p>This is a consent you give inside Artifact Atlas, not a macOS setting. Until you give it, the app only shows built-in sample data and reads nothing from your disk.</p>
+  <h2>Why Artifact Atlas asks for it</h2>
+  <p>To show the leftovers of an application you drop, Artifact Atlas has to list the folders where that application keeps its data. Most of them are hidden: <code>~/Library</code> and dot-folders such as <code>~/.claude</code>, <code>~/.cursor</code> or <code>~/.ollama</code>.</p>
+  <h2>What is read</h2>
+  <ul>
+    <li>File and folder names, sizes, timestamps and permissions inside the dropped application's data folders.</li>
+    <li>For Claude Code, Cursor and Codex: session IDs, timestamps, tool names and the file paths those tools wrote, so files can be linked to the session that created them.</li>
+    <li>The project folders those sessions worked in.</li>
+  </ul>
+  <h2>What never happens</h2>
+  <ul>
+    <li>It never stores your prompts or the assistant's replies.</li>
+    <li>It never uploads anything. The app has no network features.</li>
+    <li>It never runs the application you drop.</li>
+    <li>It never scans credential folders such as <code>~/.ssh</code>, <code>~/.aws</code> or Keychains.</li>
+    <li>It never deletes. Cleanup only moves files you confirm into a recoverable Quarantine Vault.</li>
+  </ul>
+  <h2>How to grant it</h2>
+  <ol>
+    <li>Open Artifact Atlas. The Permissions window appears on first launch, or click <strong>Permissions</strong> in the top bar.</li>
+    <li>Click <strong>Allow Scanning My Home Folder</strong>.</li>
+    <li>The badge in the title bar changes from <em>Sample Data</em> to <em>Live: Home Folder</em>.</li>
+  </ol>
+  <h2>How to take it back</h2>
+  <p>Open <strong>Permissions</strong> and click <strong>Stop Scanning My Home Folder</strong>. The app returns to sample data immediately. Files already in the Quarantine Vault stay there and can still be restored after you allow scanning again.</p>
+  <h2>If you do not grant it</h2>
+  <p>The app works, but only on its built-in sample applications. Dropping a real application shows no real leftovers.</p>
+
+  <footer>MIT licensed · <a href="../../">Home</a> · <a href="../../permissions/">All permissions</a> ·
+    <a href="https://github.com/yazicmert/basket">Source on GitHub</a></footer>
+</main>
+</body>
+</html>

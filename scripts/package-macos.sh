@@ -22,7 +22,7 @@ cd "$ROOT_DIR"
 APP_NAME="ArtifactAtlas"
 APP_DISPLAY_NAME="Artifact Atlas"
 BUNDLE_ID="com.artifactatlas.desktop"
-APP_VERSION="${APP_VERSION:-0.2.0}"
+APP_VERSION="${APP_VERSION:-0.3.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-200}"
 MIN_MACOS_VERSION="14.0"
 TARGET_ARCH="${TARGET_ARCH:-$(uname -m)}"
@@ -138,6 +138,14 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
   <true/>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 Artifact Atlas Contributors. MIT License.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Artifact Atlas scans project folders on your Desktop that an AI session worked in, to link the files it created to that session.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Artifact Atlas scans project folders in Documents that an AI session worked in, to link the files it created to that session.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Artifact Atlas scans project folders in Downloads that an AI session worked in, to link the files it created to that session.</string>
+  <key>NSAppDataUsageDescription</key>
+  <string>Artifact Atlas lists the files inside the sandbox container of the application you dropped, to show its leftovers.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>

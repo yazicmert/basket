@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   ProvenanceConfidence,
   createWorkspaceModel,
@@ -386,6 +387,33 @@ export class CursorAdapter {
           }
         }
 
+        // Real Cursor installs keep the composer index inside the workspace's VS Code state
+        // database. Only structural metadata is read (composer id and timestamps); conversation
+        // titles and message bodies are never copied.
+        const stateDbPath = path.join(bucketDir, 'state.vscdb');
+        if (fs.existsSync(stateDbPath)) {
+          const composers = readCursorComposerIndex(stateDbPath, malformedRecords);
+          for (const comp of composers) {
+            if (sessionsById.has(comp.composerId)) {
+              continue;
+            }
+            sessionsById.set(
+              comp.composerId,
+              createSessionModel({
+                externalSessionId: comp.composerId,
+                applicationId: application.id,
+                workspaceId: workspaceModel ? workspaceModel.id : null,
+                title: `Cursor Composer ${comp.composerId.slice(0, 8)}`,
+                startedAt: comp.createdAt,
+                endedAt: comp.updatedAt || comp.createdAt,
+                sourcePath: platformServices.resolveRealPathSafe(stateDbPath),
+                adapterId: this.id,
+                operationCount: 0
+              })
+            );
+          }
+        }
+
         const composerPath = path.join(bucketDir, 'composerData.json');
         if (fs.existsSync(composerPath)) {
           try {
@@ -665,5 +693,61 @@ export class AdapterRegistry {
 
   listAdapters() {
     return [...this.specializedAdapters, this.fallbackAdapter];
+  }
+}
+
+function epochMsToIso(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return null;
+  }
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the composer (chat session) index from a Cursor workspace `state.vscdb` SQLite file.
+ * The database is opened strictly read-only and only the `composer.composerData` key is read.
+ * Any failure (locked database, unknown schema) is reported as a malformed record, never thrown.
+ */
+export function readCursorComposerIndex(stateDbPath, malformedRecords = []) {
+  let db = null;
+  try {
+    db = new DatabaseSync(stateDbPath, { readOnly: true });
+    const row = db
+      .prepare("SELECT value FROM ItemTable WHERE key = 'composer.composerData'")
+      .get();
+    if (!row || row.value == null) {
+      return [];
+    }
+    const parsed = JSON.parse(
+      typeof row.value === 'string' ? row.value : Buffer.from(row.value).toString('utf8')
+    );
+    const all = Array.isArray(parsed.allComposers) ? parsed.allComposers : [];
+    return all
+      .filter((c) => c && typeof c.composerId === 'string' && c.composerId)
+      .map((c) => ({
+        composerId: c.composerId,
+        createdAt: epochMsToIso(c.createdAt),
+        updatedAt: epochMsToIso(c.lastUpdatedAt)
+      }));
+  } catch (err) {
+    malformedRecords.push({
+      sourcePath: stateDbPath,
+      lineNumber: 1,
+      error: `Could not read Cursor composer index (${err.code || 'unreadable or unknown schema'})`
+    });
+    return [];
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        // Ignore
+      }
+    }
   }
 }

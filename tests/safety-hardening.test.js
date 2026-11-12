@@ -241,7 +241,7 @@ test('S4. Local API: token is always required and Host header must be exactly lo
   assert.equal(isLoopbackHostHeader(undefined), false);
 
   const sandbox = createTempSandbox();
-  const { server, sessionToken, shutdown } = createAtlasServer({ sandboxRoot: sandbox.dir });
+  const { server, sessionToken, shutdown } = createAtlasServer({ sandboxRoot: sandbox.dir, dataDir: sandbox.dir });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
 

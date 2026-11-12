@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data from other apps — Artifact Atlas</title>
+<meta name="description" content="The macOS prompt that appears when Artifact Atlas reads another application&#x27;s sandbox container." />
+<link rel="stylesheet" href="../../style.css" />
+</head>
+<body>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Data from other apps</nav>
+  <h1 class="page-title">Data from other apps</h1>
+  <p><span class="tag req">Asked by macOS when needed</span><span class="tag">macOS privacy prompt</span></p>
+
+  <h2>What it is</h2>
+  <p>On macOS 14 (Sonoma) and newer, macOS asks before one app reads the private container of another app. The prompt says that ArtifactAtlas would like to access data from other apps.</p>
+  <h2>Why Artifact Atlas asks for it</h2>
+  <p>Sandboxed applications, including many AI apps installed from the Mac App Store, keep their caches, databases and logs in <code>~/Library/Containers/&lt;bundle id&gt;</code>. To list an application's leftovers there, Artifact Atlas has to look inside that application's container.</p>
+  <h2>What is read</h2>
+  <p>Only the container of the application you dropped, and only file names, sizes and timestamps.</p>
+  <h2>What never happens</h2>
+  <ul>
+    <li>It does not open containers of applications you did not drop.</li>
+    <li>It does not change anything in a container unless you confirm moving specific files to the Quarantine Vault.</li>
+  </ul>
+  <h2>How to grant it</h2>
+  <ol>
+    <li>Drop a sandboxed application onto Artifact Atlas.</li>
+    <li>When macOS asks, click <strong>Allow</strong>.</li>
+  </ol>
+  <p>If you granted <a href="../full-disk-access/">Full Disk Access</a>, this prompt does not appear.</p>
+  <h2>How to take it back</h2>
+  <p>Choose <strong>Don't Allow</strong> when macOS asks. To change an earlier answer, open System Settings → Privacy &amp; Security and turn off the ArtifactAtlas entry; where macOS lists it depends on the macOS version.</p>
+  <h2>If you do not grant it</h2>
+  <p>The scan continues, and the container is reported as unreadable. Leftovers inside it are not shown.</p>
+
+  <footer>MIT licensed · <a href="../../">Home</a> · <a href="../../permissions/">All permissions</a> ·
+    <a href="https://github.com/yazicmert/basket">Source on GitHub</a></footer>
+</main>
+</body>
+</html>

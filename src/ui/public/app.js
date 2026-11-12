@@ -110,21 +110,178 @@ async function initApp() {
   bindModalEvents();
   initGraphCanvas();
 
+  bindPermissionsEvents();
+
+  const boot = await loadBootstrap();
+  // First launch: explain the permissions before anything on the real disk is read
+  if (boot && boot.canSwitchMode && boot.mode === 'demo' && !homeScanGranted(boot.permissions)) {
+    openPermissionsModal();
+  }
+}
+
+/**
+ * (Re)loads server state. Called at startup and whenever the data scope changes.
+ */
+async function loadBootstrap() {
   try {
     const boot = await apiRequest('/api/bootstrap');
     uiState.bootstrap = boot;
     uiState.quarantineEntries = boot.quarantineEntries || [];
     uiState.pendingWorkspacePath = boot.defaultWorkspacePath || '';
+    uiState.pendingBundlePath = null;
 
-    if (boot.isDemoEnvironment) {
-      document.getElementById('demo-env-badge').classList.remove('hidden');
-    }
+    const isLive = boot.mode === 'live';
+    document.getElementById('demo-env-badge').classList.toggle('hidden', isLive);
+    document.getElementById('live-env-badge').classList.toggle('hidden', !isLive);
+    document.getElementById('bundle-dock-caption').innerHTML = isLive
+      ? 'Drag any <code>.app</code> from Finder into the workspace above, or pick an installed application:'
+      : 'Sample applications (built-in demo data). Drag one into the workspace above, or click to inspect:';
+    document.getElementById('custom-bundle-path-input').value = '';
 
     renderDraggableBundles(boot.availableBundles || []);
     updateQuarantineCountPill();
+    return boot;
   } catch (err) {
     showToast(`Failed to bootstrap: ${err.message}`);
+    return null;
   }
+}
+
+/* =========================================================================
+   PERMISSIONS & DATA SCOPE
+   ========================================================================= */
+
+const PERMISSION_STATUS_LABELS = {
+  GRANTED: ['Granted', 'badge-VERIFIED'],
+  NOT_GRANTED: ['Not granted', 'badge-UNKNOWN'],
+  ASKED_ON_DEMAND: ['macOS asks when needed', 'badge-INFERRED'],
+  COVERED_BY_FULL_DISK_ACCESS: ['Covered by Full Disk Access', 'badge-VERIFIED'],
+  NOT_APPLICABLE: ['Not needed on this system', 'badge-INFERRED'],
+  UNKNOWN: ['Could not be checked', 'badge-INFERRED']
+};
+
+function homeScanGranted(permissions = []) {
+  return permissions.some((p) => p.id === 'home-folder-scan' && p.status === 'GRANTED');
+}
+
+async function openSystemTarget(target) {
+  try {
+    const res = await apiRequest('/api/system/open', 'POST', { target });
+    if (!res.opened && res.url && /^https:/.test(res.url)) {
+      window.open(res.url, '_blank', 'noopener');
+    } else if (!res.opened) {
+      showToast('System Settings can only be opened on macOS.');
+    }
+  } catch (err) {
+    showToast(`Could not open: ${err.message}`);
+  }
+}
+
+function renderPermissionsModal(payload) {
+  const granted = homeScanGranted(payload.permissions);
+  const isLive = payload.mode === 'live';
+
+  document.getElementById('permissions-intro').textContent = !payload.canSwitchMode
+    ? `The home folder is fixed by the command line to ${payload.liveHomeDir}.`
+    : isLive
+      ? `Artifact Atlas is scanning your real home folder (${payload.liveHomeDir}). Nothing is uploaded, and files are only ever moved to the recoverable Quarantine Vault after you confirm.`
+      : 'Artifact Atlas is showing built-in sample data. To see the leftovers of the applications on this Mac, allow it to scan your home folder. Each permission below has its own page explaining exactly what it is used for.';
+
+  const list = document.getElementById('permissions-list');
+  list.innerHTML = '';
+  for (const perm of payload.permissions) {
+    const [label, badgeClass] = PERMISSION_STATUS_LABELS[perm.status] || [perm.status, 'badge-INFERRED'];
+    const card = document.createElement('div');
+    card.className = 'permission-card';
+    card.dataset.permissionId = perm.id;
+
+    const actions = [];
+    if (perm.id === 'home-folder-scan' && payload.canSwitchMode) {
+      actions.push(
+        perm.status === 'GRANTED'
+          ? '<button class="secondary-btn" data-action="revoke-home" type="button">Stop Scanning My Home Folder</button>'
+          : '<button class="primary-btn" data-action="grant-home" type="button">Allow Scanning My Home Folder</button>'
+      );
+    }
+    if (perm.settingsUrl && payload.platform === 'darwin') {
+      actions.push('<button class="secondary-btn" data-action="open-settings" type="button">Open System Settings</button>');
+    }
+    actions.push('<button class="ghost-btn" data-action="open-docs" type="button">Learn More</button>');
+
+    card.innerHTML = `
+      <div class="permission-card-head">
+        <span class="permission-card-title">${escapeHtml(perm.title)}<span class="permission-tag">${perm.required ? 'Required for real scans' : 'Recommended'}</span></span>
+        <span class="badge ${badgeClass}">${escapeHtml(label)}</span>
+      </div>
+      <p class="permission-card-summary">${escapeHtml(perm.summary)}</p>
+      <div class="permission-card-actions">${actions.join('')}</div>
+    `;
+
+    card.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        if (action === 'open-docs') {
+          await openSystemTarget(`docs:${perm.id}`);
+        } else if (action === 'open-settings') {
+          await openSystemTarget(`settings:${perm.id}`);
+        } else if (action === 'grant-home' || action === 'revoke-home') {
+          await setHomeScanConsent(action === 'grant-home');
+        }
+      });
+    });
+    list.appendChild(card);
+  }
+
+  document.getElementById('done-permissions-modal-btn').textContent =
+    granted || !payload.canSwitchMode ? 'Done' : 'Continue with Sample Data';
+}
+
+async function openPermissionsModal() {
+  try {
+    const payload = await apiRequest('/api/permissions');
+    renderPermissionsModal(payload);
+    document.getElementById('permissions-modal').classList.remove('hidden');
+  } catch (err) {
+    showToast(`Could not load permissions: ${err.message}`);
+  }
+}
+
+async function setHomeScanConsent(granted) {
+  try {
+    const payload = await apiRequest('/api/permissions/home-folder-scan', 'POST', { granted });
+    renderPermissionsModal(payload);
+    resetToEmptyWorkspace();
+    await loadBootstrap();
+    showToast(
+      granted
+        ? 'Real scanning enabled. Drop an application to see its leftovers.'
+        : 'Switched back to built-in sample data.'
+    );
+  } catch (err) {
+    showToast(`Could not change permission: ${err.message}`);
+  }
+}
+
+function resetToEmptyWorkspace() {
+  uiState.activeState = null;
+  uiState.selectedNodeId = null;
+  uiState.selectedArtifactIds.clear();
+  uiState.activeTrace = null;
+  document.getElementById('explorer-view').classList.add('hidden');
+  document.getElementById('scanning-view').classList.add('hidden');
+  document.getElementById('empty-workspace-view').classList.remove('hidden');
+  document.getElementById('back-to-dropzone-btn').classList.add('hidden');
+}
+
+function bindPermissionsEvents() {
+  const close = () => document.getElementById('permissions-modal').classList.add('hidden');
+  document.getElementById('permissions-btn').addEventListener('click', openPermissionsModal);
+  document.getElementById('close-permissions-modal-btn').addEventListener('click', close);
+  document.getElementById('done-permissions-modal-btn').addEventListener('click', close);
+  document.getElementById('permissions-recheck-btn').addEventListener('click', openPermissionsModal);
+  document.getElementById('permissions-overview-btn').addEventListener('click', () =>
+    openSystemTarget('docs:overview')
+  );
 }
 
 function bindTopBarEvents() {
@@ -157,6 +314,16 @@ function renderDraggableBundles(bundles) {
   dockList.innerHTML = '';
   modalList.innerHTML = '';
 
+  // With real applications the dock shows known AI apps first and stays short;
+  // the full list remains available in the picker.
+  const dockBundles = bundles.some((b) => !b.isDemoFixture)
+    ? bundles.filter((b) => b.isKnownAIApp).slice(0, 12)
+    : bundles;
+  if (bundles.length > 0 && dockBundles.length === 0) {
+    dockList.innerHTML =
+      '<span class="bundle-pill-meta">No known AI applications found in /Applications. Drop any .app here or use “Choose Application…”.</span>';
+  }
+
   bundles.forEach((b) => {
     // Dock draggable pill
     const pill = document.createElement('div');
@@ -178,7 +345,9 @@ function renderDraggableBundles(bundles) {
       handleDroppedOrSelectedBundle(b.bundlePath);
     });
 
-    dockList.appendChild(pill);
+    if (dockBundles.includes(b)) {
+      dockList.appendChild(pill);
+    }
 
     // Modal picker item
     const item = document.createElement('div');
@@ -309,6 +478,33 @@ async function executeScan({ bundlePath, workspacePath }) {
 
   document.getElementById('scan-status-title').textContent =
     `Identifying ${bundlePath ? bundlePath.split('/').pop() : 'Workspace'} & Scanning…`;
+  document.getElementById('scan-current-path').textContent = 'Preparing…';
+  document.getElementById('scan-metric-roots').textContent = '0';
+  document.getElementById('scan-metric-count').textContent = '0';
+  document.getElementById('scan-metric-bytes').textContent = '0 B';
+
+  // Live progress: show the folder being scanned right now and running totals
+  let pollingProgress = true;
+  const pollProgress = async () => {
+    while (pollingProgress) {
+      try {
+        const res = await apiRequest('/api/scan/progress');
+        if (pollingProgress && res.progress) {
+          const prog = res.progress;
+          if (prog.currentPath) {
+            document.getElementById('scan-current-path').textContent = prog.currentPath;
+          }
+          document.getElementById('scan-metric-roots').textContent = String(prog.scannedLocationsCount);
+          document.getElementById('scan-metric-count').textContent = String(prog.discoveredArtifactCount);
+          document.getElementById('scan-metric-bytes').textContent = formatBytes(prog.totalPhysicalBytes);
+        }
+      } catch {
+        // Progress is best-effort; the scan request itself reports failures
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  };
+  pollProgress();
 
   try {
     const res = await apiRequest('/api/scan/start', 'POST', {
@@ -334,6 +530,8 @@ async function executeScan({ bundlePath, workspacePath }) {
     document.getElementById('scanning-view').classList.add('hidden');
     document.getElementById('empty-workspace-view').classList.remove('hidden');
     showToast(`Scan failed: ${err.message}`);
+  } finally {
+    pollingProgress = false;
   }
 }
 
@@ -368,6 +566,16 @@ function renderScanNoticesBanner(state) {
   if (state.application && !state.application.isSupportedAIApp) {
     notices.push(
       `Generic macOS Adapter active for ${state.application.name}: application-level caches and saved state were discovered, while conversation-level provenance is marked UNKNOWN.`
+    );
+  }
+  if (state.application && (state.application.unreadableContainers || []).length > 0) {
+    notices.push(
+      `${state.application.unreadableContainers.length} Library folder(s) could not be read, so some leftovers may be missing. Grant Full Disk Access under Permissions and scan again.`
+    );
+  }
+  if (state.application && state.scan.discoveredArtifactCount === 0) {
+    notices.push(
+      `No data folders were found for ${state.application.name} in this home folder.`
     );
   }
   if (state.scan.truncated) {

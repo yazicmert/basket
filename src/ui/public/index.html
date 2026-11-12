@@ -27,8 +27,11 @@
         <line x1="12" y1="15.2" x2="12" y2="18" stroke="currentColor" stroke-width="1.4" />
       </svg>
       <h1 class="window-app-title">Artifact Atlas</h1>
-      <span id="demo-env-badge" class="env-pill hidden" title="Running against isolated real-filesystem sandbox fixtures">
-        Sandbox Fixture Data
+      <span id="demo-env-badge" class="env-pill hidden" title="Showing built-in sample data. Nothing on your disk is being scanned.">
+        Sample Data
+      </span>
+      <span id="live-env-badge" class="env-pill env-pill-live hidden" title="Scanning your real home folder">
+        Live: Home Folder
       </span>
     </div>
 
@@ -38,6 +41,9 @@
       </button>
       <button id="theme-toggle-btn" class="icon-btn" type="button" title="Toggle Dark / Light Appearance" aria-label="Toggle Dark or Light Appearance">
         <span id="theme-icon-label">Light Mode</span>
+      </button>
+      <button id="permissions-btn" class="icon-btn" type="button" title="Permissions &amp; Data Scope" aria-label="Open Permissions">
+        Permissions
       </button>
       <button id="settings-btn" class="icon-btn" type="button" title="Scan &amp; Quarantine Settings" aria-label="Open Settings">
         Settings
@@ -77,7 +83,7 @@
         <!-- Draggable .app bundles tray for immediate mouse drag-and-drop or click testing -->
         <div class="bundle-dock-tray">
           <div class="bundle-dock-header">
-            <span class="bundle-dock-caption">Drag a discovered <code>.app</code> bundle into the workspace above (or click to inspect):</span>
+            <span id="bundle-dock-caption" class="bundle-dock-caption">Drag a discovered <code>.app</code> bundle into the workspace above (or click to inspect):</span>
           </div>
           <div id="draggable-bundles-list" class="draggable-bundles-list" role="list"></div>
         </div>
@@ -92,9 +98,13 @@
         <p id="scan-status-subtitle" class="scan-subtitle">
           Enforcing symlink boundaries and physical inode deduplication.
         </p>
+        <div class="scan-current-path" title="Folder being scanned right now">
+          <span class="metric-label">Scanning now</span>
+          <code id="scan-current-path">Preparing…</code>
+        </div>
         <div class="scan-metrics-grid">
           <div class="scan-metric-box">
-            <span class="metric-label">Scanned Roots</span>
+            <span class="metric-label">Folders Scanned</span>
             <span id="scan-metric-roots" class="metric-value">0</span>
           </div>
           <div class="scan-metric-box">
@@ -378,6 +388,25 @@
       <div class="modal-footer">
         <button id="reset-demo-sandbox-btn" class="secondary-btn" type="button">Reset Sandbox Fixtures</button>
         <button id="done-settings-modal-btn" class="primary-btn" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 4: Permissions & Data Scope -->
+  <div id="permissions-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="permissions-modal-title">
+    <div class="modal-dialog modal-dialog-wide">
+      <div class="modal-header">
+        <h2 id="permissions-modal-title">Permissions</h2>
+        <button id="close-permissions-modal-btn" class="icon-btn" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="permissions-intro" class="panel-subheading"></p>
+        <div id="permissions-list" class="permissions-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="permissions-overview-btn" class="ghost-btn" type="button">About these permissions</button>
+        <button id="permissions-recheck-btn" class="secondary-btn" type="button">Check Again</button>
+        <button id="done-permissions-modal-btn" class="primary-btn" type="button">Continue with Sample Data</button>
       </div>
     </div>
   </div>
