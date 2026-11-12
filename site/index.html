@@ -45,10 +45,12 @@
   <figure class="shot">
     <div class="window">
       <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>Artifact Atlas</span></div>
-      <img src="screenshot.png" width="1360" height="820"
-           alt="Artifact Atlas map linking an AI application, its sessions and tool calls to the files they created, colored by cleanup risk." />
+      <div id="demo" class="demo">
+        <img src="screenshot.png" width="1360" height="820"
+             alt="Artifact Atlas map linking an AI application, its sessions and tool calls to the files they created, colored by cleanup risk." />
+      </div>
     </div>
-    <figcaption>The map, opened on the built-in sample data. One log file is selected and traced back to its session.</figcaption>
+    <figcaption>A walkthrough on built-in sample data: drop an app, watch the scan, trace a file, quarantine it and restore it. Click anywhere in the window to take over.</figcaption>
   </figure>
 
   <section class="spec" id="how-links-are-known">
@@ -166,5 +168,6 @@ npm test</pre>
     </nav>
   </div>
 </footer>
+<script src="demo.js" defer></script>
 </body>
 </html>
