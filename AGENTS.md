@@ -30,6 +30,7 @@
   - `src/platform/` — `PlatformServices` (filesystem boundary guards, symlink checks, inode identity, Finder reveal).
   - `src/platform/permissions.js` — Permission model (in-app home-folder-scan consent, macOS Full Disk Access probe, allowlisted System Settings / documentation targets). Every permission id must have a page under `site/permissions/<id>/`.
   - `src/discovery/` — `ApplicationDiscovery` (`.app/Contents/Info.plist` XML/binary parser and app identity resolver) and `app-footprint.js` (generic per-app data location discovery by bundle identifier and name; strict matching only, attribution stays `INFERRED`).
+  - `src/discovery/app-icon.js` — Copies an application's own icon (PNG inside `Contents/Resources/*.icns`) out of its bundle for display. Static read only; the icon must be a regular file inside the bundle, and the UI server serves it only for bundles already listed in the picker.
   - `src/adapters/` — `AdapterRegistry` + `ClaudeCodeAdapter`, `CursorAdapter`, `CodexAdapter`, `GenericMacOSAppAdapter`.
   - `src/scanner/` — Cancellable, permission-aware filesystem `Scanner`.
   - `src/indexer/` — `ArtifactIndexer` with physical inode deduplication.
@@ -41,6 +42,7 @@
   - `src/monitoring/` — `LiveMonitorProvider` interfaces for future opt-in live event correlation.
   - `src/fixtures/` — Deterministic synthetic & real-filesystem demo environment generator.
   - `src/ui/` — Local HTTP/IPC server (`server.js`) and Obsidian-inspired Knowledge Graph & Treemap UI (`public/`).
+  - `src/ui/public/icons.js` — Shared icon set (one glyph per artifact type, plus workspace, session, tool call and application fallbacks). `site/icons.js` must stay an exact copy; a test enforces it. Glyphs are original and are not product logos. Color stays reserved for cleanup risk.
   - `src/cli.js` — Command-line entrypoint (`serve`, `scan`, `demo`, `quarantine`, `restore`).
 - `Sources/` & `Tests/` — Native macOS Swift Package (`ArtifactAtlasCore`, `ArtifactAtlasApp`, `ArtifactAtlasCoreTests`).
 - `site/` — Project site published to GitHub Pages (landing page and one page per permission).

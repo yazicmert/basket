@@ -10,6 +10,7 @@ import { RestoreConflictStrategy } from '../models/entities.js';
 import { execFile } from 'node:child_process';
 import { describePermissions, resolveOpenTarget } from '../platform/permissions.js';
 import { findKnownAppProfile } from '../discovery/app-footprint.js';
+import { readAppIconPng } from '../discovery/app-icon.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -356,6 +357,25 @@ export function createAtlasServer(options = {}) {
           activeState: activeService().activeState,
           quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
         });
+      }
+
+      // The application's own icon, copied out of its bundle (static read, nothing is run).
+      // Only bundles that are already listed in the picker can be asked for.
+      if (url.pathname === '/api/app/icon' && req.method === 'GET') {
+        const requested = url.searchParams.get('bundlePath') || '';
+        const listed = discoverAvailableBundles().some((b) => b.bundlePath === requested);
+        const png = listed ? readAppIconPng(requested) : null;
+        if (!png) {
+          return sendJson(res, 404, { ok: false, error: 'NO_ICON' });
+        }
+        res.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Content-Length': png.length,
+          'Cache-Control': 'private, max-age=3600',
+          'X-Content-Type-Options': 'nosniff'
+        });
+        res.end(png);
+        return;
       }
 
       if (url.pathname === '/api/app/identify' && req.method === 'POST') {

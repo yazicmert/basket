@@ -71,6 +71,36 @@ const RISK_DOT_CLASS = {
 };
 
 /** "REGENERABLE_CACHE" -> "Regenerable cache" */
+/* Icons. `AtlasIcons` comes from icons.js. An application shows its own icon when its
+   bundle has one that can be read; the glyph underneath is the fallback. */
+const Icons = window.AtlasIcons;
+
+function iconSvg(name, size = 16) {
+  return Icons ? Icons.svg(name, size) : '';
+}
+
+function appIconUrl(bundlePath) {
+  return `/api/app/icon?bundlePath=${encodeURIComponent(bundlePath)}`;
+}
+
+// Fills an `.app-icon` element for an application ({ name, adapterId, bundlePath, isDemoFixture }).
+function fillAppIcon(el, app) {
+  if (!el) return;
+  el.innerHTML = iconSvg(app ? Icons.forApp(app) : 'folder', 16);
+  el.classList.remove('has-image');
+  if (app && app.bundlePath && !app.isDemoFixture) {
+    const img = new Image();
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.addEventListener('load', () => {
+      el.classList.add('has-image');
+      el.replaceChildren(img);
+    });
+    img.src = appIconUrl(app.bundlePath);
+  }
+}
+
 function sentenceCase(value) {
   const text = String(value || '').replace(/_/g, ' ').toLowerCase();
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -421,9 +451,11 @@ function renderDraggableBundles(bundles) {
     pill.setAttribute('role', 'listitem');
     pill.dataset.bundlePath = b.bundlePath;
     pill.innerHTML = `
+      <span class="app-icon" aria-hidden="true"></span>
       <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
       <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
     `;
+    fillAppIcon(pill.querySelector('.app-icon'), b);
 
     pill.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', b.bundlePath);
@@ -443,9 +475,11 @@ function renderDraggableBundles(bundles) {
     item.className = 'modal-bundle-item';
     item.dataset.bundlePath = b.bundlePath;
     item.innerHTML = `
+      <span class="app-icon" aria-hidden="true"></span>
       <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
       <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
     `;
+    fillAppIcon(item.querySelector('.app-icon'), b);
     item.addEventListener('click', async () => {
       document.getElementById('custom-bundle-path-input').value = b.bundlePath;
       await previewIdentifiedBundleInModal(b.bundlePath);
@@ -626,6 +660,11 @@ function transitionToExplorerView() {
   const app = state.application;
 
   document.getElementById('active-app-name').textContent = app ? app.name : 'Project folder';
+  const appBundle = app
+    ? { ...app, isDemoFixture: Boolean(state.isDemoEnvironment) }
+    : null;
+  fillAppIcon(document.getElementById('active-app-icon'), appBundle);
+  loadGraphAppIcon(appBundle);
   document.getElementById('active-app-meta').textContent =
     `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(state.scan.totalPhysicalBytes)}`;
 
@@ -693,6 +732,22 @@ function loadGraphFromState(graphData) {
   if (canvas) {
     resizeCanvas();
   }
+}
+
+// The application's own icon for its node on the map, when the bundle has a readable one.
+function loadGraphAppIcon(app) {
+  uiState.appIconImage = null;
+  if (!app || !app.bundlePath || app.isDemoFixture) return;
+  const img = new Image();
+  img.addEventListener('load', () => {
+    uiState.appIconImage = img;
+  });
+  img.src = appIconUrl(app.bundlePath);
+}
+
+// Glyph color on a risk-colored file mark: dark on amber, light on the others.
+function glyphColorOnRisk(risk) {
+  return risk === 'REVIEW' ? '#1b1b1a' : '#ffffff';
 }
 
 function resizeCanvas() {
@@ -924,7 +979,10 @@ function drawGraph() {
     const isHighlighted = highlightedNodes ? highlightedNodes.has(node.id) : true;
     const isDimmed = highlightedNodes && !isHighlighted;
     const isFile = node.nodeType === 'ARTIFACT';
-    const r = node.radius;
+    // Marks keep a minimum on-screen size so the glyph inside stays readable when zoomed out.
+    const minScreenRadius =
+      node.nodeType === 'AI_APPLICATION' ? 14 : isFile ? 8 : node.nodeType === 'OPERATION' ? 0 : 11;
+    const r = Math.max(node.radius, minScreenRadius / uiState.camera.scale);
 
     ctx.save();
     ctx.globalAlpha = isDimmed ? 0.15 : 1;
@@ -968,7 +1026,9 @@ function drawGraph() {
       ctx.fillStyle = isFile
         ? colors[node.riskCategory] || colors.PROTECTED
         : node.nodeType === 'AI_APPLICATION'
-          ? colors.ink
+          ? uiState.appIconImage
+            ? colors.surface
+            : colors.ink
           : node.nodeType === 'SESSION'
             ? colors.ink2
             : colors.ink3;
@@ -977,6 +1037,25 @@ function drawGraph() {
       ctx.strokeStyle = colors.surface;
       ctx.lineWidth = 2;
       ctx.stroke();
+    }
+
+    // Glyph inside the mark. Skipped when the mark is too small on screen to read.
+    if (Icons && r * uiState.camera.scale >= 6) {
+      const isApp = node.nodeType === 'AI_APPLICATION';
+      if (isApp && uiState.appIconImage) {
+        const side = r * 2.1;
+        ctx.drawImage(uiState.appIconImage, node.x - side / 2, node.y - side / 2, side, side);
+      } else {
+        const glyphColor = isFile
+          ? glyphColorOnRisk(node.riskCategory)
+          : isHollow
+            ? node.nodeType === 'WORKSPACE'
+              ? colors.ink
+              : colors.ink2
+            : colors.surface;
+        ctx.setLineDash([]);
+        Icons.draw(ctx, Icons.forNode(node), node.x, node.y, r * (isFile ? 1.2 : 1.1), glyphColor);
+      }
     }
 
     const isStructural = !isFile && node.nodeType !== 'OPERATION';
@@ -1158,21 +1237,108 @@ function clearNodeSelection() {
    PROVENANCE & EVIDENCE INSPECTOR (Sections 5, 7, 8, 9)
    ========================================================================= */
 
+// Totals for the finished scan. Sizes are physical (hardlinked data counted once) and come
+// from the server; counts are taken from the files on the map.
+function summarizeScan() {
+  const g = uiState.activeState?.graph;
+  if (!g) return null;
+  const tm = g.treemap || {};
+  const fileNodes = (g.nodes || []).filter((n) => n.nodeType === 'ARTIFACT');
+  const countByRisk = { LOW: 0, REVIEW: 0, HIGH: 0, PROTECTED: 0 };
+  for (const n of fileNodes) {
+    if (countByRisk[n.riskCategory] !== undefined) countByRisk[n.riskCategory] += 1;
+  }
+  const largest = fileNodes.reduce((top, n) => (!top || n.sizeBytes > top.sizeBytes ? n : top), null);
+  return {
+    fileCount: fileNodes.length,
+    totalBytes: uiState.activeState.scan?.totalPhysicalBytes || 0,
+    risks: [
+      { key: 'LOW', count: countByRisk.LOW, bytes: tm.reclaimablePhysicalBytes || 0 },
+      { key: 'REVIEW', count: countByRisk.REVIEW, bytes: tm.reviewPhysicalBytes || 0 },
+      { key: 'HIGH', count: countByRisk.HIGH, bytes: tm.highRiskPhysicalBytes || 0 },
+      { key: 'PROTECTED', count: countByRisk.PROTECTED, bytes: null }
+    ],
+    origins: [
+      { key: 'VERIFIED', label: 'Recorded by a session', count: g.stats.verifiedArtifactCount },
+      { key: 'INFERRED', label: 'Likely from this app', count: g.stats.inferredArtifactCount },
+      { key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }
+    ],
+    kinds: [...(tm.byGroup || [])].sort((x, y) => y.bytes - x.bytes),
+    sessionCount: (g.nodes || []).filter((n) => n.nodeType === 'SESSION').length,
+    largest
+  };
+}
+
 function renderGlobalInspectorSummary() {
   const box = document.getElementById('inspector-global-stats');
-  const g = uiState.activeState?.graph;
-  if (!g) return;
+  const sum = summarizeScan();
+  if (!sum) return;
+
+  const share = (bytes) => (sum.totalBytes > 0 ? Math.max(0, (bytes / sum.totalBytes) * 100) : 0);
+  const riskRows = sum.risks
+    .map(
+      (r) => `
+        <div class="kv-item">
+          <span class="kv-key"><span class="legend-dot ${RISK_DOT_CLASS[r.key]}"></span>${escapeHtml(RISK_LABELS[r.key])}</span>
+          <span class="kv-val">${pluralize(r.count, 'file')}${r.bytes === null ? '' : ` · ${formatBytes(r.bytes)}`}</span>
+        </div>`
+    )
+    .join('');
+  const originRows = sum.origins
+    .map(
+      (o) => `
+        <div class="kv-item">
+          <span class="kv-key"><span class="origin-line origin-${o.key}"></span>${escapeHtml(o.label)}</span>
+          <span class="kv-val">${pluralize(o.count, 'file')}</span>
+        </div>`
+    )
+    .join('');
+  const kindRows = sum.kinds
+    .map(
+      (k) => `
+        <div class="kv-item">
+          <span class="kv-key">${iconSvg(Icons.forArtifactType(k.artifactType), 14)}${escapeHtml(k.label)}</span>
+          <span class="kv-val">${pluralize(k.artifactCount, 'file')} · ${formatBytes(k.bytes)}</span>
+        </div>`
+    )
+    .join('');
 
   box.innerHTML = `
     <div class="inspector-section">
       <div class="inspector-section-title">This scan</div>
-      <div class="kv-list">
-        <div class="kv-item"><span class="kv-key">Safe to remove</span><span class="kv-val">${formatBytes(g.treemap.reclaimablePhysicalBytes)}</span></div>
-        <div class="kv-item"><span class="kv-key">Recorded by a session</span><span class="kv-val">${pluralize(g.stats.verifiedArtifactCount, 'file')}</span></div>
-        <div class="kv-item"><span class="kv-key">Likely from this app</span><span class="kv-val">${pluralize(g.stats.inferredArtifactCount, 'file')}</span></div>
-        <div class="kv-item"><span class="kv-key">Unknown origin</span><span class="kv-val">${pluralize(g.stats.unknownArtifactCount, 'file')}</span></div>
+      <div class="scan-total">
+        <span class="scan-total-value">${formatBytes(sum.totalBytes)}</span>
+        <span class="scan-total-meta">${pluralize(sum.fileCount, 'file')} · ${pluralize(sum.sessionCount, 'session')}</span>
+      </div>
+      <div class="scan-share-bar" role="img" aria-label="Share of disk space by cleanup risk">
+        <span class="dot-safe" style="width:${share(sum.risks[0].bytes)}%"></span>
+        <span class="dot-review" style="width:${share(sum.risks[1].bytes)}%"></span>
+        <span class="dot-high" style="width:${share(sum.risks[2].bytes)}%"></span>
       </div>
     </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">By cleanup risk</div>
+      <div class="kv-list">${riskRows}</div>
+    </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">By origin</div>
+      <div class="kv-list">${originRows}</div>
+    </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">By kind</div>
+      <div class="kv-list">${kindRows}</div>
+    </div>
+    ${
+      sum.largest
+        ? `<div class="inspector-section">
+            <div class="inspector-section-title">Largest file</div>
+            <div class="kv-list"><div class="kv-item">
+              <span class="kv-key kv-key-wrap">${escapeHtml(sum.largest.label)}</span>
+              <span class="kv-val">${formatBytes(sum.largest.sizeBytes)}</span>
+            </div></div>
+          </div>`
+        : ''
+    }
   `;
 }
 
@@ -1244,7 +1410,7 @@ function renderNodeInspector(node, trace) {
   detail.innerHTML = `
     <div class="inspector-head">
       <div>
-        <div class="inspector-kicker">${escapeHtml(
+        <div class="inspector-kicker">${iconSvg(Icons ? Icons.forNode(node) : 'unknown', 14)}${escapeHtml(
           isArtifact
             ? sentenceCase(meta.artifactType)
             : NODE_TYPE_LABELS[node.nodeType] || sentenceCase(node.nodeType)
@@ -1427,7 +1593,9 @@ function renderTreemapView() {
     tile.title = `${cell.label}: ${formatBytes(cell.bytes)} · ${RISK_LABELS[risk] || ''}`;
     tile.innerHTML = `
       <div class="size-row-label">
-        <div class="size-row-name">${escapeHtml(cell.label)}</div>
+        <div class="size-row-name">${
+          cell.artifactType ? iconSvg(Icons.forArtifactType(cell.artifactType), 15) : ''
+        }${escapeHtml(cell.label)}</div>
         <div class="size-row-count">${pluralize(cell.artifactCount, 'file')}</div>
       </div>
       <div class="size-row-track">

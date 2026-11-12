@@ -841,6 +841,37 @@ footer {
   fill: var(--ink);
 }
 
+.demo-glyph {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.demo-node.workspace .demo-glyph {
+  stroke: var(--ink);
+}
+
+.demo-node.app .demo-glyph,
+.demo-node.session .demo-glyph {
+  stroke: var(--surface);
+}
+
+.demo-node.file .demo-glyph {
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.demo-node.file.review .demo-glyph {
+  stroke: #1b1b1a;
+}
+
+.demo-node.file.protected .demo-glyph {
+  stroke: var(--ink-2);
+}
+
 .demo-node.session > :nth-child(2) {
   fill: var(--ink-2);
   stroke: var(--ink-2);
@@ -870,6 +901,7 @@ footer {
 .demo-node.file.protected > :nth-child(2) {
   fill: var(--surface);
   stroke: var(--risk-protected);
+  stroke-width: 1.5;
 }
 
 .demo-node.selected > :nth-child(2) {
@@ -1233,39 +1265,22 @@ footer {
 
 .demo-tile {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
+  z-index: 6;
   display: grid;
   justify-items: center;
-  gap: 6px;
-  transform: translate(-330px, 150px);
+  gap: 5px;
+  pointer-events: none;
   opacity: 0;
+  transform-origin: 50% 20px;
 }
 
-.demo-intro.go .demo-tile {
-  animation: demo-drag 2.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-
-@keyframes demo-drag {
-  0% { transform: translate(-330px, 150px); opacity: 0; }
-  12% { opacity: 1; }
-  58% { transform: translate(-50%, -50%); opacity: 1; }
-  78% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-  100% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
-}
-
-.demo-tile-icon {
-  width: 56px;
-  height: 56px;
-  display: grid;
-  place-items: center;
-  border-radius: 13px;
-  background: var(--ink);
-  color: var(--ink-inverse);
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: 600;
-  box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.45);
+.demo-tile .demo-appicon {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  box-shadow: 0 12px 26px -8px rgba(0, 0, 0, 0.5);
 }
 
 .demo-tile-name {
@@ -1279,8 +1294,8 @@ footer {
 
 .demo-cursor {
   position: absolute;
-  left: 38px;
-  top: 34px;
+  left: calc(50% + 6px);
+  top: 26px;
   width: 16px;
   height: 20px;
 }
@@ -1353,11 +1368,507 @@ footer {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .demo-intro.go .demo-tile,
   .demo svg.reveal .demo-node,
   .demo svg.reveal .demo-edge {
     animation-duration: 0.01s;
     animation-delay: 0s;
+  }
+}
+
+/* ---------- The Mac around the preview ---------- */
+
+.mac {
+  --bezel: #0d0d0c;
+  --wall-a: #dcdbd4;
+  --wall-b: #b3b8b5;
+  display: grid;
+  justify-items: center;
+}
+
+.mac-screen {
+  width: 100%;
+  border: 10px solid var(--bezel);
+  border-radius: 20px;
+  background: var(--bezel);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 30px 70px -34px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.mac-menubar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 26px;
+  padding-inline: 14px;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 72%, var(--wall-a));
+  border-radius: 9px 9px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.mac-menubar svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.mac-menubar strong {
+  font-weight: 650;
+}
+
+.mac-menubar .mac-menu-right {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.mac-desktop {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  padding: 18px 22px 10px;
+  background:
+    radial-gradient(120% 90% at 12% 0%, color-mix(in srgb, var(--surface) 55%, transparent), transparent 60%),
+    linear-gradient(155deg, var(--wall-a), var(--wall-b));
+  border-radius: 0 0 9px 9px;
+}
+
+.mac-desktop > .window {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 22px 50px -24px rgba(0, 0, 0, 0.55);
+}
+
+.mac-dock {
+  justify-self: center;
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface) 70%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  min-height: 52px;
+}
+
+.dock-item {
+  position: relative;
+  display: grid;
+}
+
+.dock-item .demo-appicon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.dock-item.running::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.dock-item.running .demo-appicon {
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.mac-neck {
+  width: 16%;
+  min-width: 90px;
+  height: 34px;
+  background: linear-gradient(var(--line-strong), var(--line));
+}
+
+.mac-foot {
+  width: 30%;
+  min-width: 170px;
+  height: 7px;
+  border-radius: 4px 4px 2px 2px;
+  background: var(--line-strong);
+}
+
+.demo-appicon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+}
+
+.demo-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-2);
+  flex: none;
+}
+
+/* Finder window the app is dragged from. Shown only during the first step. */
+.finder {
+  position: absolute;
+  left: 34px;
+  bottom: 84px;
+  z-index: 4;
+  width: 232px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  box-shadow: 0 18px 44px -16px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translateY(14px) scale(0.97);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+}
+
+.mac.finder-open .finder {
+  opacity: 1;
+  transform: none;
+}
+
+.finder .window-bar {
+  height: 28px;
+}
+
+.finder-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 6px;
+  padding: 14px 10px 12px;
+}
+
+.finder-item {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  text-align: center;
+  color: var(--ink);
+}
+
+.finder-item .demo-appicon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.demo-app {
+  align-items: center;
+}
+
+.demo-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.demo-qrow {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+.demo-qrow .demo-btn {
+  margin-left: auto;
+  flex: none;
+}
+
+.demo-samples {
+  display: grid;
+  width: min(100%, 300px);
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+}
+
+.demo-sample {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-block: 6px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.demo-sample .demo-appicon {
+  width: 22px;
+  height: 22px;
+}
+
+.demo-scan-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.demo-dropzone {
+  padding-block: 30px 24px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mac {
+    --bezel: #000000;
+    --wall-a: #34342f;
+    --wall-b: #121212;
+  }
+}
+
+@media (max-width: 860px) {
+  .mac-screen {
+    border-width: 6px;
+    border-radius: 14px;
+  }
+
+  .mac-desktop {
+    padding: 8px 8px 8px;
+  }
+
+  .mac-menubar span:not(.mac-menu-right) {
+    display: none;
+  }
+
+  .finder,
+  .mac-dock {
+    display: none;
+  }
+
+  .mac-neck {
+    height: 20px;
+  }
+}
+
+/* ---------- Supported apps: two rows that scroll forever ---------- */
+
+.marquee {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 46s linear infinite;
+}
+
+.marquee.reverse .marquee-track {
+  animation-direction: reverse;
+  animation-duration: 54s;
+}
+
+.marquee:hover .marquee-track,
+.marquee:focus-within .marquee-track {
+  animation-play-state: paused;
+}
+
+.marquee ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 0 0;
+  display: flex;
+  gap: 10px;
+}
+
+@keyframes marquee {
+  to { transform: translateX(-50%); }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px 6px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  font-size: 14.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chip-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--ink-inverse);
+}
+
+.chip-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chip small {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-3);
+  padding-left: 9px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.chip.any {
+  border-style: dashed;
+  color: var(--ink-2);
+}
+
+.chip.any .chip-icon {
+  background: transparent;
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* ---------- Published figures ---------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 40px;
+}
+
+.stat {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding-block: 18px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.stat dt {
+  font-family: var(--font-display);
+  font-size: clamp(30px, 4.4vw, 44px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat dd {
+  color: var(--ink-2);
+  font-size: 15.5px;
+  max-width: 44ch;
+}
+
+.stat dd a {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.stat dd a:hover {
+  color: var(--ink);
+}
+
+/* Scan totals in the preview's side panel */
+
+.demo-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -6px;
+}
+
+.demo-total strong {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+
+.demo-share {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.demo-share .dot {
+  height: 100%;
+  border-radius: 0;
+  min-width: 0;
+  transition: width 0.3s;
+}
+
+.demo-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.demo-stat .dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+}
+
+.demo-stat-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-2);
+}
+
+.demo-line {
+  flex: none;
+  width: 16px;
+  border-top: 1.5px solid var(--ink);
+}
+
+.demo-line.likely {
+  border-top-style: dashed;
+}
+
+.demo-line.unknown {
+  border-top-style: dotted;
+}
+
+.demo-panel .demo-sub {
+  margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+  .stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .marquee-track {
+    animation: none;
+    width: auto;
+  }
+
+  .marquee ul {
+    flex-wrap: wrap;
+    padding: 0 0 10px;
+  }
+
+  .marquee ul[aria-hidden="true"] {
+    display: none;
   }
 }
 
@@ -1403,4 +1914,9 @@ footer {
   * {
     transition: none !important;
   }
+}
+
+.demo-stat .demo-muted {
+  flex: none;
+  white-space: nowrap;
 }
