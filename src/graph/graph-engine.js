@@ -443,6 +443,7 @@ export class GraphEngine {
         category: grp.artifactType,
         riskCategory: grp.riskSummary,
         bytes: grp.deduplicatedBytes,
+        artifactType: grp.artifactType,
         artifactCount: grp.artifactIds.length,
         focusNodeId: grp.id,
         artifactIds: grp.artifactIds

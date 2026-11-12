@@ -71,6 +71,36 @@ const RISK_DOT_CLASS = {
 };
 
 /** "REGENERABLE_CACHE" -> "Regenerable cache" */
+/* Icons. `AtlasIcons` comes from icons.js. An application shows its own icon when its
+   bundle has one that can be read; the glyph underneath is the fallback. */
+const Icons = window.AtlasIcons;
+
+function iconSvg(name, size = 16) {
+  return Icons ? Icons.svg(name, size) : '';
+}
+
+function appIconUrl(bundlePath) {
+  return `/api/app/icon?bundlePath=${encodeURIComponent(bundlePath)}`;
+}
+
+// Fills an `.app-icon` element for an application ({ name, adapterId, bundlePath, isDemoFixture }).
+function fillAppIcon(el, app) {
+  if (!el) return;
+  el.innerHTML = iconSvg(app ? Icons.forApp(app) : 'folder', 16);
+  el.classList.remove('has-image');
+  if (app && app.bundlePath && !app.isDemoFixture) {
+    const img = new Image();
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.addEventListener('load', () => {
+      el.classList.add('has-image');
+      el.replaceChildren(img);
+    });
+    img.src = appIconUrl(app.bundlePath);
+  }
+}
+
 function sentenceCase(value) {
   const text = String(value || '').replace(/_/g, ' ').toLowerCase();
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -421,9 +451,11 @@ function renderDraggableBundles(bundles) {
     pill.setAttribute('role', 'listitem');
     pill.dataset.bundlePath = b.bundlePath;
     pill.innerHTML = `
+      <span class="app-icon" aria-hidden="true"></span>
       <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
       <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
     `;
+    fillAppIcon(pill.querySelector('.app-icon'), b);
 
     pill.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', b.bundlePath);
@@ -443,9 +475,11 @@ function renderDraggableBundles(bundles) {
     item.className = 'modal-bundle-item';
     item.dataset.bundlePath = b.bundlePath;
     item.innerHTML = `
+      <span class="app-icon" aria-hidden="true"></span>
       <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
       <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
     `;
+    fillAppIcon(item.querySelector('.app-icon'), b);
     item.addEventListener('click', async () => {
       document.getElementById('custom-bundle-path-input').value = b.bundlePath;
       await previewIdentifiedBundleInModal(b.bundlePath);
@@ -626,6 +660,11 @@ function transitionToExplorerView() {
   const app = state.application;
 
   document.getElementById('active-app-name').textContent = app ? app.name : 'Project folder';
+  const appBundle = app
+    ? { ...app, isDemoFixture: Boolean(state.isDemoEnvironment) }
+    : null;
+  fillAppIcon(document.getElementById('active-app-icon'), appBundle);
+  loadGraphAppIcon(appBundle);
   document.getElementById('active-app-meta').textContent =
     `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(state.scan.totalPhysicalBytes)}`;
 
@@ -693,6 +732,22 @@ function loadGraphFromState(graphData) {
   if (canvas) {
     resizeCanvas();
   }
+}
+
+// The application's own icon for its node on the map, when the bundle has a readable one.
+function loadGraphAppIcon(app) {
+  uiState.appIconImage = null;
+  if (!app || !app.bundlePath || app.isDemoFixture) return;
+  const img = new Image();
+  img.addEventListener('load', () => {
+    uiState.appIconImage = img;
+  });
+  img.src = appIconUrl(app.bundlePath);
+}
+
+// Glyph color on a risk-colored file mark: dark on amber, light on the others.
+function glyphColorOnRisk(risk) {
+  return risk === 'REVIEW' ? '#1b1b1a' : '#ffffff';
 }
 
 function resizeCanvas() {
@@ -924,7 +979,10 @@ function drawGraph() {
     const isHighlighted = highlightedNodes ? highlightedNodes.has(node.id) : true;
     const isDimmed = highlightedNodes && !isHighlighted;
     const isFile = node.nodeType === 'ARTIFACT';
-    const r = node.radius;
+    // Marks keep a minimum on-screen size so the glyph inside stays readable when zoomed out.
+    const minScreenRadius =
+      node.nodeType === 'AI_APPLICATION' ? 14 : isFile ? 8 : node.nodeType === 'OPERATION' ? 0 : 11;
+    const r = Math.max(node.radius, minScreenRadius / uiState.camera.scale);
 
     ctx.save();
     ctx.globalAlpha = isDimmed ? 0.15 : 1;
@@ -968,7 +1026,9 @@ function drawGraph() {
       ctx.fillStyle = isFile
         ? colors[node.riskCategory] || colors.PROTECTED
         : node.nodeType === 'AI_APPLICATION'
-          ? colors.ink
+          ? uiState.appIconImage
+            ? colors.surface
+            : colors.ink
           : node.nodeType === 'SESSION'
             ? colors.ink2
             : colors.ink3;
@@ -977,6 +1037,25 @@ function drawGraph() {
       ctx.strokeStyle = colors.surface;
       ctx.lineWidth = 2;
       ctx.stroke();
+    }
+
+    // Glyph inside the mark. Skipped when the mark is too small on screen to read.
+    if (Icons && r * uiState.camera.scale >= 6) {
+      const isApp = node.nodeType === 'AI_APPLICATION';
+      if (isApp && uiState.appIconImage) {
+        const side = r * 2.1;
+        ctx.drawImage(uiState.appIconImage, node.x - side / 2, node.y - side / 2, side, side);
+      } else {
+        const glyphColor = isFile
+          ? glyphColorOnRisk(node.riskCategory)
+          : isHollow
+            ? node.nodeType === 'WORKSPACE'
+              ? colors.ink
+              : colors.ink2
+            : colors.surface;
+        ctx.setLineDash([]);
+        Icons.draw(ctx, Icons.forNode(node), node.x, node.y, r * (isFile ? 1.2 : 1.1), glyphColor);
+      }
     }
 
     const isStructural = !isFile && node.nodeType !== 'OPERATION';
@@ -1244,7 +1323,7 @@ function renderNodeInspector(node, trace) {
   detail.innerHTML = `
     <div class="inspector-head">
       <div>
-        <div class="inspector-kicker">${escapeHtml(
+        <div class="inspector-kicker">${iconSvg(Icons ? Icons.forNode(node) : 'unknown', 14)}${escapeHtml(
           isArtifact
             ? sentenceCase(meta.artifactType)
             : NODE_TYPE_LABELS[node.nodeType] || sentenceCase(node.nodeType)
@@ -1427,7 +1506,9 @@ function renderTreemapView() {
     tile.title = `${cell.label}: ${formatBytes(cell.bytes)} · ${RISK_LABELS[risk] || ''}`;
     tile.innerHTML = `
       <div class="size-row-label">
-        <div class="size-row-name">${escapeHtml(cell.label)}</div>
+        <div class="size-row-name">${
+          cell.artifactType ? iconSvg(Icons.forArtifactType(cell.artifactType), 15) : ''
+        }${escapeHtml(cell.label)}</div>
         <div class="size-row-count">${pluralize(cell.artifactCount, 'file')}</div>
       </div>
       <div class="size-row-track">
