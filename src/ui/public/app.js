@@ -61,6 +61,7 @@ const NODE_TYPE_LABELS = {
   OPERATION: 'Tool call',
   ARTIFACT: 'File',
   ARTIFACT_GROUP: 'Group',
+  FOLDER: 'Folder',
   UNKNOWN_ORIGIN: 'Unknown origin'
 };
 const RISK_DOT_CLASS = {
@@ -309,7 +310,7 @@ function renderPermissionsModal(payload) {
   document.getElementById('permissions-intro').textContent = !payload.canSwitchMode
     ? `The home folder is fixed by the command line to ${payload.liveHomeDir}.`
     : isLive
-      ? 'Artifact Atlas can read your home folder. Nothing leaves this Mac, and files are only moved to Quarantine after you confirm.'
+      ? 'Artifact Atlas can read your home folder. Nothing about your files leaves this Mac, and files are only moved to Quarantine after you confirm.'
       : 'You are looking at sample data. To see what the apps on this Mac left behind, allow Artifact Atlas to read your home folder.';
 
   const list = document.getElementById('permissions-list');
@@ -619,6 +620,12 @@ async function executeScan({ bundlePath, workspacePath }) {
         const res = await apiRequest('/api/scan/progress');
         if (pollingProgress && res.progress) {
           const prog = res.progress;
+          const title = document.getElementById('scan-status-title');
+          if (prog.phase === 'analyzing') {
+            title.textContent = `Analyzing ${Number(prog.discoveredArtifactCount || 0).toLocaleString()} files…`;
+          } else if (prog.phase === 'saving') {
+            title.textContent = 'Saving the index…';
+          }
           if (prog.currentPath) {
             document.getElementById('scan-current-path').textContent = prog.currentPath;
           }
@@ -647,7 +654,7 @@ async function executeScan({ bundlePath, workspacePath }) {
     uiState.activeTrace = null;
 
     document.getElementById('scan-metric-roots').textContent =
-      String(res.state.scan.scannedLocations.length);
+      String(res.state.scan.scannedLocationsCount);
     document.getElementById('scan-metric-count').textContent =
       String(res.state.scan.discoveredArtifactCount);
     document.getElementById('scan-metric-bytes').textContent =
@@ -1023,7 +1030,8 @@ function drawGraph() {
     }
 
     ctx.beginPath();
-    const isSquare = node.nodeType === 'WORKSPACE' || node.nodeType === 'ARTIFACT_GROUP';
+    const isSquare =
+      node.nodeType === 'WORKSPACE' || node.nodeType === 'ARTIFACT_GROUP' || node.nodeType === 'FOLDER';
     if (isSquare) {
       ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 5);
     } else {
@@ -1454,7 +1462,29 @@ function renderNodeInspector(node, trace) {
             ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.canonicalPath)}</span></div>`
             : ''
         }
+        ${
+          node.nodeType === 'FOLDER'
+            ? `
+          <div class="kv-item"><span class="kv-key">Files</span><span class="kv-val">${Number(meta.artifactCount || 0).toLocaleString()}</span></div>
+          <div class="kv-item"><span class="kv-key">Size</span><span class="kv-val">${formatBytes(meta.bytes || 0)}</span></div>
+          ${['LOW', 'REVIEW', 'HIGH', 'PROTECTED']
+            .filter((risk) => meta.riskCounts?.[risk] > 0)
+            .map(
+              (risk) =>
+                `<div class="kv-item"><span class="kv-key">${escapeHtml(RISK_LABELS[risk])}</span><span class="kv-val">${pluralize(meta.riskCounts[risk], 'file')}</span></div>`
+            )
+            .join('')}
+          <div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path || '')}</span></div>
+        `
+            : ''
+        }
       </div>
+      ${
+        node.nodeType === 'FOLDER'
+          ? `<div class="inspector-note">This folder stands for all of its files. Cleanup still moves files one by one, and protected files stay where they are.</div>
+             <button id="select-folder-files-btn" class="secondary-btn" type="button">Select Files in This Folder</button>`
+          : ''
+      }
     </div>
 
     ${cleanupSectionHtml}
@@ -1478,6 +1508,18 @@ function renderNodeInspector(node, trace) {
         : ''
     }
   `;
+
+  const folderBtn = document.getElementById('select-folder-files-btn');
+  if (folderBtn) {
+    folderBtn.addEventListener('click', async () => {
+      try {
+        const count = await selectByDescription({ kind: 'cell', groupBy: 'byFolder', cellId: node.id });
+        showToast(`Selected ${pluralize(count, 'file')} in ${node.label}.`);
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
+      }
+    });
+  }
 }
 
 /* =========================================================================
@@ -1525,18 +1567,18 @@ function bindExplorerControls() {
     e.currentTarget.classList.toggle('active', uiState.focusMode);
   });
 
-  document.getElementById('select-low-risk-btn').addEventListener('click', () => {
+  document.getElementById('select-low-risk-btn').addEventListener('click', async () => {
     if (!uiState.activeState) return;
-    const lowRiskArtifacts = uiState.activeState.artifacts.filter(
-      (a) => !a.quarantined && a.cleanupClassification === 'LOW'
-    );
-    uiState.selectedArtifactIds = new Set(lowRiskArtifacts.map((a) => a.id));
-    updateContextualToolbar();
-    showToast(
-      lowRiskArtifacts.length > 0
-        ? `Selected ${pluralize(lowRiskArtifacts.length, 'file')} that ${lowRiskArtifacts.length === 1 ? 'is' : 'are'} safe to remove.`
-        : 'Nothing here is marked safe to remove.'
-    );
+    try {
+      const count = await selectByDescription({ kind: 'safe' });
+      showToast(
+        count > 0
+          ? `Selected ${pluralize(count, 'file')} that ${count === 1 ? 'is' : 'are'} safe to remove.`
+          : 'Nothing here is marked safe to remove.'
+      );
+    } catch (err) {
+      showToast(`Could not select files: ${err.message}`);
+    }
   });
 
   document.getElementById('reset-camera-btn').addEventListener('click', () => {
@@ -1624,15 +1666,21 @@ function renderTreemapView() {
     // Clicking a row selects its files on the map
     tile.addEventListener('click', async () => {
       document.getElementById('tab-graph-btn').click();
-      const targetNodeId =
-        cell.focusNodeId || (Array.isArray(cell.artifactIds) && cell.artifactIds[0]);
-      const node = uiState.nodes.find((n) => n.id === targetNodeId);
+      const node = cell.focusNodeId ? uiState.nodes.find((n) => n.id === cell.focusNodeId) : null;
       if (node) {
         await selectNodeInGraph(node, false);
-        if (Array.isArray(cell.artifactIds)) {
-          uiState.selectedArtifactIds = new Set(cell.artifactIds);
-          updateContextualToolbar();
-        }
+      } else {
+        clearNodeSelection();
+      }
+      try {
+        const count = await selectByDescription({
+          kind: 'cell',
+          groupBy: uiState.treemapGroupBy,
+          cellId: cell.id
+        });
+        showToast(`Selected ${pluralize(count, 'file')} in ${cell.label}.`);
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
       }
     });
 
@@ -1715,44 +1763,49 @@ function updateQuarantineCountPill() {
    BOTTOM CONTEXTUAL ACTION TOOLBAR & CLEANUP REVIEW MODAL (Section 9)
    ========================================================================= */
 
-// Lookup of the scan's files by id, rebuilt only when a new state arrives.
-let artifactIndexSource = null;
-let artifactIndexMap = new Map();
-function artifactIndex() {
-  const list = uiState.activeState?.artifacts || [];
-  if (artifactIndexSource !== list) {
-    artifactIndexSource = list;
-    artifactIndexMap = new Map(list.map((a) => [a.id, a]));
-  }
-  return artifactIndexMap;
-}
+// Count, size and first path of the current selection. The file list lives on the server,
+// so the summary is requested whenever the selection changes; the latest request wins.
+let selectionSummary = { count: 0, physicalBytes: 0, firstName: null, firstPath: null };
+let selectionSummaryRequest = 0;
 
-function updateContextualToolbar() {
+function updateContextualToolbar(knownSummary = null) {
   const toolbar = document.getElementById('contextual-toolbar');
   const count = uiState.selectedArtifactIds.size;
 
   if (count === 0) {
     toolbar.classList.add('hidden');
+    selectionSummary = { count: 0, physicalBytes: 0, firstName: null, firstPath: null };
+    selectionSummaryRequest += 1;
     return;
   }
 
   toolbar.classList.remove('hidden');
   document.getElementById('selected-count-badge').textContent = `${pluralize(count, 'file')} selected`;
 
-  const seenInodes = new Set();
-  let physicalBytes = 0;
-  const artifactsById = artifactIndex();
-  for (const id of uiState.selectedArtifactIds) {
-    const art = artifactsById.get(id);
-    if (art) {
-      const key = art.physicalInodeKey || art.canonicalPath;
-      if (!seenInodes.has(key)) {
-        seenInodes.add(key);
-        physicalBytes += art.sizeBytes;
-      }
-    }
+  const show = (summary) => {
+    selectionSummary = summary;
+    document.getElementById('selected-size-label').textContent = formatBytes(summary.physicalBytes);
+  };
+  const request = ++selectionSummaryRequest;
+  if (knownSummary) {
+    show(knownSummary);
+    return;
   }
-  document.getElementById('selected-size-label').textContent = formatBytes(physicalBytes);
+  apiRequest('/api/selection/summary', 'POST', { artifactIds: Array.from(uiState.selectedArtifactIds) })
+    .then((res) => {
+      if (request === selectionSummaryRequest) show(res.summary);
+    })
+    .catch(() => {
+      // The size label is informative only; the review step recomputes everything
+    });
+}
+
+// Replaces the selection with files chosen by description (all safe files, a Sizes row).
+async function selectByDescription(description) {
+  const res = await apiRequest('/api/selection/resolve', 'POST', description);
+  uiState.selectedArtifactIds = new Set(res.artifactIds);
+  updateContextualToolbar(res.summary);
+  return res.artifactIds.length;
 }
 
 function bindContextualToolbarEvents() {
@@ -1766,16 +1819,15 @@ function bindContextualToolbarEvents() {
 
   document.getElementById('ctx-reveal-finder-btn').addEventListener('click', async () => {
     const firstId = Array.from(uiState.selectedArtifactIds)[0];
-    const art = artifactIndex().get(firstId);
-    if (!art) return;
+    if (!firstId || !selectionSummary.firstPath) return;
     try {
       const res = await apiRequest('/api/finder/reveal', 'POST', {
-        path: art.canonicalPath
+        path: selectionSummary.firstPath
       });
       showToast(
         res.commandPreview
           ? `Reveal in Finder: ${res.commandPreview}`
-          : `Revealed ${art.name} in Finder`
+          : `Revealed ${selectionSummary.firstName} in Finder`
       );
     } catch (err) {
       showToast(`Reveal failed: ${err.message}`);
@@ -1873,7 +1925,11 @@ async function openCleanupReviewModal(allowHighRiskSingleOverride = false) {
     body.innerHTML = `
       <div class="review-summary">
         <div class="review-summary-head">
-          <span>${pluralize(review.totalEligibleCount, 'file')} will be moved</span>
+          <span>${pluralize(review.totalEligibleCount, 'file')} will be moved${
+            review.totalEligibleCount > review.eligibleItems.length
+              ? ` (first ${review.eligibleItems.length} listed)`
+              : ''
+          }</span>
           <span>${formatBytes(review.totalReclaimableBytes)}</span>
         </div>
         <div class="row-detail">Each file is checked again right before it moves. You can put files back from Quarantine at any time.</div>
@@ -1992,9 +2048,79 @@ function openSettingsModal() {
       <div class="kv-item"><span class="kv-key">Home folder</span><span class="kv-val mono">${escapeHtml(boot.homeDir || '')}</span></div>
       <div class="kv-item"><span class="kv-key">Quarantine folder</span><span class="kv-val mono">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
     </div>
-    <p class="inspector-note">Nothing leaves this Mac. Apps you drop are read, never opened. Removed files go to Quarantine and can be put back.</p>
+    <p class="inspector-note">Nothing about you or your files leaves this Mac. Apps you drop are read, never opened. Removed files go to Quarantine and can be put back.</p>
+    <div class="inspector-section">
+      <div class="inspector-section-title">Updates</div>
+      <div class="kv-list">
+        <div class="kv-item"><span class="kv-key">This version</span><span class="kv-val" id="settings-current-version">…</span></div>
+        <div class="kv-item"><span class="kv-key">Latest version</span><span class="kv-val" id="settings-latest-version">…</span></div>
+      </div>
+      <label class="settings-check">
+        <input type="checkbox" id="settings-update-check" />
+        <span>Check for new versions</span>
+      </label>
+      <p class="inspector-note">The check asks GitHub for the latest release number. It is the only time the app uses the network, and it sends nothing about you or your files. Nothing is downloaded automatically.</p>
+    </div>
   `;
   modal.classList.remove('hidden');
+
+  const checkbox = document.getElementById('settings-update-check');
+  const showUpdate = (update) => {
+    uiState.update = update;
+    checkbox.checked = Boolean(update.enabled);
+    document.getElementById('settings-current-version').textContent = update.currentVersion || 'Unknown';
+    document.getElementById('settings-latest-version').textContent = !update.enabled
+      ? 'Not checked'
+      : update.latestVersion
+        ? update.updateAvailable
+          ? `${update.latestVersion} is available`
+          : `${update.latestVersion} (up to date)`
+        : 'Could not check';
+    renderUpdatePill();
+  };
+  checkbox.addEventListener('change', async () => {
+    try {
+      const res = await apiRequest('/api/update', 'POST', { enabled: checkbox.checked, checkNow: true });
+      showUpdate(res.update);
+    } catch (err) {
+      showToast(`Could not change the setting: ${err.message}`);
+    }
+  });
+  apiRequest('/api/update')
+    .then((res) => showUpdate(res.update))
+    .catch(() => {});
 }
 
-window.addEventListener('DOMContentLoaded', initApp);
+// Shows a button in the title bar when a newer version has been released.
+function renderUpdatePill() {
+  const pill = document.getElementById('update-available-btn');
+  const update = uiState.update;
+  if (!pill) return;
+  if (update && update.enabled && update.updateAvailable) {
+    pill.textContent = `Update available: ${update.latestVersion}`;
+    pill.title = `You have ${update.currentVersion}. Open the download page.`;
+    pill.classList.remove('hidden');
+  } else {
+    pill.classList.add('hidden');
+  }
+}
+
+async function checkForAppUpdate() {
+  try {
+    const res = await apiRequest('/api/update');
+    uiState.update = res.update;
+    renderUpdatePill();
+  } catch {
+    // Offline or blocked: stay quiet
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  initApp();
+  document.getElementById('update-available-btn').addEventListener('click', () => {
+    openSystemTarget('update:latest');
+  });
+  checkForAppUpdate();
+  // A long-running window checks again a few times a day
+  setInterval(checkForAppUpdate, 6 * 60 * 60 * 1000);
+});

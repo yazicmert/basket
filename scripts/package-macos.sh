@@ -105,6 +105,15 @@ fi
 
 echo "==> [5/8] Bundling Artifact Atlas backend engine & UI assets..."
 cp "$ROOT_DIR/package.json" "$BUNDLED_APP_DIR/package.json"
+# The app reports this file's version when it checks for updates, so it must match the
+# version this bundle is built as (a release is built from its tag).
+APP_VERSION="$APP_VERSION" "$RUNTIME_DIR/node" -e '
+  const fs = require("fs");
+  const file = process.argv[1];
+  const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+  pkg.version = process.env.APP_VERSION;
+  fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+' "$BUNDLED_APP_DIR/package.json"
 cp -R "$ROOT_DIR/src" "$BUNDLED_APP_DIR/src"
 
 cat > "$CONTENTS_DIR/Info.plist" <<EOF

@@ -383,7 +383,8 @@ test('L7. Server data scope: sample data until consent, then the real home folde
     const scan = (await scanPromise).data;
     assert.ok(seenPaths.size >= 2, `expected live folder updates, saw ${seenPaths.size}`);
     assert.ok([...seenPaths].every((p) => p.startsWith(home.dir)));
-    assert.ok(scan.state.artifacts.length >= 13);
+    assert.ok(scan.state.graph.stats.artifactCount >= 13);
+    assert.equal(scan.state.artifacts, undefined, 'the file list stays on the server');
     assert.equal((await api('/api/demo/reset', {})).status, 409);
 
     // Consent persists across restarts

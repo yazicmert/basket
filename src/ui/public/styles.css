@@ -1207,3 +1207,27 @@ button {
 .origin-line.origin-UNKNOWN {
   border-top-style: dotted;
 }
+
+/* ---------- Update notice ---------- */
+
+.update-pill {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-inverse);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  padding: 3px 11px;
+  cursor: pointer;
+}
+.update-pill:hover {
+  opacity: 0.86;
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}

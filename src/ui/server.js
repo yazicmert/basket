@@ -11,6 +11,7 @@ import { execFile } from 'node:child_process';
 import { describePermissions, resolveOpenTarget } from '../platform/permissions.js';
 import { findKnownAppProfile } from '../discovery/app-footprint.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
+import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,16 @@ export function isLoopbackHostHeader(hostHeader) {
     String(hostHeader || '').trim().toLowerCase()
   );
   return Boolean(match);
+}
+
+// The running version: the package.json shipped next to the source tree.
+function readAppVersion() {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || null;
+  } catch {
+    return null;
+  }
 }
 
 export function createAtlasServer(options = {}) {
@@ -92,16 +103,36 @@ export function createAtlasServer(options = {}) {
       const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       return {
         homeScanConsentAt: typeof raw.homeScanConsentAt === 'string' ? raw.homeScanConsentAt : null,
-        mode: raw.mode === 'live' ? 'live' : 'demo'
+        mode: raw.mode === 'live' ? 'live' : 'demo',
+        updateCheckEnabled: raw.updateCheckEnabled !== false
       };
     } catch {
-      return { homeScanConsentAt: null, mode: 'demo' };
+      return { homeScanConsentAt: null, mode: 'demo', updateCheckEnabled: true };
     }
   };
   const settings = loadSettings();
   const saveSettings = () => {
     fs.mkdirSync(defaultBaseDir, { recursive: true });
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  };
+
+  // New-version check. This is the app's only network request; it can be turned off, and its
+  // result is cached so GitHub is asked at most once every few hours.
+  const appVersion = options.appVersion || readAppVersion();
+  let cachedUpdate = null;
+  const updateStatus = async ({ force = false } = {}) => {
+    if (!settings.updateCheckEnabled) {
+      return { enabled: false, currentVersion: appVersion, updateAvailable: false };
+    }
+    const fresh =
+      cachedUpdate && Date.now() - Date.parse(cachedUpdate.checkedAt) < UPDATE_CHECK_INTERVAL_MS;
+    if (!fresh || force) {
+      cachedUpdate = await checkForUpdate({
+        currentVersion: appVersion,
+        fetchImpl: options.updateFetch || globalThis.fetch
+      });
+    }
+    return { enabled: true, ...cachedUpdate };
   };
 
   const services = new Map();
@@ -121,6 +152,7 @@ export function createAtlasServer(options = {}) {
           ? new ArtifactAtlasService({
               homeDir: liveHomeDir,
               platform,
+              maxFiles: options.maxFiles,
               dbPath: isPinnedHome ? dbPath : path.join(defaultBaseDir, 'live', 'atlas-index.sqlite'),
               quarantineRoot: isPinnedHome
                 ? quarantineRoot
@@ -220,29 +252,96 @@ export function createAtlasServer(options = {}) {
   const discoverAvailableBundles = () =>
     currentMode() === 'live' ? installedBundles() : demoBundles();
 
-  // The UI needs only part of the scan state. Sending everything (full evidence and edge
-  // lists for tens of thousands of files) makes large scans slow to load.
+  // The UI works from summaries. The file list, evidence and edge lists stay on the server:
+  // a scan can hold hundreds of thousands of files, and the UI asks for file ids only when
+  // the user selects something (see the /api/selection routes).
+  const TREEMAP_GROUPINGS = ['byGroup', 'byWorkspace', 'bySession', 'byFolder'];
   const stateForClient = (state) => {
     if (!state) return state;
+    let graph = state.graph;
+    if (graph) {
+      const treemap = { ...graph.treemap };
+      for (const key of TREEMAP_GROUPINGS) {
+        if (Array.isArray(treemap[key])) {
+          treemap[key] = treemap[key].map(({ artifactIds, ...cell }) => cell);
+        }
+      }
+      graph = {
+        ...graph,
+        treemap,
+        nodes: graph.nodes.map((node) => {
+          if (node.nodeType !== 'ARTIFACT_GROUP' || !node.metadata) return node;
+          const { artifactIds, ...metadata } = node.metadata;
+          return { ...node, metadata: { ...metadata, artifactCount: (artifactIds || []).length } };
+        })
+      };
+    }
     return {
       application: state.application,
       workspaces: state.workspaces,
-      scan: state.scan,
-      graph: state.graph,
-      isDemoEnvironment: state.isDemoEnvironment,
-      artifacts: (state.artifacts || []).map((a) => ({
-        id: a.id,
-        name: a.name,
-        canonicalPath: a.canonicalPath,
-        sizeBytes: a.sizeBytes,
-        physicalInodeKey: a.physicalInodeKey,
-        artifactType: a.artifactType,
-        cleanupClassification: a.cleanupClassification,
-        provenanceConfidence: a.provenanceConfidence,
-        quarantined: a.quarantined
-      }))
+      scan: state.scan
+        ? {
+            ...state.scan,
+            // Counts are enough for the UI; the full lists can be very long
+            scannedLocations: undefined,
+            scannedLocationsCount: (state.scan.scannedLocations || []).length,
+            skippedSymlinks: (state.scan.skippedSymlinks || []).slice(0, 50),
+            permissionLimitations: (state.scan.permissionLimitations || []).slice(0, 200)
+          }
+        : state.scan,
+      graph,
+      isDemoEnvironment: state.isDemoEnvironment
     };
   };
+
+  // File ids for a selection the user made by description rather than one by one.
+  const resolveSelection = (state, body) => {
+    const live = (state.artifacts || []).filter((a) => !a.quarantined);
+    if (body.kind === 'safe') {
+      return live.filter((a) => a.cleanupClassification === 'LOW').map((a) => a.id);
+    }
+    if (body.kind === 'cell' && TREEMAP_GROUPINGS.includes(body.groupBy)) {
+      const cell = (state.graph?.treemap?.[body.groupBy] || []).find((c) => c.id === body.cellId);
+      if (!cell) return [];
+      const liveIds = new Set(live.map((a) => a.id));
+      return (cell.artifactIds || []).filter((id) => liveIds.has(id));
+    }
+    return null;
+  };
+
+  // Count, physical size and first path for a set of file ids.
+  const summarizeSelection = (state, artifactIds) => {
+    const wanted = new Set(Array.isArray(artifactIds) ? artifactIds : []);
+    const seenInodes = new Set();
+    let count = 0;
+    let physicalBytes = 0;
+    let first = null;
+    for (const art of state.artifacts || []) {
+      if (!wanted.has(art.id) || art.quarantined) continue;
+      count += 1;
+      if (!first) first = art;
+      const key = art.physicalInodeKey || art.canonicalPath;
+      if (!seenInodes.has(key)) {
+        seenInodes.add(key);
+        physicalBytes += art.sizeBytes || 0;
+      }
+    }
+    return {
+      count,
+      physicalBytes,
+      firstName: first ? first.name : null,
+      firstPath: first ? first.canonicalPath : null
+    };
+  };
+
+  // The review dialog lists at most this many files; totals always cover the whole selection.
+  const REVIEW_LIST_LIMIT = 200;
+  const reviewForClient = (review) => ({
+    ...review,
+    eligibleItems: (review.eligibleItems || []).slice(0, REVIEW_LIST_LIMIT),
+    blockedItems: (review.blockedItems || []).slice(0, REVIEW_LIST_LIMIT),
+    listLimit: REVIEW_LIST_LIMIT
+  });
 
   const sendJson = (res, statusCode, payload, extraHeaders = {}) => {
     const body = JSON.stringify(payload);
@@ -261,7 +360,7 @@ export function createAtlasServer(options = {}) {
       let data = '';
       req.on('data', (chunk) => {
         data += chunk;
-        if (data.length > 2 * 1024 * 1024) {
+        if (data.length > 16 * 1024 * 1024) {
           reject(new Error('Request payload too large'));
           req.destroy();
         }
@@ -481,6 +580,23 @@ export function createAtlasServer(options = {}) {
       }
 
       // Opens a permission's documentation page or System Settings pane (allowlisted targets only)
+      if (url.pathname === '/api/update' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, update: await updateStatus() });
+      }
+
+      if (url.pathname === '/api/update' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (typeof body.enabled === 'boolean') {
+          settings.updateCheckEnabled = body.enabled;
+          saveSettings();
+          cachedUpdate = null;
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          update: await updateStatus({ force: Boolean(body.checkNow) })
+        });
+      }
+
       if (url.pathname === '/api/system/open' && req.method === 'POST') {
         const body = await readJsonBody(req);
         const targetUrl = resolveOpenTarget(body.target);
@@ -516,13 +632,34 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, result.ok ? 200 : 404, result);
       }
 
+      if (url.pathname === '/api/selection/resolve' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const artifactIds = resolveSelection(activeService().activeState, body);
+        if (artifactIds === null) {
+          return sendJson(res, 400, { ok: false, error: 'UNKNOWN_SELECTION_KIND' });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          artifactIds,
+          summary: summarizeSelection(activeService().activeState, artifactIds)
+        });
+      }
+
+      if (url.pathname === '/api/selection/summary' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, {
+          ok: true,
+          summary: summarizeSelection(activeService().activeState, body.artifactIds)
+        });
+      }
+
       if (url.pathname === '/api/cleanup/review' && req.method === 'POST') {
         const body = await readJsonBody(req);
         const review = activeService().prepareCleanupReview(
           body.artifactIds || [],
           Boolean(body.allowHighRiskSingleOverride)
         );
-        return sendJson(res, 200, { ok: true, review });
+        return sendJson(res, 200, { ok: true, review: reviewForClient(review) });
       }
 
       if (url.pathname === '/api/cleanup/quarantine' && req.method === 'POST') {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ScanStatus, createScanModel } from '../models/entities.js';
 
 export class Scanner {
-  constructor({ platformServices, maxFiles = 25000 }) {
+  constructor({ platformServices, maxFiles = 300000 }) {
     this.platformServices = platformServices;
     this.maxFiles = maxFiles;
   }

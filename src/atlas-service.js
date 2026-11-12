@@ -11,6 +11,10 @@ import { GraphEngine } from './graph/graph-engine.js';
 import { CleanupEngine } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
 
+// Upper bound on files in one scan. The map and the UI stay responsive well beyond this
+// because they work from summaries; the bound keeps memory and scan time predictable.
+export const DEFAULT_MAX_FILES = 300000;
+
 export class ArtifactAtlasService {
   constructor(options = {}) {
     this.platformServices = new PlatformServices({
@@ -24,7 +28,7 @@ export class ArtifactAtlasService {
     });
     this.scanner = new Scanner({
       platformServices: this.platformServices,
-      maxFiles: options.maxFiles || 25000
+      maxFiles: options.maxFiles || DEFAULT_MAX_FILES
     });
     this.indexer = new ArtifactIndexer();
     this.provenanceEngine = new ProvenanceEngine();
@@ -171,6 +175,14 @@ export class ArtifactAtlasService {
       }
     });
 
+    // The walk is done. The remaining steps run without touching the disk tree; report the
+    // phase and yield so the progress endpoint can answer between them.
+    const enterPhase = async (phase) => {
+      this.lastProgress = { ...(this.lastProgress || {}), phase };
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    await enterPhase('analyzing');
+
     // Index raw entries into canonical Artifact models
     const indexedArtifacts = this.indexer.indexEntries({
       rawEntries,
@@ -205,6 +217,8 @@ export class ArtifactAtlasService {
       provenanceEdges: provenanceResult.provenanceEdges,
       unknownOriginNodeId: provenanceResult.unknownOriginNodeId
     });
+
+    await enterPhase('saving');
 
     // Persist snapshot in SQLite
     this.sqliteStore.saveSnapshot({
@@ -257,8 +271,9 @@ export class ArtifactAtlasService {
   }
 
   prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {
+    const wanted = new Set(artifactIds);
     const selected = this.activeState.artifacts.filter(
-      (a) => artifactIds.includes(a.id) && !a.quarantined
+      (a) => wanted.has(a.id) && !a.quarantined
     );
     return this.cleanupEngine.prepareCleanupReview({
       artifacts: selected,
@@ -268,8 +283,9 @@ export class ArtifactAtlasService {
   }
 
   executeQuarantine({ artifactIds = [], confirmationToken, allowHighRiskSingleOverride = false }) {
+    const wanted = new Set(artifactIds);
     const selected = this.activeState.artifacts.filter(
-      (a) => artifactIds.includes(a.id) && !a.quarantined
+      (a) => wanted.has(a.id) && !a.quarantined
     );
     const result = this.cleanupEngine.executeQuarantine({
       artifacts: selected,

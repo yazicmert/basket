@@ -23,6 +23,9 @@
 7. **Never Scan the Real Home Folder Without Consent**:
    - The UI server serves sandbox sample data until the user grants the `home-folder-scan` consent; the consent is persisted and revocable. Probing permission status must never trigger a macOS prompt or read file contents.
 
+8. **One Network Request Only**:
+   - The app's only outbound request is the new-version check in `src/platform/update-check.js` (GitHub's latest-release endpoint). It must carry no body and no user, machine or file data, stay switchable in Settings, and never download or install anything. Do not add other network calls.
+
 ## 2. Project Layout
 
 - `src/` — Portable Core & Local Desktop Application (Node.js 24 ESM + built-in `node:sqlite`):

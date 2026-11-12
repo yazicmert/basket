@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   GraphEngine,
   selectArtifactsForMap,
+  buildFolderRollups,
   MAP_MAX_ARTIFACT_NODES
 } from '../src/graph/graph-engine.js';
 import { isAppContainerCachePath } from '../src/classification/classification-engine.js';
@@ -83,7 +84,7 @@ test('Chromium cache folders count as caches only inside an application data con
   assert.equal(isAppContainerCachePath(`${inside}config.json`), false);
 });
 
-test('the scan response sent to the UI is lean and classifies app-container caches as safe', async () => {
+test('the UI receives summaries, selects files by description, and app-container caches are safe', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-lean-'));
   const homeDir = path.join(root, 'home');
   const appsDir = path.join(root, 'Applications');
@@ -113,21 +114,97 @@ test('the scan response sent to the UI is lean and classifies app-container cach
       body: JSON.stringify({ bundlePath: bundle })
     });
     const { state } = await res.json();
+    const post = async (urlPath, body) => {
+      const r = await fetch(`http://127.0.0.1:${server.address().port}${urlPath}`, {
+        method: 'POST',
+        headers: { 'X-Atlas-Token': sessionToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return r.json();
+    };
+
+    // Only summaries travel to the UI
     assert.deepEqual(
       Object.keys(state).sort(),
-      ['application', 'artifacts', 'graph', 'isDemoEnvironment', 'scan', 'workspaces']
+      ['application', 'graph', 'isDemoEnvironment', 'scan', 'workspaces']
     );
-    const cached = state.artifacts.find((a) => a.name === 'f_000001');
-    const stored = state.artifacts.find((a) => a.name === 'store.bin');
-    assert.equal(cached.artifactType, 'REGENERABLE_CACHE');
-    assert.equal(cached.cleanupClassification, 'LOW');
-    assert.notEqual(stored.cleanupClassification, 'LOW');
-    // Heavy per-file detail stays on the server
-    assert.equal(cached.evidence, undefined);
-    assert.equal(cached.cleanupExplanation, undefined);
     assert.equal(state.graph.stats.artifactCount, 2);
+    for (const grouping of ['byGroup', 'byFolder']) {
+      assert.ok(state.graph.treemap[grouping].length > 0, grouping);
+      assert.ok(state.graph.treemap[grouping].every((cell) => cell.artifactIds === undefined));
+    }
+
+    // The cache file is safe to remove, the stored data is not
+    const cachedNode = state.graph.nodes.find((n) => n.label === 'f_000001');
+    const storedNode = state.graph.nodes.find((n) => n.label === 'store.bin');
+    assert.equal(cachedNode.metadata.artifactType, 'REGENERABLE_CACHE');
+    assert.equal(cachedNode.riskCategory, 'LOW');
+    assert.notEqual(storedNode.riskCategory, 'LOW');
+
+    // Selection by description resolves on the server
+    const safe = await post('/api/selection/resolve', { kind: 'safe' });
+    assert.deepEqual(safe.artifactIds, [cachedNode.id]);
+    assert.equal(safe.summary.count, 1);
+    assert.equal(safe.summary.physicalBytes, 6);
+    assert.ok(safe.summary.firstPath.endsWith('f_000001'));
+
+    const folderCell = state.graph.treemap.byFolder.find((c) => c.label.startsWith('Cache'));
+    const inFolder = await post('/api/selection/resolve', { kind: 'cell', groupBy: 'byFolder', cellId: folderCell.id });
+    assert.deepEqual(inFolder.artifactIds, [cachedNode.id]);
+
+    const both = await post('/api/selection/summary', { artifactIds: [cachedNode.id, storedNode.id, 'art_missing'] });
+    assert.equal(both.summary.count, 2);
+    assert.equal((await post('/api/selection/resolve', { kind: 'everything' })).ok, false);
   } finally {
     await shutdown();
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('folder rollups cover every file once and split the fullest folders', () => {
+  const artifacts = [];
+  const add = (dir, n, risk = 'REVIEW') => {
+    for (let i = 0; i < n; i++) {
+      const id = artifacts.length;
+      artifacts.push(
+        fakeArtifact(id, {
+          canonicalPath: `/home/u/Library/Application Support/Big/${dir}/f_${i}`,
+          parentDir: `/home/u/Library/Application Support/Big/${dir}`,
+          sizeBytes: 10,
+          cleanupClassification: risk
+        })
+      );
+    }
+  };
+  add('Cache/Cache_Data', 900, 'LOW');
+  add('vm_bundles/img/a', 2000);
+  add('vm_bundles/img/b', 1500);
+  add('vm_bundles/node_modules/x', 800, 'PROTECTED');
+  add('logs', 40, 'LOW');
+  // Files directly in the common folder, and a hardlinked pair that must count once
+  artifacts.push(fakeArtifact(9000, { canonicalPath: '/home/u/Library/Application Support/Big/config.json', parentDir: '/home/u/Library/Application Support/Big', sizeBytes: 10 }));
+  artifacts.push(fakeArtifact(9001, { canonicalPath: '/home/u/Library/Application Support/Big/logs/link', parentDir: '/home/u/Library/Application Support/Big/logs', sizeBytes: 500, physicalInodeKey: '1:77' }));
+  artifacts.push(fakeArtifact(9002, { canonicalPath: '/home/u/Library/Application Support/Big/logs/link2', parentDir: '/home/u/Library/Application Support/Big/logs', sizeBytes: 500, physicalInodeKey: '1:77' }));
+
+  const rollups = buildFolderRollups(artifacts);
+  const totalFiles = rollups.reduce((sum, r) => sum + r.artifactCount, 0);
+  const assigned = rollups.flatMap((r) => r.artifactIds);
+  assert.equal(totalFiles, artifacts.length);
+  assert.equal(new Set(assigned).size, artifacts.length, 'every file belongs to exactly one folder');
+  assert.ok(rollups.every((r) => r.artifactIds.length === r.artifactCount));
+
+  const byLabel = new Map(rollups.map((r) => [r.label, r]));
+  // The largest folder was split into its subfolders
+  assert.equal(byLabel.has('vm_bundles'), false);
+  assert.equal(byLabel.get('vm_bundles/img/a').artifactCount, 2000);
+  assert.equal(byLabel.get('vm_bundles/node_modules/x').riskCategory, 'PROTECTED');
+  // A folder is safe only when all of its files are
+  assert.equal(byLabel.get('Cache/Cache_Data').riskCategory, 'LOW');
+  assert.equal(byLabel.get('logs').riskCategory, 'REVIEW');
+  // Hardlinked data is counted once: 40 x 10 + 500
+  assert.equal(byLabel.get('logs').bytes, 900);
+  // Files directly in the common folder keep their own entry
+  assert.equal(byLabel.get('Big (files directly inside)').artifactCount, 1);
+
+  assert.deepEqual(buildFolderRollups([]), []);
 });
