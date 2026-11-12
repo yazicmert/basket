@@ -1,0 +1,11 @@
+# Third-party logos
+
+These SVG files come from [Simple Icons](https://simpleicons.org) 16.37.0, which publishes its
+icon data under CC0 1.0. They are not covered by this repository's MIT license.
+
+Every logo is a trademark of its owner. They are shown on the project site only to name the
+applications Artifact Atlas can scan. Artifact Atlas is not affiliated with, endorsed by or
+sponsored by any of these companies. A logo is removed on request from its owner.
+
+The desktop app does not ship these files. It shows an application's icon by reading it from
+the copy installed on the user's Mac.
