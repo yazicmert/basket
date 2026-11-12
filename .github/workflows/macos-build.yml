@@ -44,7 +44,7 @@ jobs:
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
-      APP_VERSION: "0.3.0"
+      APP_VERSION: "0.4.0"
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Checkout Repository

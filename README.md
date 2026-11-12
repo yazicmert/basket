@@ -72,7 +72,7 @@ npm run verify:macos
 ```
 
 Outputs are written to `dist/`:
-- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.3.0`, Min macOS: `14.0`)
+- `dist/ArtifactAtlas.app` (Bundle ID: `com.artifactatlas.desktop`, Version: `0.4.0`, Min macOS: `14.0`)
 - `dist/ArtifactAtlas-macOS.dmg` (Compressed UDZO disk image with `/Applications` drag-install link)
 - `dist/ArtifactAtlas-macOS.zip` (`ditto` archive preserving bundle signatures and permissions)
 - `dist/SHA256SUMS.txt` (SHA-256 digests for release artifacts)
