@@ -72,6 +72,33 @@ const MODEL_WEIGHT_EXTENSIONS = new Set([
   '.mlmodel'
 ]);
 
+// Cache directories that Chromium / Electron based applications keep inside their own data
+// folder. They count as dedicated cache directories only when they sit inside an application
+// data container, never by name alone somewhere else on disk.
+const APP_CONTAINER_MARKERS = ['/library/application support/', '/library/containers/', '/library/group containers/'];
+const APP_CONTAINER_CACHE_DIRS = [
+  '/cache/',
+  '/cache_data/',
+  '/dawncache/',
+  '/dawngraphitecache/',
+  '/dawnwebgpucache/',
+  '/grshadercache/',
+  '/graphitedawncache/',
+  '/shadercache/',
+  '/service worker/cachestorage/',
+  '/service worker/scriptcache/',
+  '/component_crx_cache/'
+];
+
+export function isAppContainerCachePath(lowerPath) {
+  const container = APP_CONTAINER_MARKERS.map((m) => lowerPath.indexOf(m)).filter((i) => i >= 0);
+  if (container.length === 0) {
+    return false;
+  }
+  const insideContainer = lowerPath.slice(Math.min(...container));
+  return APP_CONTAINER_CACHE_DIRS.some((dir) => insideContainer.includes(dir));
+}
+
 export class ClassificationEngine {
   constructor(options = {}) {
     this.platformServices = options.platformServices || new PlatformServices();
@@ -321,7 +348,8 @@ export class ClassificationEngine {
       lowerPath.includes('/.claude/statsig/') ||
       lowerPath.includes('/.codex/cache/') ||
       lowerPath.includes('/.cache/') ||
-      lowerPath.includes('/__pycache__/');
+      lowerPath.includes('/__pycache__/') ||
+      isAppContainerCachePath(lowerPath);
 
     if (isDedicatedCacheDir) {
       const risk = hasSharedDeps || isMultiSession ? RiskCategory.REVIEW : RiskCategory.LOW;

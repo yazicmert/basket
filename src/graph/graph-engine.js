@@ -6,6 +6,66 @@ import {
   createProvenanceEdgeModel
 } from '../models/entities.js';
 
+/** Upper bounds for file marks on the map. Above these the map shows a selection. */
+export const MAP_MAX_ARTIFACT_NODES = 320;
+export const MAP_MAX_RECORDED_NODES = 160;
+export const MAP_MAX_NODES_PER_GROUP = 14;
+
+/**
+ * Chooses which files get a mark on the map. Selection only affects drawing: provenance,
+ * classification, totals and cleanup always operate on the full artifact list.
+ */
+export function selectArtifactsForMap(activeArtifacts, artifactGroups = []) {
+  if (activeArtifacts.length <= MAP_MAX_ARTIFACT_NODES) {
+    return activeArtifacts;
+  }
+  const bySizeDesc = (a, b) => b.sizeBytes - a.sizeBytes;
+  const chosen = new Map();
+
+  // Files a session's ledger names are the most informative marks: keep them first.
+  activeArtifacts
+    .filter((a) => a.provenanceConfidence === ProvenanceConfidence.VERIFIED)
+    .sort(bySizeDesc)
+    .slice(0, MAP_MAX_RECORDED_NODES)
+    .forEach((a) => chosen.set(a.id, a));
+
+  // Then the largest files of every group, so each kind stays represented.
+  const byId = new Map(activeArtifacts.map((a) => [a.id, a]));
+  for (const grp of artifactGroups) {
+    const members = grp.artifactIds.map((id) => byId.get(id)).filter(Boolean).sort(bySizeDesc);
+    for (const art of members.slice(0, MAP_MAX_NODES_PER_GROUP)) {
+      if (chosen.size >= MAP_MAX_ARTIFACT_NODES) break;
+      chosen.set(art.id, art);
+    }
+  }
+
+  // Fill what is left with the largest remaining files.
+  if (chosen.size < MAP_MAX_ARTIFACT_NODES) {
+    for (const art of [...activeArtifacts].sort(bySizeDesc)) {
+      if (chosen.size >= MAP_MAX_ARTIFACT_NODES) break;
+      if (!chosen.has(art.id)) chosen.set(art.id, art);
+    }
+  }
+  return Array.from(chosen.values());
+}
+
+function countBy(items, keyOf) {
+  const counts = {};
+  for (const item of items) {
+    const key = keyOf(item);
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function largestOf(artifacts) {
+  let top = null;
+  for (const art of artifacts) {
+    if (!top || art.sizeBytes > top.sizeBytes) top = art;
+  }
+  return top ? { id: top.id, name: top.name, sizeBytes: top.sizeBytes } : null;
+}
+
 export class GraphEngine {
   /**
    * Constructs the complete interactive Knowledge Graph and Space Treemap
@@ -85,6 +145,7 @@ export class GraphEngine {
         nodeType: NodeType.ARTIFACT_GROUP,
         label: grp.name,
         subtitle: `${grp.artifactIds.length} items`,
+        artifactType: grp.artifactType,
         sizeBytes: grp.deduplicatedBytes,
         confidence: ProvenanceConfidence.VERIFIED,
         riskCategory: grp.riskSummary,
@@ -160,8 +221,11 @@ export class GraphEngine {
 
     // 7. Artifact nodes (outer ring clustered near their group or session)
     const activeArtifacts = artifacts.filter((a) => !a.quarantined);
-    activeArtifacts.forEach((art, idx) => {
-      const angle = (idx / Math.max(activeArtifacts.length, 1)) * Math.PI * 2;
+    // A large scan cannot draw every file. The map shows every file a session recorded, then
+    // the largest files of each group; totals and the Sizes view always cover all files.
+    const shownArtifacts = selectArtifactsForMap(activeArtifacts, artifactGroups);
+    shownArtifacts.forEach((art, idx) => {
+      const angle = (idx / Math.max(shownArtifacts.length, 1)) * Math.PI * 2;
       const ringRadius = 540 + (idx % 3) * 48;
       const logRadius = Math.max(10, Math.min(22, 10 + Math.log10(Math.max(art.sizeBytes, 100)) * 1.8));
       addNode({
@@ -230,6 +294,11 @@ export class GraphEngine {
         totalNodes: nodes.length,
         totalEdges: edges.length,
         artifactCount: activeArtifacts.length,
+        shownArtifactCount: shownArtifacts.length,
+        hiddenArtifactCount: activeArtifacts.length - shownArtifacts.length,
+        sessionCount: sessions.length,
+        riskCounts: countBy(activeArtifacts, (a) => a.cleanupClassification),
+        largestArtifact: largestOf(activeArtifacts),
         verifiedArtifactCount: activeArtifacts.filter(
           (a) => a.provenanceConfidence === ProvenanceConfidence.VERIFIED
         ).length,

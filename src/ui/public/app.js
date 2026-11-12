@@ -513,6 +513,18 @@ function bindDropzoneEvents() {
       droppedPath = f.path || f.name;
     }
 
+    if (droppedPath && !droppedPath.includes('/')) {
+      // A browser only reveals the file name. Match it against the listed applications.
+      const wanted = droppedPath.trim().toLowerCase();
+      const match = (uiState.bootstrap?.availableBundles || []).find(
+        (b) => b.bundlePath.split('/').pop().toLowerCase() === wanted
+      );
+      droppedPath = match ? match.bundlePath : '';
+      if (!match) {
+        showToast('Could not tell where that app is. Use Choose App instead.');
+      }
+    }
+
     if (droppedPath) {
       await handleDroppedOrSelectedBundle(droppedPath.trim());
     }
@@ -697,6 +709,12 @@ function renderScanNoticesBanner(state) {
   if (state.scan.truncated) {
     notices.push(
       `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
+    );
+  }
+  const hiddenOnMap = state.graph?.stats?.hiddenArtifactCount || 0;
+  if (hiddenOnMap > 0) {
+    notices.push(
+      `The map shows ${state.graph.stats.shownArtifactCount.toLocaleString()} of ${state.graph.stats.artifactCount.toLocaleString()} files: every file a session recorded and the largest of each kind. Totals and Sizes cover all of them.`
     );
   }
   if (state.scan.permissionLimitations.length > 0) {
@@ -1243,14 +1261,13 @@ function summarizeScan() {
   const g = uiState.activeState?.graph;
   if (!g) return null;
   const tm = g.treemap || {};
-  const fileNodes = (g.nodes || []).filter((n) => n.nodeType === 'ARTIFACT');
-  const countByRisk = { LOW: 0, REVIEW: 0, HIGH: 0, PROTECTED: 0 };
-  for (const n of fileNodes) {
-    if (countByRisk[n.riskCategory] !== undefined) countByRisk[n.riskCategory] += 1;
-  }
-  const largest = fileNodes.reduce((top, n) => (!top || n.sizeBytes > top.sizeBytes ? n : top), null);
+  // Counts cover every file in the scan, including files that have no mark on the map.
+  const countByRisk = { LOW: 0, REVIEW: 0, HIGH: 0, PROTECTED: 0, ...(g.stats.riskCounts || {}) };
+  const largest = g.stats.largestArtifact
+    ? { label: g.stats.largestArtifact.name, sizeBytes: g.stats.largestArtifact.sizeBytes }
+    : null;
   return {
-    fileCount: fileNodes.length,
+    fileCount: g.stats.artifactCount,
     totalBytes: uiState.activeState.scan?.totalPhysicalBytes || 0,
     risks: [
       { key: 'LOW', count: countByRisk.LOW, bytes: tm.reclaimablePhysicalBytes || 0 },
@@ -1264,7 +1281,7 @@ function summarizeScan() {
       { key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }
     ],
     kinds: [...(tm.byGroup || [])].sort((x, y) => y.bytes - x.bytes),
-    sessionCount: (g.nodes || []).filter((n) => n.nodeType === 'SESSION').length,
+    sessionCount: g.stats.sessionCount || 0,
     largest
   };
 }
@@ -1698,6 +1715,18 @@ function updateQuarantineCountPill() {
    BOTTOM CONTEXTUAL ACTION TOOLBAR & CLEANUP REVIEW MODAL (Section 9)
    ========================================================================= */
 
+// Lookup of the scan's files by id, rebuilt only when a new state arrives.
+let artifactIndexSource = null;
+let artifactIndexMap = new Map();
+function artifactIndex() {
+  const list = uiState.activeState?.artifacts || [];
+  if (artifactIndexSource !== list) {
+    artifactIndexSource = list;
+    artifactIndexMap = new Map(list.map((a) => [a.id, a]));
+  }
+  return artifactIndexMap;
+}
+
 function updateContextualToolbar() {
   const toolbar = document.getElementById('contextual-toolbar');
   const count = uiState.selectedArtifactIds.size;
@@ -1712,8 +1741,9 @@ function updateContextualToolbar() {
 
   const seenInodes = new Set();
   let physicalBytes = 0;
+  const artifactsById = artifactIndex();
   for (const id of uiState.selectedArtifactIds) {
-    const art = uiState.activeState?.artifacts?.find((a) => a.id === id);
+    const art = artifactsById.get(id);
     if (art) {
       const key = art.physicalInodeKey || art.canonicalPath;
       if (!seenInodes.has(key)) {
@@ -1736,7 +1766,7 @@ function bindContextualToolbarEvents() {
 
   document.getElementById('ctx-reveal-finder-btn').addEventListener('click', async () => {
     const firstId = Array.from(uiState.selectedArtifactIds)[0];
-    const art = uiState.activeState?.artifacts?.find((a) => a.id === firstId);
+    const art = artifactIndex().get(firstId);
     if (!art) return;
     try {
       const res = await apiRequest('/api/finder/reveal', 'POST', {

@@ -220,6 +220,30 @@ export function createAtlasServer(options = {}) {
   const discoverAvailableBundles = () =>
     currentMode() === 'live' ? installedBundles() : demoBundles();
 
+  // The UI needs only part of the scan state. Sending everything (full evidence and edge
+  // lists for tens of thousands of files) makes large scans slow to load.
+  const stateForClient = (state) => {
+    if (!state) return state;
+    return {
+      application: state.application,
+      workspaces: state.workspaces,
+      scan: state.scan,
+      graph: state.graph,
+      isDemoEnvironment: state.isDemoEnvironment,
+      artifacts: (state.artifacts || []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        canonicalPath: a.canonicalPath,
+        sizeBytes: a.sizeBytes,
+        physicalInodeKey: a.physicalInodeKey,
+        artifactType: a.artifactType,
+        cleanupClassification: a.cleanupClassification,
+        provenanceConfidence: a.provenanceConfidence,
+        quarantined: a.quarantined
+      }))
+    };
+  };
+
   const sendJson = (res, statusCode, payload, extraHeaders = {}) => {
     const body = JSON.stringify(payload);
     res.writeHead(statusCode, {
@@ -354,7 +378,7 @@ export function createAtlasServer(options = {}) {
           quarantineVaultLocation: activeService().cleanupEngine.quarantineRoot,
           availableBundles: discoverAvailableBundles(),
           defaultWorkspacePath: currentMode() === 'demo' ? demoEnv.workspaceDir : '',
-          activeState: activeService().activeState,
+          activeState: stateForClient(activeService().activeState),
           quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
         });
       }
@@ -403,7 +427,7 @@ export function createAtlasServer(options = {}) {
         });
         return sendJson(res, 200, {
           ok: true,
-          state,
+          state: stateForClient(state),
           quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
         });
       }
@@ -511,7 +535,8 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           ...result,
-          activeState: activeService().activeState
+          updatedGraph: undefined,
+          activeState: stateForClient(activeService().activeState)
         });
       }
 
@@ -524,7 +549,8 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           ...result,
-          activeState: activeService().activeState
+          updatedGraph: undefined,
+          activeState: stateForClient(activeService().activeState)
         });
       }
 

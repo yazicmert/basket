@@ -74,6 +74,52 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     }
 }
 
+/// WKWebView takes over drags itself, so a SwiftUI `.onDrop` placed around it never fires and
+/// the page only receives a file name without its path. This subclass handles file drops
+/// natively and hands the dropped item's path to the page.
+final class DropAwareWebView: WKWebView {
+    var onFileDrop: ((URL) -> Void)?
+
+    private func droppedFileURL(_ sender: NSDraggingInfo) -> URL? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]
+        return urls?.first
+    }
+
+    private func setDropHighlight(_ on: Bool) {
+        let call = on ? "add" : "remove"
+        evaluateJavaScript("document.getElementById('app-dropzone')?.classList.\(call)('drag-over');", completionHandler: nil)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedFileURL(sender) != nil else { return super.draggingEntered(sender) }
+        setDropHighlight(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedFileURL(sender) != nil else { return super.draggingUpdated(sender) }
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDropHighlight(false)
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if droppedFileURL(sender) != nil { return true }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let url = droppedFileURL(sender) else { return super.performDragOperation(sender) }
+        setDropHighlight(false)
+        onFileDrop?(url)
+        return true
+    }
+}
+
 struct AtlasWebViewContainer: NSViewRepresentable {
     let url: URL
     let coordinator: WebViewCoordinator
@@ -85,7 +131,17 @@ struct AtlasWebViewContainer: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = DropAwareWebView(frame: .zero, configuration: config)
+        webView.registerForDraggedTypes([.fileURL])
+        let coordinator = context.coordinator
+        webView.onFileDrop = { url in
+            // The dropped application is only identified by its path; it is never opened or run.
+            if url.path.hasSuffix(".app") {
+                coordinator.sendDroppedAppPath(url.path)
+            } else {
+                coordinator.sendPickedWorkspacePath(url.path)
+            }
+        }
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         webView.load(URLRequest(url: url))
