@@ -263,12 +263,12 @@
       <ol class="steps">
         <li><div>Download <code>ArtifactAtlas-macOS.dmg</code> and open it.</div></li>
         <li><div>Drag <strong>ArtifactAtlas.app</strong> into <strong>Applications</strong>.</div></li>
-        <li><div>The first time, Control-click the app and choose <strong>Open</strong>.</div></li>
+        <li><div>Open the app once. macOS blocks it with a message that it could not be verified. Click <strong>Done</strong>, then go to <strong>System Settings → Privacy &amp; Security</strong>, scroll to Security and click <strong>Open Anyway</strong> next to ArtifactAtlas.</div></li>
         <li><div>The app opens on built-in sample data and lists the <a href="permissions/">permissions</a> it needs to scan your real files.</div></li>
         <li><div>Drop any application onto the window to see its leftovers. The folder being scanned is shown live.</div></li>
       </ol>
       <div class="callout">
-        <p><strong>Current builds are not notarized by Apple</strong>, so macOS asks for confirmation on first launch. If it reports the app as damaged, clear the download flag:</p>
+        <p><strong>Current builds are not notarized by Apple</strong>, so macOS blocks the first launch until you allow it as described above. You can also clear the download flag in Terminal, which has the same effect:</p>
         <pre>xattr -dr com.apple.quarantine /Applications/ArtifactAtlas.app</pre>
         <p>To check the download, compare its hash with <code>SHA256SUMS.txt</code> on the <a href="https://github.com/yazicmert/basket/releases/latest">release page</a>:</p>
         <pre>shasum -a 256 ~/Downloads/ArtifactAtlas-macOS.dmg</pre>
