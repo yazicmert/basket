@@ -186,9 +186,15 @@ DMG_STAGE="$(mktemp -d)"
 cp -R "$APP_BUNDLE" "$DMG_STAGE/ArtifactAtlas.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 
+# Size the image explicitly. Letting hdiutil estimate it from -srcfolder occasionally
+# produces a volume that is too small ("No space left on device" while copying the bundle).
+DMG_SIZE_MB=$(( $(du -sm "$DMG_STAGE" | cut -f1) + 64 ))
+
 hdiutil create \
   -volname "$APP_DISPLAY_NAME" \
   -srcfolder "$DMG_STAGE" \
+  -size "${DMG_SIZE_MB}m" \
+  -fs HFS+ \
   -ov \
   -format UDZO \
   "$DMG_PATH"
