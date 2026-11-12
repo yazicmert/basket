@@ -81,7 +81,9 @@
     BUILD_OUTPUT: 'Build outputs', SESSION_HISTORY: 'Session histories',
     USER_CONTENT: 'Source and user content', UNKNOWN: 'Unclassified'
   };
-  var SAMPLE_APPS = [['Claude Code', 'terminal'], ['Cursor', 'pointer'], ['Codex CLI', 'braces'], ['NebulaSketch', 'app']];
+  var SAMPLE_APPS = [['Claude Code', 'logo:claudecode'], ['Cursor', 'logo:cursor'], ['Codex CLI', 'braces'], ['NebulaSketch', 'app']];
+  // The Claude Code mark as path data, for the app's node inside the SVG map.
+  var APP_LOGO_PATH = 'M21 10.5h3v3h-3v3h-1.5v3H18v-3h-1.5v3H15v-3H9v3H7.5v-3H6v3H4.5v-3H3v-3H0v-3h3v-6h18Zm-15 0h1.5v-3H6Zm10.5 0H18v-3h-1.5z';
 
   function iconOf(n) {
     if (n.kind === 'app') return Icons.forApp({ name: n.label });
@@ -99,10 +101,20 @@
   }
 
   // An application tile: a glyph on an ink square, like the app's own fallback icon.
+  // `icon` is a glyph name, or `logo:<slug>` for a product logo in site/logos/.
   function appTileEl(icon, size) {
     var t = document.createElement('span');
     t.className = 'demo-appicon';
-    t.innerHTML = Icons.svg(icon, size || 15);
+    if (icon.indexOf('logo:') === 0) {
+      var mark = document.createElement('i');
+      var url = 'url(logos/' + icon.slice(5) + '.svg)';
+      mark.className = 'demo-logo';
+      mark.style.webkitMaskImage = url;
+      mark.style.maskImage = url;
+      t.appendChild(mark);
+    } else {
+      t.innerHTML = Icons.svg(icon, size || 15);
+    }
     return t;
   }
   var files = nodes.filter(function (n) { return n.kind === 'file'; });
@@ -185,7 +197,7 @@
   root.textContent = '';
   var bar = html('div', 'demo-bar');
   var appName = html('div', 'demo-app');
-  appName.appendChild(appTileEl('terminal', 15));
+  appName.appendChild(appTileEl('logo:claudecode', 15));
   appName.appendChild(html('strong', null, 'Claude Code'));
   var totals = html('span', 'demo-muted');
   appName.appendChild(totals);
@@ -263,7 +275,7 @@
   var tile = html('div', 'demo-tile');
   tile.hidden = true;
   tile.setAttribute('aria-hidden', 'true');
-  tile.appendChild(appTileEl('terminal', 24));
+  tile.appendChild(appTileEl('logo:claudecode', 24));
   tile.appendChild(html('span', 'demo-tile-name', 'Claude Code'));
   var cursor = el('svg', { viewBox: '0 0 16 20', 'class': 'demo-cursor' });
   cursor.appendChild(el('path', { d: 'M1 1v15l4-3.6 2.7 6 2.4-1.1-2.7-5.9H13z' }));
@@ -290,7 +302,7 @@
 
     var dock = document.getElementById('mac-dock');
     if (dock) {
-      [['folder', ''], ['terminal', ''], ['pointer', ''], ['braces', ''], ['atlas', 'running']].forEach(function (d) {
+      [['folder', ''], ['logo:claudecode', ''], ['logo:cursor', ''], ['braces', ''], ['atlas', 'running']].forEach(function (d) {
         var slot = html('span', 'dock-item ' + d[1]);
         slot.appendChild(appTileEl(d[0], 20));
         dock.appendChild(slot);
@@ -309,7 +321,7 @@
 
   var scanView = html('div', 'demo-scan');
   var scanTitle = html('strong', 'demo-scan-title');
-  scanTitle.appendChild(appTileEl('terminal', 15));
+  scanTitle.appendChild(appTileEl('logo:claudecode', 15));
   scanTitle.appendChild(document.createTextNode('Scanning Claude Code\u2026'));
   scanView.appendChild(scanTitle);
   scanView.appendChild(html('span', 'demo-muted', 'Reading folder'));
@@ -353,7 +365,12 @@
       'class': 'demo-glyph',
       transform: 'translate(' + (n.x - glyphSize / 2) + ' ' + (n.y - glyphSize / 2) + ') scale(' + (glyphSize / 24) + ')'
     });
-    Icons.paths[iconOf(n)].forEach(function (d) { glyph.appendChild(el('path', { d: d })); });
+    if (n.kind === 'app') {
+      glyph.setAttribute('class', 'demo-glyph logo');
+      glyph.appendChild(el('path', { d: APP_LOGO_PATH }));
+    } else {
+      Icons.paths[iconOf(n)].forEach(function (d) { glyph.appendChild(el('path', { d: d })); });
+    }
     g.appendChild(glyph);
     var anchor = n.x > 700 ? 'end' : n.x < 130 ? 'start' : 'middle';
     var tx = anchor === 'end' ? n.x + 12 : anchor === 'start' ? n.x - 12 : n.x;

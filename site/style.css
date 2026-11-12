@@ -1920,3 +1920,20 @@ footer {
   flex: none;
   white-space: nowrap;
 }
+
+/* Third-party logos, drawn in one ink through a mask so they follow the theme. */
+
+.chip-logo,
+.demo-logo {
+  display: block;
+  width: 58%;
+  height: 58%;
+  background: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+
+.demo-node.app .demo-glyph.logo {
+  fill: var(--surface);
+  stroke: none;
+}
