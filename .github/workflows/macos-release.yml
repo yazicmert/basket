@@ -50,8 +50,36 @@ jobs:
       - name: Run Native macOS Swift XCTest Suite
         run: swift test
 
+      # Imports the Developer ID certificate into a temporary keychain. Skipped when the
+      # certificate secrets are not configured; the build then falls back to ad-hoc signing.
+      - name: Import Developer ID Certificate (Only When Configured)
+        id: signing
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE_P12_BASE64" ]]; then
+            echo "No signing certificate configured; the release will be ad-hoc signed."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          CERT_FILE="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_FILE"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_FILE" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$CERT_FILE"
+          security find-identity -v -p codesigning "$KEYCHAIN" | sed -E 's/^ *[0-9]+\) [0-9A-F]+ /    /'
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
       - name: Build Self-Contained ArtifactAtlas.app, DMG, ZIP & SHA-256 Checksums
         env:
+          SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}
           APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -59,7 +87,14 @@ jobs:
         run: |
           # CFBundleShortVersionString must be numeric (e.g. 0.2.0), so strip a leading "v" from the tag.
           export APP_VERSION="${APP_VERSION#v}"
+          if [[ "$SIGNING_ENABLED" != "true" ]]; then
+            unset APPLE_DEVELOPER_ID_APPLICATION
+          fi
           ./scripts/package-macos.sh
+
+      - name: Remove Temporary Signing Keychain
+        if: always() && steps.signing.outputs.enabled == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db"
 
       - name: Verify Mounted DMG & Read-Only End-to-End Workflow
         run: ./scripts/verify-macos-bundle.sh
@@ -86,7 +121,7 @@ jobs:
             "${FLAGS[@]}"
           ## Artifact Atlas ${TAG} (macOS)
 
-          Self-contained macOS desktop application (`ArtifactAtlas.app`) with bundled Node.js runtime, SQLite persistence, and native SwiftUI + WebKit shell.
+          Self-contained macOS desktop application (\`ArtifactAtlas.app\`) with bundled Node.js runtime, SQLite persistence, and native SwiftUI + WebKit shell.
 
           ### SHA-256 Checksums
           \`\`\`

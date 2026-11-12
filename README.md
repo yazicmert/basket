@@ -84,6 +84,12 @@ When the following environment variables (or GitHub Actions Secrets) are provide
 - `APPLE_TEAM_ID`
 - `APPLE_APP_SPECIFIC_PASSWORD`
 
+On GitHub Actions only the manual release workflow signs. It also needs the certificate itself, imported into a temporary keychain from two more secrets:
+- `APPLE_CERTIFICATE_P12_BASE64` (the Developer ID Application certificate with its private key, exported as `.p12` and base64-encoded)
+- `APPLE_CERTIFICATE_PASSWORD` (the password chosen when exporting the `.p12`)
+
+Without the certificate secrets the release is ad-hoc signed. Continuous builds are always ad-hoc signed and never receive these secrets.
+
 ### GitHub Actions Workflows
 - **Continuous macOS Build & Artifact Upload**: [`.github/workflows/macos-build.yml`](file:///home/antigravity/yazicmert/basket/.github/workflows/macos-build.yml) runs on `macos-14` (`arm64`), executes `npm test` and `swift test`, runs `scripts/package-macos.sh` and `scripts/verify-macos-bundle.sh`, and uploads `ArtifactAtlas-macOS.dmg`, `ArtifactAtlas-macOS.zip`, and `SHA256SUMS.txt` as downloadable workflow artifacts.
 - **Explicit Manual Release Publishing**: [`.github/workflows/macos-release.yml`](file:///home/antigravity/yazicmert/basket/.github/workflows/macos-release.yml) uses `workflow_dispatch` (manual trigger only) to publish verified builds to GitHub Releases.

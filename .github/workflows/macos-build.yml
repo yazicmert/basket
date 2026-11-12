@@ -68,12 +68,9 @@ jobs:
       - name: Run Native macOS Swift XCTest Suite
         run: swift test
 
+      # CI builds are always ad-hoc signed. Apple signing secrets are only used by the
+      # manually triggered release workflow, so they are never exposed to push or PR runs.
       - name: Build Self-Contained ArtifactAtlas.app, DMG, ZIP & SHA-256 Checksums
-        env:
-          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: ./scripts/package-macos.sh
 
       - name: Verify Mounted DMG & Read-Only End-to-End Workflow
