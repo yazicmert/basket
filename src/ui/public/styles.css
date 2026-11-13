@@ -1531,7 +1531,47 @@ button.crumb:hover {
   color: var(--ink-2);
 }
 
-.bundle-dock-subcaption {
-  display: block;
-  padding: 14px 0 6px;
+/* Start screen: the installed AI apps, quiet and roomy */
+.draggable-bundles-list .bundle-pill {
+  padding: 10px 10px;
+  margin: 0 -10px;
+  border-bottom: 0;
+  border-radius: 10px;
+  transition: background-color 120ms ease;
+}
+.draggable-bundles-list .bundle-pill + .bundle-pill {
+  margin-top: 2px;
+}
+.draggable-bundles-list .bundle-pill .app-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.draggable-bundles-list .bundle-pill-name {
+  font-size: 14.5px;
+  letter-spacing: -0.005em;
+}
+.draggable-bundles-list .bundle-pill::after {
+  content: '';
+  margin-left: 10px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink-3);
+  border-top: 1.5px solid var(--ink-3);
+  transform: rotate(45deg);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.draggable-bundles-list .bundle-pill:hover::after,
+.draggable-bundles-list .bundle-pill:focus-visible::after {
+  opacity: 1;
+}
+.bundle-pill-tag {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
 }
