@@ -85,9 +85,29 @@ test('S1. Scan scope: project folders are counted in full only when the user inc
       bundlePath: env.bundle,
       scanScope: { projectFolders: true, dependencyFolders: true }
     });
-    assert.ok(inProject(everything).includes(path.join('node_modules', 'left-pad', 'index.js')));
-    assert.ok(inProject(everything).includes(path.join('.git', 'HEAD')));
+    // Dependency and Git folders are measured as a whole, never listed file by file
+    assert.ok(!inProject(everything).some((rel) => rel.startsWith('node_modules') || rel.startsWith('.git')));
     assert.equal(everything.scan.skippedBulkDirectories.length, 0);
+    const measured = Object.fromEntries(everything.scan.bulkFolders.map((f) => [f.name, f]));
+    assert.deepEqual(Object.keys(measured).sort(), ['.git', 'node_modules']);
+    assert.equal(measured.node_modules.fileCount, 1);
+    assert.equal(measured.node_modules.physicalBytes, 9000);
+    assert.equal(measured.node_modules.projectRoot, env.project);
+    assert.equal(everything.scan.measuredPhysicalBytes, 9000 + measured['.git'].physicalBytes);
+    // The listed total is unchanged by the measured folders
+    assert.equal(everything.scan.totalPhysicalBytes, whole.scan.totalPhysicalBytes);
+    // On the map they are one mark that opens by project; nothing in them can be selected
+    const { buildMapLevel, levelArtifactIds } = await import('../src/graph/map-levels.js');
+    const root = buildMapLevel(everything, 'root');
+    const mark = root.nodes.find((n) => n.id === 'measured');
+    assert.equal(mark.metadata.summary.bytes, everything.scan.measuredPhysicalBytes);
+    const byProject = buildMapLevel(everything, 'measured');
+    const project = byProject.nodes.find((n) => n.drillId === `measured:${env.project}`);
+    const inside = buildMapLevel(everything, project.drillId);
+    assert.deepEqual(inside.nodes.slice(1).map((n) => n.label).sort(), ['.git', 'node_modules']);
+    assert.ok(inside.nodes.every((n) => n.metadata.measuredOnly && n.nodeType !== 'ARTIFACT'));
+    for (const id of ['measured', project.drillId]) assert.deepEqual(levelArtifactIds(everything, id), []);
+    assert.equal(buildMapLevel(everything, 'measured:/nowhere'), null);
     // Nothing in a project folder becomes safe to remove because it was counted
     for (const art of everything.artifacts.filter((a) => a.workspaceId)) {
       assert.notEqual(art.cleanupClassification, 'LOW', art.canonicalPath);
@@ -273,6 +293,33 @@ test('S5. Files a session recorded are kept when a scan reaches the file limit',
     assert.equal(recorded.provenanceConfidence, 'VERIFIED');
   } finally {
     service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S6. Past the file limit files are measured, so the total is complete although the listing is not', async () => {
+  const env = makeHome();
+  for (let i = 0; i < 40; i++) fs.writeFileSync(path.join(env.project, 'src', `bulk-${i}.txt`), 'b'.repeat(100));
+  // A file hardlinked into a measured folder is counted once
+  fs.linkSync(path.join(env.project, 'src', 'untouched.js'), path.join(env.project, 'node_modules', 'left-pad', 'linked.js'));
+  const full = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  const capped = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', maxFiles: 8 });
+  try {
+    const scope = { projectFolders: true, dependencyFolders: true };
+    const a = await full.scanAndAnalyze({ bundlePath: env.bundle, scanScope: scope });
+    const b = await capped.scanAndAnalyze({ bundlePath: env.bundle, scanScope: scope });
+    const totalOf = (s) => s.scan.totalPhysicalBytes + s.scan.measuredPhysicalBytes;
+    assert.equal(a.scan.truncated, false);
+    assert.equal(b.scan.truncated, true);
+    assert.equal(b.artifacts.length, 8);
+    assert.ok(b.scan.overflow.fileCount > 0);
+    assert.equal(totalOf(b), totalOf(a), 'listed plus measured is the same total with or without the limit');
+    // Every byte is counted once: listed files, measured folders and the overflow add up
+    const files = a.scan.discoveredArtifactCount + a.scan.measuredFileCount;
+    assert.equal(b.scan.discoveredArtifactCount + b.scan.measuredFileCount, files);
+  } finally {
+    full.sqliteStore.close();
+    capped.sqliteStore.close();
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });

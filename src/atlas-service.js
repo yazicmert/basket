@@ -201,7 +201,7 @@ export class ArtifactAtlasService {
       authorizedRoots: walkRoots,
       extraFiles: Array.from(recordedFiles),
       projectRoots: workspaces.map((ws) => ws.canonicalPath),
-      skipBulkDirectories: !scope.dependencyFolders,
+      bulkDirectoryMode: scope.dependencyFolders ? 'measure' : 'skip',
       signal,
       artificialDelayMs,
       onProgress: (prog) => {

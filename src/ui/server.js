@@ -422,6 +422,9 @@ export function createAtlasServer(options = {}) {
             skippedSymlinks: (state.scan.skippedSymlinks || []).slice(0, 50),
             skippedBulkDirectories: (state.scan.skippedBulkDirectories || []).slice(0, 50),
             skippedBulkDirectoryCount: (state.scan.skippedBulkDirectories || []).length,
+            // The map lists measured folders by project; the panel needs totals only
+            bulkFolders: undefined,
+            bulkFolderCount: (state.scan.bulkFolders || []).length,
             permissionLimitations: (state.scan.permissionLimitations || []).slice(0, 200)
           }
         : state.scan,

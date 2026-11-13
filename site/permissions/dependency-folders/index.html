@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Dependency and Git folders — Artifact Atlas</title>
-<meta name="description" content="Whether an Artifact Atlas scan lists node_modules, .git, virtual environments and similar folders inside project folders." />
+<meta name="description" content="Whether an Artifact Atlas scan measures node_modules, .git, virtual environments and similar folders inside project folders." />
 <link rel="icon" href="../../favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="../../apple-touch-icon.png" />
@@ -36,18 +36,21 @@
   <p>A choice about what a scan counts, made inside Artifact Atlas. It is asked before the first scan of a real application and can be changed at any time in the <strong>Permissions</strong> window. It is off until you turn it on.</p>
   <h2>Which folders</h2>
   <p>Inside project folders, these are skipped by default: <code>node_modules</code>, <code>bower_components</code>, <code>.pnpm-store</code>, <code>.git</code>, <code>.hg</code>, <code>.svn</code>, <code>.venv</code>, <code>venv</code>, <code>Pods</code> and <code>.gradle</code>. Folders that belong to the application itself are always scanned in full.</p>
+  <h2>What happens when they are included</h2>
+  <p>Each such folder is <strong>measured as a whole</strong>: its files are counted and their size is added to the total, but none of them is listed. On the map they appear under one mark, <em>Dependencies &amp; Git (measured)</em>, which opens by project and then by folder. Files shared through hardlinks (as pnpm does) are counted once.</p>
+  <p>Because they are not listed, they do not use up the limit of 300,000 listed files per scan, and nothing in them can be selected or moved to Quarantine.</p>
   <h2>Why they are left out by default</h2>
   <ul>
-    <li>They can hold hundreds of thousands of files, which makes a scan slow and can reach the limit of 300,000 files per scan. A scan that stops at the limit is marked as partial.</li>
+    <li>Measuring them still means visiting every file, which can make a scan much slower.</li>
     <li>Nothing in them should be removed one file at a time. Dependencies are reinstalled by your package manager; Git data is your history.</li>
   </ul>
-  <p>When they are left out, the scan tells you how many such folders it skipped.</p>
+  <p>When they are left out, they are not read at all, and the scan tells you how many such folders it skipped.</p>
   <h2>When to include them</h2>
   <p>Include them when you want the total to match what the project folders occupy on disk. It has an effect only where a project folder is walked: with <a href="../project-folders/">whole project folders</a> included, or for a folder you scan yourself.</p>
   <h2>What never happens</h2>
   <ul>
-    <li>Git data is always protected and is never offered for cleanup.</li>
-    <li>Listing a dependency folder does not mark its files safe to remove.</li>
+    <li>Nothing inside a measured folder is offered for cleanup. Remove dependencies with your package manager and Git data with Git.</li>
+    <li>Folders that belong to the application itself are not affected: they are always listed in full.</li>
   </ul>
   <h2>How to change it</h2>
   <ol>

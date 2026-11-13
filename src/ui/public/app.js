@@ -963,7 +963,9 @@ async function executeScan({ bundlePath, workspacePath }) {
           }
           document.getElementById('scan-metric-roots').textContent = String(prog.scannedLocationsCount);
           document.getElementById('scan-metric-count').textContent = String(prog.discoveredArtifactCount);
-          document.getElementById('scan-metric-bytes').textContent = formatBytes(prog.totalPhysicalBytes);
+          document.getElementById('scan-metric-bytes').textContent = formatBytes(
+            (prog.totalPhysicalBytes || 0) + (prog.measuredPhysicalBytes || 0)
+          );
         }
       } catch {
         // Progress is best-effort; the scan request itself reports failures
@@ -990,7 +992,7 @@ async function executeScan({ bundlePath, workspacePath }) {
     document.getElementById('scan-metric-count').textContent =
       String(res.state.scan.discoveredArtifactCount);
     document.getElementById('scan-metric-bytes').textContent =
-      formatBytes(res.state.scan.totalPhysicalBytes);
+      formatBytes(scanTotalBytes(res.state.scan));
 
     transitionToExplorerView();
   } catch (err) {
@@ -1018,7 +1020,7 @@ function transitionToExplorerView() {
   fillAppIcon(document.getElementById('active-app-icon'), appBundle);
   loadGraphAppIcon(appBundle);
   document.getElementById('active-app-meta').textContent =
-    `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(state.scan.totalPhysicalBytes)}`;
+    `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(scanTotalBytes(state.scan))}`;
 
   renderScanNoticesBanner(state);
   loadMapLevel('root');
@@ -1047,8 +1049,16 @@ function renderScanNoticesBanner(state) {
     notices.push(`No data folders were found for ${state.application.name}.`);
   }
   if (state.scan.truncated) {
+    const over = state.scan.overflow || { fileCount: 0, physicalBytes: 0 };
     notices.push(
-      `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
+      over.fileCount > 0
+        ? `The first ${state.scan.maxFilesLimit.toLocaleString()} files are listed. ${pluralize(over.fileCount, 'more file')} (${formatBytes(over.physicalBytes)}) were measured and are in the total, but are not on the map or offered for cleanup.`
+        : `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
+    );
+  }
+  if (state.scan.bulkFolderCount > 0) {
+    notices.push(
+      `${pluralize(state.scan.bulkFolderCount, 'dependency or Git folder')} ${state.scan.bulkFolderCount === 1 ? 'was' : 'were'} measured as a whole (Dependencies & Git on the map). They are never cleaned up from here.`
     );
   }
   if (state.scan.skippedBulkDirectoryCount > 0) {
@@ -1802,6 +1812,15 @@ async function selectNodeInGraph(node, multiSelect = false) {
     uiState.selectedArtifactIds.clear();
   }
 
+  // Marks that stand for many files (kinds, folders, measured folders) have no trace of
+  // their own; their details are already on the mark
+  if (node.metadata?.summary && node.nodeType !== 'ARTIFACT') {
+    uiState.activeTrace = null;
+    renderNodeInspector(node, null);
+    updateContextualToolbar();
+    return;
+  }
+
   try {
     const res = await apiRequest('/api/graph/trace', 'POST', { nodeId: node.id });
     uiState.activeTrace = res.trace;
@@ -1829,6 +1848,12 @@ function clearNodeSelection() {
 
 // Totals for the finished scan. Sizes are physical (hardlinked data counted once) and come
 // from the server; counts are taken from the files on the map.
+/* Everything the scan found: listed files plus folders and files that were measured as a
+   whole (dependency and Git folders, and files past the file limit). */
+function scanTotalBytes(scan) {
+  return (scan?.totalPhysicalBytes || 0) + (scan?.measuredPhysicalBytes || 0);
+}
+
 function summarizeScan() {
   const g = uiState.activeState?.graph;
   if (!g) return null;
@@ -1840,7 +1865,10 @@ function summarizeScan() {
     : null;
   return {
     fileCount: g.stats.artifactCount,
+    // The risk bar covers listed files; measured folders have no risk of their own
     totalBytes: uiState.activeState.scan?.totalPhysicalBytes || 0,
+    allBytes: scanTotalBytes(uiState.activeState.scan),
+    measuredFileCount: uiState.activeState.scan?.measuredFileCount || 0,
     risks: [
       { key: 'LOW', count: countByRisk.LOW, bytes: tm.reclaimablePhysicalBytes || 0 },
       { key: 'REVIEW', count: countByRisk.REVIEW, bytes: tm.reviewPhysicalBytes || 0 },
@@ -1856,6 +1884,20 @@ function summarizeScan() {
     sessionCount: g.stats.sessionCount || 0,
     largest
   };
+}
+
+// Lines for what was measured but not listed, so the parts add up to the total
+function measuredRows(scan) {
+  const rows = [];
+  const bulkBytes = (scan?.measuredPhysicalBytes || 0) - (scan?.overflow?.physicalBytes || 0);
+  const bulkFiles = (scan?.measuredFileCount || 0) - (scan?.overflow?.fileCount || 0);
+  if (scan?.bulkFolderCount > 0) {
+    rows.push(`<div class="kv-item"><span class="kv-key">Dependency and Git folders, measured</span><span class="kv-val">${pluralize(bulkFiles, 'file')} · ${formatBytes(bulkBytes)}</span></div>`);
+  }
+  if (scan?.overflow?.fileCount > 0) {
+    rows.push(`<div class="kv-item"><span class="kv-key">Past the file limit, measured</span><span class="kv-val">${pluralize(scan.overflow.fileCount, 'file')} · ${formatBytes(scan.overflow.physicalBytes)}</span></div>`);
+  }
+  return rows.join('');
 }
 
 // One sentence on what the scan counted inside project folders
@@ -1909,8 +1951,8 @@ function renderGlobalInspectorSummary() {
     <div class="inspector-section">
       <div class="inspector-section-title">This scan</div>
       <div class="scan-total">
-        <span class="scan-total-value">${formatBytes(sum.totalBytes)}</span>
-        <span class="scan-total-meta">${pluralize(sum.fileCount, 'file')} · ${pluralize(sum.sessionCount, 'session')}</span>
+        <span class="scan-total-value">${formatBytes(sum.allBytes)}</span>
+        <span class="scan-total-meta">${pluralize(sum.fileCount, 'file')}${sum.measuredFileCount > 0 ? ` listed, ${sum.measuredFileCount.toLocaleString()} measured` : ''} · ${pluralize(sum.sessionCount, 'session')}</span>
       </div>
       <div class="scan-share-bar" role="img" aria-label="Share of disk space by cleanup risk">
         <span class="dot-safe" style="width:${share(sum.risks[0].bytes)}%"></span>
@@ -1925,6 +1967,7 @@ function renderGlobalInspectorSummary() {
       <div class="kv-list">
         <div class="kv-item"><span class="kv-key">${escapeHtml(uiState.activeState.application?.name || 'App')}'s own folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.appData.count, 'file')} · ${formatBytes(g.stats.scopeTotals.appData.bytes)}</span></div>
         <div class="kv-item"><span class="kv-key">In project folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.projects.count, 'file')} · ${formatBytes(g.stats.scopeTotals.projects.bytes)}</span></div>
+        ${measuredRows(uiState.activeState.scan)}
       </div>
       <div class="inspector-note">${escapeHtml(scopeNote(uiState.activeState.scan))} <button id="scope-open-permissions-btn" class="link-btn" type="button">Change under Permissions</button></div>
     </div>`
@@ -2130,7 +2173,9 @@ function renderNodeInspector(node, trace) {
         }
       </div>
       ${
-        meta.summary && node.nodeType !== 'AI_APPLICATION'
+        meta.measuredOnly
+          ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
+          : meta.summary && node.nodeType !== 'AI_APPLICATION'
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
              <button id="select-level-files-btn" class="secondary-btn" type="button">Select These ${pluralize(meta.summary.artifactCount, 'File')}</button>`
           : ''

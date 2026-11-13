@@ -78,7 +78,7 @@ const DEFINITIONS = [
     kind: 'SCAN_SCOPE',
     required: false,
     summary:
-      'Also lists node_modules, .git, virtual environments and similar folders inside project folders. They can hold hundreds of thousands of files and make a scan much slower.',
+      'Also measures node_modules, .git, virtual environments and similar folders inside project folders. Each is counted and sized as a whole, never listed file by file and never offered for cleanup. Measuring them makes a scan slower.',
     docsPath: '/permissions/dependency-folders/',
     settingsUrl: null
   }

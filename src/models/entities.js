@@ -294,6 +294,12 @@ export function createScanModel(fields) {
     permissionLimitations: Array.isArray(fields.permissionLimitations) ? fields.permissionLimitations : [],
     skippedSymlinks: Array.isArray(fields.skippedSymlinks) ? fields.skippedSymlinks : [],
     skippedBulkDirectories: Array.isArray(fields.skippedBulkDirectories) ? fields.skippedBulkDirectories : [],
+    // Dependency and Git folders measured as a whole (never listed file by file), and the
+    // files past the file limit, which are measured but not listed
+    bulkFolders: Array.isArray(fields.bulkFolders) ? fields.bulkFolders : [],
+    overflow: fields.overflow || { fileCount: 0, physicalBytes: 0 },
+    measuredFileCount: Number(fields.measuredFileCount || 0),
+    measuredPhysicalBytes: Number(fields.measuredPhysicalBytes || 0),
     truncated: Boolean(fields.truncated),
     maxFilesLimit: fields.maxFilesLimit ? Number(fields.maxFilesLimit) : null,
     startedAt: fields.startedAt || new Date().toISOString(),

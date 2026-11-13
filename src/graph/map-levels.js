@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { toPathKey, fromPathKey } from '../platform/path-keys.js';
 import {
   NodeType,
@@ -286,7 +287,8 @@ function scopeTitle(state, scope, scoped) {
 /** Parses a level id. Returns null for anything that is not a level. */
 export function parseLevelId(levelId) {
   const id = String(levelId || 'root');
-  if (id === 'root' || id === 'sessions') return { kind: id };
+  if (id === 'root' || id === 'sessions' || id === 'measured') return { kind: id };
+  if (id.startsWith('measured:')) return { kind: 'measured', project: id.slice(9) };
   if (id.startsWith('root:')) return GROUPINGS[id.slice(5)] ? { kind: 'grouping', grouping: id.slice(5) } : null;
   if (id.startsWith('bucket:')) return { kind: 'scope', scope: id };
   if (id.startsWith('group:')) return { kind: 'scope', scope: id };
@@ -316,6 +318,8 @@ export function levelArtifactIds(state, levelId) {
   if (!parsed) return null;
   const ix = indexState(state);
   if (parsed.kind === 'root' || parsed.kind === 'grouping') return ix.live.map((a) => a.id);
+  // Measured folders are never files that can be selected
+  if (parsed.kind === 'measured') return [];
   if (parsed.kind === 'sessions') {
     const ids = new Set();
     for (const links of ix.sessionLinks.values()) for (const id of links.keys()) ids.add(id);
@@ -381,7 +385,13 @@ export function buildMapLevel(state, levelId = 'root') {
         })
       );
     }
+    const measuredMark = measuredRootNode(state);
+    if (measuredMark) children.push(measuredMark);
     return finish({ id: 'root', title: rootCrumb.title, breadcrumb: [rootCrumb], parentId: null, center, children });
+  }
+
+  if (parsed.kind === 'measured') {
+    return buildMeasuredLevel(state, parsed, rootCrumb);
   }
 
   if (parsed.kind === 'grouping') {
@@ -592,6 +602,73 @@ export function buildMapLevel(state, levelId = 'root') {
     children: [...shownFolders, ...bundleNodes, ...shownFiles],
     note: notes.join(' ') || null,
     path: fromPathKey(level.prefix)
+  });
+}
+
+/* Dependency and Git folders measured as a whole. They are marks with a size and a file
+   count only: nothing in them is listed, so nothing in them can be selected or cleaned up. */
+function measuredSummary(folders) {
+  const fileCount = folders.reduce((n, f) => n + f.fileCount, 0);
+  const bytes = folders.reduce((n, f) => n + f.physicalBytes, 0);
+  return {
+    artifactCount: fileCount,
+    bytes,
+    riskCounts: { PROTECTED: fileCount },
+    riskCategory: RiskCategory.PROTECTED
+  };
+}
+
+function measuredNode({ id, label, folders, drillId = null, extra = {} }) {
+  const node = summaryNode({ id, nodeType: NodeType.FOLDER, label, summary: measuredSummary(folders), drillId, extra: { measuredOnly: true, ...extra } });
+  node.measuredOnly = true;
+  return node;
+}
+
+function measuredRootNode(state) {
+  const folders = state.scan?.bulkFolders || [];
+  if (folders.length === 0) return null;
+  return measuredNode({ id: 'measured', label: 'Dependencies & Git (measured)', folders, drillId: 'measured' });
+}
+
+function buildMeasuredLevel(state, parsed, rootCrumb) {
+  const folders = state.scan?.bulkFolders || [];
+  const crumb = { id: 'measured', title: 'Dependencies & Git' };
+  const note = 'Measured as a whole: counted and sized, never listed file by file, and never offered for cleanup.';
+  if (!parsed.project) {
+    const byProject = new Map();
+    for (const f of folders) {
+      const key = f.projectRoot || path.dirname(f.path);
+      if (!byProject.has(key)) byProject.set(key, []);
+      byProject.get(key).push(f);
+    }
+    const children = [...byProject.entries()]
+      .map(([project, list]) => measuredNode({ id: `measured:${project}`, label: path.basename(project) || project, folders: list, drillId: `measured:${project}`, extra: { path: toPathKey(project) } }))
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
+    const shown = children.slice(0, LEVEL_MAX_SESSIONS);
+    return finish({
+      id: 'measured',
+      title: crumb.title,
+      breadcrumb: [rootCrumb, crumb],
+      parentId: 'root',
+      center: measuredNode({ id: 'measured-center', label: `Dependencies & Git (${folders.length})`, folders }),
+      children: shown,
+      note: children.length > shown.length ? `${note} Showing the ${shown.length} largest of ${children.length} projects.` : note
+    });
+  }
+  const list = folders.filter((f) => (f.projectRoot || path.dirname(f.path)) === parsed.project);
+  if (list.length === 0) return null;
+  const children = list
+    .map((f) => measuredNode({ id: `measured-folder:${f.path}`, label: path.relative(parsed.project, f.path) || f.name, folders: [f], extra: { path: toPathKey(f.path) } }))
+    .sort((a, b) => b.sizeBytes - a.sizeBytes);
+  const shown = children.slice(0, LEVEL_MAX_SESSIONS);
+  return finish({
+    id: `measured:${parsed.project}`,
+    title: path.basename(parsed.project),
+    breadcrumb: [rootCrumb, crumb, { id: `measured:${parsed.project}`, title: path.basename(parsed.project) }],
+    parentId: 'measured',
+    center: measuredNode({ id: `measured-project:${parsed.project}`, label: path.basename(parsed.project), folders: list, extra: { path: toPathKey(parsed.project) } }),
+    children: shown,
+    note: children.length > shown.length ? `${note} Showing the ${shown.length} largest of ${children.length}.` : note
   });
 }
 
