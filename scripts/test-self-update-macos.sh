@@ -11,7 +11,7 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DIST
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> [Update 1/4] Installing a copy of $VERSION to replace..."
+echo "==> [Update 1/5] Installing a copy of $VERSION to replace..."
 mkdir -p "$WORK/Applications" "$WORK/staging"
 /usr/bin/ditto "$DIST_DIR/ArtifactAtlas.app" "$WORK/Applications/ArtifactAtlas.app"
 touch "$WORK/Applications/ArtifactAtlas.app/Contents/OLD_COPY_MARKER"
@@ -20,7 +20,7 @@ cp "$DIST_DIR/ArtifactAtlas-macOS.zip" "$WORK/staging/ArtifactAtlas-macOS.zip"
 sleep 300 &
 FAKE_APP_PID=$!
 
-echo "==> [Update 2/4] Staging the ZIP and checking identifier, version and signature..."
+echo "==> [Update 2/5] Staging the ZIP and checking identifier, version and signature..."
 ( cd "$ROOT_DIR" && node --input-type=module -e "
   import { stageVerifiedBundle, launchSwap } from './src/platform/self-update.js';
   const [staging, app, pid, version] = process.argv.slice(1);
@@ -32,7 +32,7 @@ echo "==> [Update 2/4] Staging the ZIP and checking identifier, version and sign
   launchSwap({ appBundlePath: app, stagedBundle: staged, appPid: Number(pid), stagingDir: staging, relaunch: false });
 " "$WORK/staging" "$WORK/Applications/ArtifactAtlas.app" "$FAKE_APP_PID" "$VERSION" )
 
-echo "==> [Update 3/4] Waiting for the swap helper..."
+echo "==> [Update 3/5] Waiting for the swap helper..."
 for _ in $(seq 1 300); do
   grep -q "update finished" "$WORK/staging/update.log" 2>/dev/null && break
   sleep 0.1
@@ -45,7 +45,7 @@ if [ -e "$WORK/Applications/ArtifactAtlas.app/Contents/OLD_COPY_MARKER" ]; then 
 /usr/bin/codesign --verify --deep --strict "$WORK/Applications/ArtifactAtlas.app"
 if [ -e "$WORK/staging/previous" ]; then echo "ERROR: the previous copy was not cleaned up"; exit 1; fi
 
-echo "==> [Update 4/4] A request with an unexpected path must change nothing..."
+echo "==> [Update 4/5] A request with an unexpected path must change nothing..."
 node -e "
   import('$ROOT_DIR/src/platform/self-update.js').then((m) => require('fs').writeFileSync(process.argv[1], m.swapScript(), { mode: 0o700 }));
 " "$WORK/swap-check.sh"
@@ -57,4 +57,27 @@ set -e
 if [ "$STATUS" -ne 2 ]; then echo "ERROR: an unexpected staged path was accepted (status $STATUS)"; exit 1; fi
 /usr/bin/codesign --verify --deep --strict "$WORK/Applications/ArtifactAtlas.app"
 
-echo "In-place update verified: staged, checked, swapped, and refused when it should be."
+echo "==> [Update 5/5] A copy that cannot be replaced where it is goes into an Applications folder..."
+# The "running" copy sits in a folder that looks like the disk image; the update is installed
+# into a new Applications folder that has no copy yet.
+mkdir -p "$WORK/fresh/Applications" "$WORK/staging2"
+cp "$DIST_DIR/ArtifactAtlas-macOS.zip" "$WORK/staging2/ArtifactAtlas-macOS.zip"
+sleep 300 &
+FAKE_APP_PID=$!
+( cd "$ROOT_DIR" && node --input-type=module -e "
+  import { stageVerifiedBundle, launchSwap, resolveInstallTarget } from './src/platform/self-update.js';
+  const [staging, appsDir, pid, version] = process.argv.slice(1);
+  const target = resolveInstallTarget({ appBundlePath: '/Volumes/Artifact Atlas/ArtifactAtlas.app', platform: 'darwin', systemApplicationsDir: appsDir });
+  if (!target.ok || !target.relocates || target.targetPath !== appsDir + '/ArtifactAtlas.app') { console.error('unexpected install target', target); process.exit(1); }
+  const staged = stageVerifiedBundle({ zipPath: staging + '/ArtifactAtlas-macOS.zip', stagingDir: staging, expectedVersion: version });
+  launchSwap({ appBundlePath: target.targetPath, runningBundlePath: '/Volumes/Artifact Atlas/ArtifactAtlas.app', stagedBundle: staged, appPid: Number(pid), stagingDir: staging, relaunch: false });
+" "$WORK/staging2" "$WORK/fresh/Applications" "$FAKE_APP_PID" "$VERSION" )
+for _ in $(seq 1 300); do
+  grep -q "update finished" "$WORK/staging2/update.log" 2>/dev/null && break
+  sleep 0.1
+done
+cat "$WORK/staging2/update.log"
+grep -q "update finished with status 0" "$WORK/staging2/update.log"
+/usr/bin/codesign --verify --deep --strict "$WORK/fresh/Applications/ArtifactAtlas.app"
+
+echo "In-place update verified: staged, checked, swapped, installed fresh, and refused when it should be."

@@ -23,6 +23,8 @@ import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-che
 import {
   findRunningAppBundle,
   canInstallInPlace,
+  resolveInstallTarget,
+  readSwapFailure,
   downloadVerifiedRelease,
   stageVerifiedBundle,
   launchSwap,
@@ -122,6 +124,10 @@ export function createAtlasServer(options = {}) {
         mode: raw.mode === 'live' ? 'live' : 'demo',
         updateCheckEnabled: raw.updateCheckEnabled !== false,
         scanScope: normalizeScanScope(raw.scanScope),
+        pendingUpdate:
+          raw.pendingUpdate && typeof raw.pendingUpdate.version === 'string' && typeof raw.pendingUpdate.stagingDir === 'string'
+            ? { version: raw.pendingUpdate.version, stagingDir: raw.pendingUpdate.stagingDir }
+            : null,
         scanPermissionsReviewedAt:
           typeof raw.scanPermissionsReviewedAt === 'string' ? raw.scanPermissionsReviewedAt : null
       };
@@ -131,6 +137,7 @@ export function createAtlasServer(options = {}) {
         mode: 'demo',
         updateCheckEnabled: true,
         scanScope: normalizeScanScope(null),
+        pendingUpdate: null,
         scanPermissionsReviewedAt: null
       };
     }
@@ -167,15 +174,40 @@ export function createAtlasServer(options = {}) {
       ? options.appBundlePath
       : findRunningAppBundle(fileURLToPath(import.meta.url));
   const installState = { phase: 'idle', error: null, received: 0, total: 0 };
+  const installTarget = () =>
+    resolveInstallTarget({
+      appBundlePath,
+      platform,
+      homeDir: liveHomeDir,
+      systemApplicationsDir: options.systemApplicationsDir || '/Applications'
+    });
+  // An update that was started before this launch: if this is still the old version, the
+  // helper did not finish, and its log says why. Reported once.
+  let lastFailure = null;
+  if (settings.pendingUpdate) {
+    if (settings.pendingUpdate.version !== appVersion) {
+      lastFailure = {
+        version: settings.pendingUpdate.version,
+        detail: readSwapFailure(settings.pendingUpdate.stagingDir) || 'the app was reopened before the new version was in place'
+      };
+    }
+    settings.pendingUpdate = null;
+    try {
+      saveSettings();
+    } catch {
+      // The notice is still shown for this launch
+    }
+  }
   const installStatus = () => ({
-    ...canInstallInPlace({ appBundlePath, platform }),
+    ...installTarget(),
+    lastFailure,
     phase: installState.phase,
     error: installState.error,
     received: installState.received,
     total: installState.total
   });
   const installUpdate = async () => {
-    const possible = canInstallInPlace({ appBundlePath, platform });
+    const possible = installTarget();
     if (!possible.ok) throw new Error(possible.reason);
     if (installState.phase !== 'idle' && installState.phase !== 'failed') throw new Error('UPDATE_ALREADY_RUNNING');
     const status = await updateStatus({ force: true });
@@ -194,7 +226,15 @@ export function createAtlasServer(options = {}) {
       const stagedBundle = stageVerifiedBundle({ zipPath, stagingDir, expectedVersion: status.latestVersion });
       installState.phase = 'restarting';
       // The helper stops the app (this backend's parent), swaps the bundle and reopens it
-      launchSwap({ appBundlePath, stagedBundle, appPid: options.appPid || process.ppid, stagingDir });
+      settings.pendingUpdate = { version: status.latestVersion, stagingDir };
+      saveSettings();
+      launchSwap({
+        appBundlePath: possible.targetPath,
+        runningBundlePath: appBundlePath,
+        stagedBundle,
+        appPid: options.appPid || process.ppid,
+        stagingDir
+      });
       return { version: status.latestVersion };
     } catch (err) {
       Object.assign(installState, { phase: 'failed', error: err.message });

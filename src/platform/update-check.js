@@ -10,7 +10,8 @@
 
 export const RELEASES_API_URL = 'https://api.github.com/repos/yazicmert/basket/releases/latest';
 export const RELEASES_PAGE_URL = 'https://github.com/yazicmert/basket/releases/latest';
-export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// GitHub is asked at most this often, however many times the window asks the backend
+export const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 5000;
 
 /** Parses "v1.2.3" or "1.2.3" into [1, 2, 3]; returns null for anything else. */
