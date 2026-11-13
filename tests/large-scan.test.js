@@ -208,3 +208,27 @@ test('folder rollups cover every file once and split the fullest folders', () =>
 
   assert.deepEqual(buildFolderRollups([]), []);
 });
+
+test('a scan with thousands of tool calls draws only the ones that touched a drawn file', () => {
+  const artifacts = [];
+  const operations = [];
+  for (let i = 0; i < 2000; i++) {
+    artifacts.push(fakeArtifact(i, { operationIds: [`op_${i}`], provenanceConfidence: i < 50 ? 'VERIFIED' : 'INFERRED' }));
+  }
+  for (let i = 0; i < 9000; i++) {
+    operations.push({ id: `op_${i}`, toolName: 'Write', sequence: i, operationType: 'WRITE', confidence: 'VERIFIED', sessionId: 'sess_1' });
+  }
+  const groups = [{ id: 'grp', name: 'Group', artifactType: 'UNKNOWN', artifactIds: artifacts.map((a) => a.id), deduplicatedBytes: 1, riskSummary: 'REVIEW' }];
+  const graph = new GraphEngine().buildKnowledgeGraph({
+    application: { id: 'app', name: 'Big', adapterId: 'claude-code' },
+    artifacts,
+    artifactGroups: groups,
+    operations
+  });
+  const opNodes = graph.nodes.filter((n) => n.nodeType === 'OPERATION');
+  const shownFiles = new Set(graph.nodes.filter((n) => n.nodeType === 'ARTIFACT').map((n) => n.id));
+  assert.ok(opNodes.length > 0 && opNodes.length <= 160, `drew ${opNodes.length} tool calls`);
+  assert.ok(opNodes.every((op) => shownFiles.has(`art_${op.id.slice(3)}`)), 'each drawn tool call touched a drawn file');
+  assert.equal(graph.stats.operationCount, 9000);
+  assert.ok(graph.nodes.length < 700, `map has ${graph.nodes.length} nodes`);
+});

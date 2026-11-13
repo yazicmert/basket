@@ -319,8 +319,19 @@ test('11. Risk classification: distinguishes all 10 artifact types and never rel
     const envFile = state.artifacts.find((a) => a.name === '.env');
     assert.equal(envFile.cleanupClassification, RiskCategory.PROTECTED);
 
-    const gitHead = state.artifacts.find((a) => a.canonicalPath.endsWith('/.git/HEAD'));
-    assert.equal(gitHead.cleanupClassification, RiskCategory.PROTECTED);
+    // Git data inside a project is never listed for cleanup: the folder is skipped and reported
+    assert.equal(state.artifacts.some((a) => a.canonicalPath.includes('/.git/')), false);
+    assert.ok(state.scan.skippedBulkDirectories.some((dir) => dir.endsWith('/.git')));
+    // If a .git file is ever classified (outside a known project), it is still protected
+    const strayGitFile = service.classificationEngine.classifySingleArtifact({
+      ...sourceCode,
+      name: 'HEAD',
+      extension: '',
+      canonicalPath: '/tmp/elsewhere/repo/.git/HEAD',
+      parentDir: '/tmp/elsewhere/repo/.git',
+      workspaceId: null
+    });
+    assert.equal(strayGitFile.riskCategory, RiskCategory.PROTECTED);
   } finally {
     sandbox.cleanup();
   }

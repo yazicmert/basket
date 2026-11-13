@@ -311,7 +311,9 @@ function renderPermissionsModal(payload) {
     ? `The home folder is fixed by the command line to ${payload.liveHomeDir}.`
     : isLive
       ? 'Artifact Atlas can read your home folder. Nothing about your files leaves this Mac, and files are only moved to Quarantine after you confirm.'
-      : 'You are looking at sample data. To see what the apps on this Mac left behind, allow Artifact Atlas to read your home folder.';
+      : uiState.bundleAwaitingConsent
+        ? `To scan ${uiState.bundleAwaitingConsent.split('/').pop().replace(/\.app$/, '')}, allow Artifact Atlas to read your home folder. The scan starts as soon as you allow it.`
+        : 'You are looking at sample data. To see what the apps on this Mac left behind, allow Artifact Atlas to read your home folder.';
 
   const list = document.getElementById('permissions-list');
   list.innerHTML = '';
@@ -379,6 +381,14 @@ async function setHomeScanConsent(granted) {
     renderPermissionsModal(payload);
     resetToEmptyWorkspace();
     await loadBootstrap();
+
+    // An app was dropped before permission was given: scan it now
+    const waiting = uiState.bundleAwaitingConsent;
+    uiState.bundleAwaitingConsent = null;
+    if (granted && waiting && uiState.bootstrap?.mode === 'live') {
+      await handleDroppedOrSelectedBundle(waiting);
+      return;
+    }
     showToast(
       granted
         ? 'Ready. Drop an app to see what it left behind.'
@@ -541,6 +551,24 @@ function bindDropzoneEvents() {
 }
 
 async function handleDroppedOrSelectedBundle(bundlePath) {
+  // While the app shows sample data it must not scan a real application. Ask for the
+  // home-folder permission first and start the scan as soon as it is granted.
+  const boot = uiState.bootstrap || {};
+  const isSampleApp = (boot.availableBundles || []).some(
+    (b) => b.isDemoFixture && b.bundlePath === bundlePath
+  );
+  if (boot.mode !== 'live' && !isSampleApp) {
+    if (!boot.canSwitchMode) {
+      showToast('This window only shows sample data.');
+      return;
+    }
+    uiState.bundleAwaitingConsent = bundlePath;
+    await openPermissionsModal();
+    return;
+  }
+  uiState.bundleAwaitingConsent = null;
+  document.getElementById('permissions-modal').classList.add('hidden');
+
   try {
     uiState.pendingBundlePath = bundlePath;
     await executeScan({
@@ -718,6 +746,11 @@ function renderScanNoticesBanner(state) {
       `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
     );
   }
+  if (state.scan.skippedBulkDirectoryCount > 0) {
+    notices.push(
+      `${pluralize(state.scan.skippedBulkDirectoryCount, 'dependency or Git folder')} inside project folders ${state.scan.skippedBulkDirectoryCount === 1 ? 'was' : 'were'} left out (node_modules, .git and similar). They are never cleaned up from here.`
+    );
+  }
   const hiddenOnMap = state.graph?.stats?.hiddenArtifactCount || 0;
   if (hiddenOnMap > 0) {
     notices.push(
@@ -752,6 +785,7 @@ function loadGraphFromState(graphData) {
   uiState.edges = graphData.edges.map((e) => ({ ...e }));
   // Fit the whole map into view once the layout has settled, unless the user moves it first
   uiState.fitCameraAtTick = uiState.animTick + 150;
+  uiState.layoutSettlesAtTick = uiState.animTick + 420;
 
   const canvas = document.getElementById('knowledge-graph-canvas');
   if (canvas) {
@@ -917,7 +951,10 @@ function renderGraphCanvas() {
     fitCameraToGraph();
   }
   if (uiState.activeTab === 'graph' && uiState.nodes.length > 0) {
-    stepGraphPhysics();
+    // The layout runs until it has settled, then rests; dragging a mark wakes it up.
+    if (uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick) {
+      stepGraphPhysics();
+    }
     drawGraph();
   }
   requestAnimationFrame(renderGraphCanvas);
