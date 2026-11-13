@@ -2278,7 +2278,7 @@ function renderNodeInspector(node, trace) {
                 `<div class="kv-item"><span class="kv-key"><span class="legend-dot ${RISK_DOT_CLASS[risk]}"></span> ${escapeHtml(RISK_LABELS[risk])}</span><span class="kv-val">${pluralize(meta.summary.riskCounts[risk], 'file')}</span></div>`
             )
             .join('')}
-          ${meta.path ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path)}</span></div>` : ''}
+          ${meta.path && !meta.session ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path)}</span></div>` : ''}
         `
             : ''
         }
@@ -2286,7 +2286,7 @@ function renderNodeInspector(node, trace) {
       ${
         meta.measuredOnly
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
-          : meta.summary && node.nodeType !== 'AI_APPLICATION'
+          : meta.summary && node.nodeType !== 'AI_APPLICATION' && !meta.cost
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
              <button id="select-level-files-btn" class="secondary-btn" type="button">Select These ${pluralize(meta.summary.artifactCount, 'File')}</button>`
           : ''
