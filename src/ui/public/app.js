@@ -3002,7 +3002,11 @@ function openSettingsModal() {
         <input type="checkbox" id="settings-update-check" />
         <span>Check for new versions</span>
       </label>
-      <p class="inspector-note">The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.</p>
+      <p class="inspector-note">${
+        isWindows()
+          ? 'The check asks GitHub for the latest release number and sends nothing about you or your files. When a new version is out, the update button opens its download page. This is the only time the app uses the network.'
+          : 'The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.'
+      }</p>
     </div>
   `;
   modal.classList.remove('hidden');
