@@ -1167,6 +1167,7 @@ button {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 .scan-total-meta {
   font-size: 12px;
