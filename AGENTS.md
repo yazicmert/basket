@@ -28,6 +28,8 @@
 
 8. **Network Use Is Limited to Updates**:
    - The app's only outbound requests are the new-version check in `src/platform/update-check.js` (GitHub's latest-release endpoint) and, only after the user clicks the update button, the download of that release in `src/platform/self-update.js`. No request may carry user, machine or file data. The check stays switchable in Settings. Do not add other network calls.
+   - The check runs while the app is open (the backend asks GitHub at most once every half hour), so a new version shows up without a restart.
+   - A copy that cannot be replaced where it is (opened from the disk image, translocated, or in a folder the user cannot write to) is installed into the Applications folder, or the user's own Applications folder, and the confirmation says so. The download page is opened only when nothing can be installed from the app, after saying why. An update that did not finish is reported on the next launch with the helper's reason.
    - On Windows the update button opens the download page; there is no in-place update there.
    - An update is installed only when its ZIP matches the SHA-256 published with the release, the unpacked bundle has this app's bundle identifier and the expected version, and `codesign --verify` passes. The swap keeps the previous bundle until the new one is in place and restores it on failure. Never install silently.
 

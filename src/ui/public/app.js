@@ -178,7 +178,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
   cachedThemeColors = null;
 });
 
-function showToast(message) {
+function showToast(message, durationMs = 3800) {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = 'toast-item';
@@ -186,7 +186,7 @@ function showToast(message) {
   container.appendChild(el);
   setTimeout(() => {
     el.remove();
-  }, 3800);
+  }, durationMs);
 }
 
 /* Platform wording: the same window runs inside the macOS app and the Windows app. */
@@ -2754,6 +2754,14 @@ function openSettingsModal() {
     .catch(() => {});
 }
 
+const UPDATE_BLOCKED_REASONS = {
+  FOLDER_NOT_WRITABLE: 'This copy is in a folder you cannot change, and neither Applications folder can be written to',
+  TRANSLOCATED: 'macOS is running this copy from a temporary location and no Applications folder can be written to',
+  RUNNING_FROM_DISK_IMAGE: 'This copy runs from the disk image and no Applications folder can be written to',
+  NOT_PACKAGED: 'This copy runs from source',
+  NOT_MACOS: null
+};
+
 // Shows a button in the title bar when a newer version has been released.
 function renderUpdatePill() {
   const pill = document.getElementById('update-available-btn');
@@ -2762,19 +2770,24 @@ function renderUpdatePill() {
   if (update && update.enabled && update.updateAvailable) {
     const phase = update.install?.phase;
     const canInstall = Boolean(update.install?.ok);
+    const where = update.install?.relocates ? ' in Applications' : '';
     pill.disabled = phase === 'downloading' || phase === 'verifying' || phase === 'restarting';
     pill.textContent =
       phase === 'downloading'
-        ? `Downloading ${update.latestVersion}…`
+        ? update.install.total > 0
+          ? `Downloading ${update.latestVersion}… ${Math.round((update.install.received / update.install.total) * 100)}%`
+          : `Downloading ${update.latestVersion}…`
         : phase === 'verifying'
           ? 'Checking the download…'
           : phase === 'restarting'
             ? 'Restarting…'
-            : uiState.updateArmed
-              ? `Install ${update.latestVersion} and restart?`
-              : `Update available: ${update.latestVersion}`;
+            : phase === 'failed'
+              ? 'Update failed. Open download page'
+              : uiState.updateArmed
+                ? `Install ${update.latestVersion}${where} and restart?`
+                : `Update available: ${update.latestVersion}`;
     pill.title = canInstall
-      ? `You have ${update.currentVersion}. Click to download, check and install the new version.`
+      ? `You have ${update.currentVersion}. Click to download, check and install the new version${where}.`
       : `You have ${update.currentVersion}. Open the download page.`;
     pill.classList.toggle('armed', Boolean(uiState.updateArmed));
     pill.classList.remove('hidden');
@@ -2783,11 +2796,19 @@ function renderUpdatePill() {
   }
 }
 
-// The update button: the first click asks, the second installs. A copy that cannot replace
-// itself (run from the disk image, or in a folder it cannot write to) opens the download page.
+// The update button: the first click asks, the second downloads, checks and installs, then
+// the app restarts. A copy that cannot be replaced where it is goes into Applications. Only
+// when nothing can be installed from here does the button open the download page, and it
+// says why first.
 async function installOrOpenUpdate() {
   const update = uiState.update;
+  if (update?.install?.phase === 'failed') {
+    openSystemTarget('update:latest');
+    return;
+  }
   if (!update?.install?.ok) {
+    const why = UPDATE_BLOCKED_REASONS[update?.install?.reason];
+    if (why) showToast(`${why}, so the update cannot be installed from here. Opening the download page.`, 12000);
     openSystemTarget('update:latest');
     return;
   }
@@ -2803,12 +2824,13 @@ async function installOrOpenUpdate() {
     return;
   }
   uiState.updateArmed = false;
+  uiState.updateInstalling = true;
   uiState.update = { ...update, install: { ...update.install, phase: 'downloading' } };
   renderUpdatePill();
   const poll = setInterval(async () => {
     try {
       const res = await apiRequest('/api/update');
-      if (res.update.install?.phase && res.update.install.phase !== 'idle') {
+      if (uiState.updateInstalling && res.update.install?.phase && res.update.install.phase !== 'idle') {
         uiState.update = res.update;
         renderUpdatePill();
       }
@@ -2823,18 +2845,28 @@ async function installOrOpenUpdate() {
     showToast(`Installing ${update.latestVersion}. Artifact Atlas will reopen in a moment.`);
   } catch (err) {
     clearInterval(poll);
+    uiState.updateInstalling = false;
     uiState.update = { ...update, install: { ...update.install, phase: 'failed' } };
     renderUpdatePill();
-    showToast(`Could not install the update (${err.message}). Opening the download page instead.`);
-    openSystemTarget('update:latest');
+    // The reason stays on screen; the button now leads to the download page
+    showToast(`The update could not be installed (${err.message}). Nothing was changed.`, 12000);
   }
 }
 
 async function checkForAppUpdate() {
+  if (uiState.updateInstalling) return;
+  uiState.updateCheckedAt = Date.now();
   try {
     const res = await apiRequest('/api/update');
+    if (uiState.updateInstalling) return;
+    const firstLook = !uiState.update;
     uiState.update = res.update;
     renderUpdatePill();
+    // An update started before this launch did not finish: say so once
+    if (firstLook && res.update.install?.lastFailure) {
+      const failure = res.update.install.lastFailure;
+      showToast(`Version ${failure.version} could not be installed: ${failure.detail}. This is still ${res.update.currentVersion}.`, 12000);
+    }
   } catch {
     // Offline or blocked: stay quiet
   }
@@ -2844,6 +2876,14 @@ window.addEventListener('DOMContentLoaded', () => {
   initApp();
   document.getElementById('update-available-btn').addEventListener('click', installOrOpenUpdate);
   checkForAppUpdate();
-  // A long-running window checks again a few times a day
-  setInterval(checkForAppUpdate, 6 * 60 * 60 * 1000);
+  // A window that stays open keeps looking, so a new version shows up without a restart.
+  // The backend asks GitHub at most once every half hour however often it is asked.
+  setInterval(checkForAppUpdate, 30 * 60 * 1000);
+  const checkWhenBack = () => {
+    if (!document.hidden && Date.now() - (uiState.updateCheckedAt || 0) > 10 * 60 * 1000) {
+      checkForAppUpdate();
+    }
+  };
+  document.addEventListener('visibilitychange', checkWhenBack);
+  window.addEventListener('focus', checkWhenBack);
 });

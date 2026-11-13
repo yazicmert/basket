@@ -57,6 +57,45 @@ export function canInstallInPlace({ appBundlePath, platform = process.platform }
   return { ok: true, reason: null };
 }
 
+/**
+ * Where an update is installed. Normally that is the running copy. A copy that cannot be
+ * replaced where it is (opened from the disk image, from a quarantine translocation, or in a
+ * folder the user cannot write to) is installed into the Applications folder instead, or into
+ * the user's own Applications folder when that one is not writable.
+ * Returns { ok, reason, targetPath, relocates }.
+ */
+export function resolveInstallTarget({ appBundlePath, platform = process.platform, homeDir = os.homedir(), systemApplicationsDir = '/Applications' }) {
+  const inPlace = canInstallInPlace({ appBundlePath, platform });
+  if (inPlace.ok) {
+    return { ok: true, reason: null, targetPath: appBundlePath, relocates: false };
+  }
+  if (inPlace.reason === 'NOT_MACOS' || inPlace.reason === 'NOT_PACKAGED') {
+    return { ok: false, reason: inPlace.reason, targetPath: null, relocates: false };
+  }
+  const writable = (target) => {
+    try {
+      fs.accessSync(target, fs.constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const dir of [systemApplicationsDir, path.join(homeDir, 'Applications')]) {
+    const targetPath = path.join(dir, 'ArtifactAtlas.app');
+    if (targetPath === appBundlePath) {
+      continue; // This is the copy that could not be replaced
+    }
+    const dirExists = fs.existsSync(dir);
+    // The user's own Applications folder may not exist yet; it is created on install
+    const dirUsable = dirExists ? writable(dir) : dir.startsWith(homeDir + path.sep) && writable(homeDir);
+    const existing = fs.lstatSync(targetPath, { throwIfNoEntry: false });
+    if (dirUsable && (!existing || (existing.isDirectory() && writable(targetPath)))) {
+      return { ok: true, reason: inPlace.reason, targetPath, relocates: true };
+    }
+  }
+  return { ok: false, reason: inPlace.reason, targetPath: null, relocates: false };
+}
+
 /** Download URLs for a version. Only the project's own release path is ever used. */
 export function releaseAssetUrls(version) {
   const parsed = parseVersion(version);
@@ -181,7 +220,8 @@ export function stageVerifiedBundle({ zipPath, stagingDir, expectedVersion }) {
  */
 export function swapScript() {
   return `#!/bin/bash
-# Artifact Atlas update helper. Arguments: app bundle, staged bundle, app pid, staging dir, relaunch(1|0)
+# Artifact Atlas update helper. Arguments: where to install, staged bundle, app pid,
+# staging dir, relaunch(1|0), and the running copy when it is not the one being replaced
 APP="$1"; NEW="$2"; APP_PID="$3"; STAGING="$4"; RELAUNCH="$5"
 LOG="$STAGING/update.log"
 exec >>"$LOG" 2>&1
@@ -199,21 +239,30 @@ sleep 0.3
 
 BACKUP="$STAGING/previous/ArtifactAtlas.app"
 rm -rf "$STAGING/previous"; mkdir -p "$STAGING/previous"
-if ! mv "$APP" "$BACKUP"; then
-  echo "could not move the current app aside"
-  [ "$RELAUNCH" = "1" ] && /usr/bin/open "$APP"
-  exit 1
+# REOPEN is what to start again if nothing could be installed (the copy that was running)
+REOPEN="\${6:-$APP}"
+HAD_PREVIOUS=0
+if [ -e "$APP" ]; then
+  HAD_PREVIOUS=1
+  if ! mv "$APP" "$BACKUP"; then
+    echo "failed: could not move the installed copy aside"
+    [ "$RELAUNCH" = "1" ] && /usr/bin/open "$REOPEN"
+    exit 1
+  fi
+else
+  mkdir -p "$(dirname "$APP")"
 fi
 if /usr/bin/ditto "$NEW" "$APP"; then
   echo "installed"
   STATUS=0
+  REOPEN="$APP"
 else
-  echo "copy failed, restoring the previous version"
+  echo "failed: copy failed, restoring the previous version"
   rm -rf "$APP"
-  mv "$BACKUP" "$APP"
+  [ "$HAD_PREVIOUS" = "1" ] && mv "$BACKUP" "$APP"
   STATUS=1
 fi
-[ "$RELAUNCH" = "1" ] && /usr/bin/open "$APP"
+[ "$RELAUNCH" = "1" ] && /usr/bin/open "$REOPEN"
 if [ "$STATUS" = "0" ]; then rm -rf "$STAGING/previous" "$STAGING/unpacked" "$STAGING/${ZIP_ASSET_NAME}"; fi
 echo "update finished with status $STATUS"
 exit $STATUS
@@ -221,16 +270,31 @@ exit $STATUS
 }
 
 /** Starts the swap helper detached from this process, which is about to be stopped. */
-export function launchSwap({ appBundlePath, stagedBundle, appPid, stagingDir, relaunch = true }) {
+export function launchSwap({ appBundlePath, stagedBundle, appPid, stagingDir, relaunch = true, runningBundlePath = null }) {
   const scriptPath = path.join(stagingDir, 'swap.sh');
   fs.writeFileSync(scriptPath, swapScript(), { mode: 0o700 });
   const child = spawn(
     '/bin/bash',
-    [scriptPath, appBundlePath, stagedBundle, String(appPid), stagingDir, relaunch ? '1' : '0'],
+    [scriptPath, appBundlePath, stagedBundle, String(appPid), stagingDir, relaunch ? '1' : '0', runningBundlePath || appBundlePath],
     { detached: true, stdio: 'ignore' }
   );
   child.unref();
   return scriptPath;
+}
+
+/**
+ * Why the last update attempt did not finish, read from the helper's own log, or null when
+ * it finished or left no log. Only the helper's "failed:" and "refusing:" lines are returned.
+ */
+export function readSwapFailure(stagingDir) {
+  try {
+    const log = fs.readFileSync(path.join(stagingDir, 'update.log'), 'utf8');
+    if (/update finished with status 0/.test(log)) return null;
+    const lines = log.split(/\r?\n/).filter((line) => /^(failed|refusing): /.test(line));
+    return lines.length > 0 ? lines[lines.length - 1].replace(/^(failed|refusing): /, '') : 'the installer stopped before it finished';
+  } catch {
+    return null;
+  }
 }
 
 /** A private folder for one update attempt. */

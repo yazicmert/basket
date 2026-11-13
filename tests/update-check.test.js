@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   checkForUpdate,
   compareVersions,
@@ -268,5 +269,94 @@ test('updater: the swap helper refuses unexpected paths and keeps the previous v
   assert.ok(removals.length > 0);
   for (const line of removals) {
     assert.ok(/^rm -rf ("\$STAGING\/[^"]+"( |$))+$/.test(line) || line === 'rm -rf "$APP"', line);
+  }
+});
+
+test('updater: a copy that cannot be replaced where it is goes into an Applications folder', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-target-')));
+  try {
+    const home = path.join(root, 'home');
+    const systemApps = path.join(root, 'Applications');
+    fs.mkdirSync(home, { recursive: true });
+    const resolve = (appBundlePath, extra = {}) =>
+      selfUpdate.resolveInstallTarget({ appBundlePath, platform: 'darwin', homeDir: home, systemApplicationsDir: systemApps, ...extra });
+
+    // A copy in a writable folder is replaced where it is
+    const installed = path.join(root, 'Tools', 'ArtifactAtlas.app');
+    fs.mkdirSync(installed, { recursive: true });
+    assert.deepEqual(resolve(installed), { ok: true, reason: null, targetPath: installed, relocates: false });
+
+    // Opened from the disk image, with no Applications folder at all: the user's own one is used
+    const fromImage = '/Volumes/Artifact Atlas/ArtifactAtlas.app';
+    assert.deepEqual(resolve(fromImage), {
+      ok: true,
+      reason: 'RUNNING_FROM_DISK_IMAGE',
+      targetPath: path.join(home, 'Applications', 'ArtifactAtlas.app'),
+      relocates: true
+    });
+
+    // With a writable Applications folder, that one is preferred, also over an older copy in it
+    fs.mkdirSync(path.join(systemApps, 'ArtifactAtlas.app'), { recursive: true });
+    const translocated = '/private/var/folders/x/AppTranslocation/ABC/d/ArtifactAtlas.app';
+    assert.equal(resolve(translocated).targetPath, path.join(systemApps, 'ArtifactAtlas.app'));
+    assert.equal(resolve(translocated).reason, 'TRANSLOCATED');
+
+    // Something that is not an app folder at the target is never replaced
+    fs.rmSync(path.join(systemApps, 'ArtifactAtlas.app'), { recursive: true });
+    fs.writeFileSync(path.join(systemApps, 'ArtifactAtlas.app'), 'a file, not a bundle');
+    assert.equal(resolve(fromImage).targetPath, path.join(home, 'Applications', 'ArtifactAtlas.app'));
+
+    assert.equal(resolve(null).ok, false);
+    assert.equal(resolve(installed, { platform: 'win32' }).reason, 'NOT_MACOS');
+
+    // The helper installs into a folder that has no copy yet, and reopens the running copy
+    // when nothing could be installed
+    const script = selfUpdate.swapScript();
+    assert.match(script, /REOPEN="\$\{6:-\$APP\}"/);
+    assert.match(script, /if \[ -e "\$APP" \]; then/);
+    assert.match(script, /\[ "\$HAD_PREVIOUS" = "1" \] && mv "\$BACKUP" "\$APP"/);
+    fs.writeFileSync(path.join(root, 'swap.sh'), script);
+    assert.equal(spawnSync('/bin/bash', ['-n', path.join(root, 'swap.sh')]).status, process.platform === 'win32' ? null : 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('updater: an update that did not finish is reported once, with the helper\'s reason', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-failed-update-'));
+  const staging = path.join(root, 'staging');
+  fs.mkdirSync(staging);
+  assert.equal(selfUpdate.readSwapFailure(staging), null);
+  fs.writeFileSync(path.join(staging, 'update.log'), 'update started\ninstalled\nupdate finished with status 0\n');
+  assert.equal(selfUpdate.readSwapFailure(staging), null);
+  fs.writeFileSync(path.join(staging, 'update.log'), 'update started\nmv: Operation not permitted\nfailed: could not move the installed copy aside\n');
+  assert.equal(selfUpdate.readSwapFailure(staging), 'could not move the installed copy aside');
+
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ pendingUpdate: { version: '0.6.0', stagingDir: staging } }));
+  const start = (appVersion) =>
+    createAtlasServer({
+      sandboxRoot: path.join(root, 'sandbox'),
+      dataDir: root,
+      appVersion,
+      appBundlePath: null,
+      updateFetch: async () => releaseResponse({ tag_name: 'v0.6.0' })
+    });
+  const lastFailure = async (atlas) => {
+    await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+    const res = await fetch(`http://127.0.0.1:${atlas.server.address().port}/api/update`, { headers: { 'X-Atlas-Token': atlas.sessionToken } });
+    const data = await res.json();
+    await atlas.shutdown();
+    return data.update.install.lastFailure;
+  };
+  try {
+    // Still the old version after an update was started: the reason is shown
+    assert.deepEqual(await lastFailure(start('0.5.0')), { version: '0.6.0', detail: 'could not move the installed copy aside' });
+    // It is reported once
+    assert.equal(await lastFailure(start('0.5.0')), null);
+    // The new version starting is not a failure
+    fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ pendingUpdate: { version: '0.6.0', stagingDir: staging } }));
+    assert.equal(await lastFailure(start('0.6.0')), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
