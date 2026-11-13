@@ -22,8 +22,10 @@
   // kind: app | workspace | session | group | unknown | file
   var nodes = [
     { id: 'app', kind: 'app', label: 'Claude Code', x: 430, y: 300 },
-    { id: 'sA', kind: 'session', label: 'Session Alpha', x: 596, y: 262 },
-    { id: 'sB', kind: 'session', label: 'Session Beta', x: 318, y: 176 },
+    { id: 'sA', kind: 'session', label: 'Set up the core vector…', x: 596, y: 262,
+      prompt: 'Set up the core vector index and a query router for the search service.' },
+    { id: 'sB', kind: 'session', label: 'Speed up vector search…', x: 318, y: 176,
+      prompt: 'Speed up vector search with SIMD and shrink the production bundle.' },
     { id: 'gLogs', kind: 'group', type: 'LOG', label: 'Diagnostic Logs', x: 708, y: 238 },
     { id: 'gCache', kind: 'group', type: 'REGENERABLE_CACHE', label: 'Regenerable Caches', x: 372, y: 446 },
     { id: 'gTmp', kind: 'group', type: 'TEMP_FILE', label: 'Temporary Files', x: 612, y: 404 },
@@ -69,6 +71,12 @@
 
   var byId = {};
   nodes.forEach(function (n) { byId[n.id] = n; });
+  // What a file is to the session it belongs to, as in the app: its output in the project,
+  // a file the app keeps for it, or its own record
+  var PART_OF_GROUP = { gSrc: 'output', gBuild: 'output', gHist: 'record' };
+  nodes.forEach(function (n) {
+    if (n.kind === 'file') n.part = PART_OF_GROUP[n.group] || 'kept';
+  });
   // A file has the artifact type of its group, except the stray log among the unclassified.
   nodes.forEach(function (n) {
     if (n.kind === 'file') n.type = n.id === 'f11' ? 'LOG' : byId[n.group].type;
@@ -267,7 +275,7 @@
   root.appendChild(bar);
 
   // The walkthrough is a real sequence, so its steps are numbered.
-  var STEPS = ['Drop an app', 'Scan', 'See the totals', 'Open a kind', 'Trace a file', 'Quarantine', 'Restore'];
+  var STEPS = ['Drop an app', 'Scan', 'See the totals', 'Open a prompt', 'See what it cost', 'Quarantine its leftovers', 'Restore'];
   var stepper = html('ol', 'demo-steps');
   var stepEls = STEPS.map(function (label) {
     var li = html('li', null, label);
@@ -619,9 +627,64 @@
     });
   }
 
+  // What a session cost beyond its output, and its leftovers: files that belong to it
+  // alone and are not its output, its record or protected.
+  function sessionFiles(sid) {
+    return files.filter(function (f) {
+      return !isQuarantined(f.id) && f.sessions.some(function (x) { return x[0] === sid; });
+    });
+  }
+  function leftoversOf(sid) {
+    return sessionFiles(sid).filter(function (f) {
+      return f.sessions.length === 1 && f.part === 'kept' && f.risk !== 'protected';
+    });
+  }
+
+  function renderSessionPanel(sn) {
+    var kind = html('div', 'demo-kind');
+    kind.appendChild(iconEl('session', 14));
+    kind.appendChild(document.createTextNode('Session'));
+    panel.appendChild(kind);
+    panel.appendChild(html('h3', 'demo-title', sn.label));
+
+    var mine = sessionFiles(sn.id);
+    var parts = { output: [], kept: [], record: [] };
+    mine.forEach(function (f) { parts[f.part].push(f); });
+    var cost = parts.kept.concat(parts.record);
+    var costBytes = cost.reduce(function (sum, f) { return sum + f.size; }, 0);
+
+    panel.appendChild(html('h4', 'demo-sub', 'What this prompt cost'));
+    var head = html('div', 'demo-total');
+    head.appendChild(html('strong', null, formatBytes(costBytes)));
+    head.appendChild(html('span', 'demo-muted', 'at least ' + cost.length + (cost.length === 1 ? ' file' : ' files') + ' beyond its output'));
+    panel.appendChild(head);
+    panel.appendChild(statRow(html('span'), 'Its output', countAndSize(parts.output)));
+    panel.appendChild(statRow(html('span'), 'Kept by the app for it', countAndSize(parts.kept)));
+    panel.appendChild(statRow(html('span'), 'Its own record', countAndSize(parts.record)));
+
+    var left = leftoversOf(sn.id);
+    var button = html('button', 'demo-btn', left.length
+      ? 'Move what it left behind to Quarantine (' + left.length + ')'
+      : 'Nothing left behind to move');
+    button.type = 'button';
+    button.id = 'demo-leftovers-button';
+    button.disabled = !left.length;
+    button.addEventListener('click', function () { quarantineMany(left.map(function (f) { return f.id; })); });
+    panel.appendChild(button);
+    panel.appendChild(html('p', 'demo-note', 'Never its output, its record, or files shared with another session.'));
+
+    panel.appendChild(html('h4', 'demo-sub', 'Starting prompt'));
+    panel.appendChild(html('p', 'demo-prompt', sn.prompt));
+  }
+
   function renderPanel() {
     panel.textContent = '';
     var sel = byId[state.selected];
+    var openSession = /^session:/.test(state.level) ? byId[state.level.slice(8)] : null;
+    if (!sel && openSession) {
+      renderSessionPanel(openSession);
+      return;
+    }
     if (!sel) {
       renderStats();
       return;
@@ -698,6 +761,16 @@
 
   function quarantine(id) {
     state.quarantined.push(id);
+    state.selected = null;
+    state.armed = null;
+    state.view = 'quarantine';
+    drawLevel(false);
+    render();
+    if (!tour.running) tabQuarantine.focus();
+  }
+
+  function quarantineMany(ids) {
+    ids.forEach(function (id) { if (!isQuarantined(id)) state.quarantined.push(id); });
     state.selected = null;
     state.armed = null;
     state.view = 'quarantine';
@@ -888,26 +961,26 @@
       showIntro(null);
       go('root');
     });
-    // 4. A kind is opened, as a click on its mark would.
+    // 4. The sessions, each named by the prompt that started it.
     later(8600, function () {
       setStep(3);
-      go('group:gLogs');
+      go('sessions');
     });
-    // 5. One of its files is traced back to its session.
-    later(10600, function () {
+    // 5. One session is opened: what it delivered, and what it cost beyond that.
+    later(10800, function () {
       setStep(4);
-      select('f1');
+      go('session:sA');
     });
-    // 6 and 7. The file goes to quarantine and comes back.
-    later(13400, function () {
+    // 6 and 7. Its leftovers go to quarantine, and one comes back.
+    later(14200, function () {
       setStep(5);
-      quarantine('f1');
+      quarantineMany(leftoversOf('sA').map(function (f) { return f.id; }));
     });
-    later(16000, function () {
+    later(17000, function () {
       setStep(6);
       restore('f1');
     });
-    later(18400, stopTour);
+    later(19600, stopTour);
 
   }
 
