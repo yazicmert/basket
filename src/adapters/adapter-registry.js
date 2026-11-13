@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import {
   ProvenanceConfidence,
   createWorkspaceModel,
@@ -14,7 +15,12 @@ function normalizeFileUriOrPath(rawPath, baseCwd = null) {
   }
   let cleaned = rawPath.trim();
   if (cleaned.startsWith('file://')) {
-    cleaned = decodeURIComponent(cleaned.replace(/^file:\/\//, ''));
+    try {
+      // Handles drive letters and encoded characters ("file:///c%3A/Users/me")
+      cleaned = fileURLToPath(cleaned);
+    } catch {
+      cleaned = decodeURIComponent(cleaned.replace(/^file:\/\//, ''));
+    }
   }
   if (!path.isAbsolute(cleaned) && baseCwd) {
     return path.resolve(baseCwd, cleaned);
@@ -69,6 +75,13 @@ export class ClaudeCodeAdapter {
 
   getCandidateDataDirectories({ bundleId, platformServices }) {
     const home = platformServices.homeDir;
+    if (platformServices.isWindowsLayout) {
+      const appData = platformServices.getWindowsAppDataDirs();
+      return [
+        { role: 'CLAUDE_CLI_HOME', path: path.join(home, '.claude') },
+        { role: 'APP_SUPPORT', path: path.join(appData.roaming, 'Claude') }
+      ];
+    }
     const dirs = [
       { role: 'CLAUDE_CLI_HOME', path: path.join(home, '.claude') },
       { role: 'APP_SUPPORT', path: path.join(home, 'Library', 'Application Support', 'Claude') },
@@ -309,6 +322,13 @@ export class CursorAdapter {
 
   getCandidateDataDirectories({ bundleId, platformServices }) {
     const home = platformServices.homeDir;
+    if (platformServices.isWindowsLayout) {
+      const appData = platformServices.getWindowsAppDataDirs();
+      return [
+        { role: 'CURSOR_DOTDIR', path: path.join(home, '.cursor') },
+        { role: 'APP_SUPPORT', path: path.join(appData.roaming, 'Cursor') }
+      ];
+    }
     return [
       { role: 'CURSOR_DOTDIR', path: path.join(home, '.cursor') },
       { role: 'APP_SUPPORT', path: path.join(home, 'Library', 'Application Support', 'Cursor') },
@@ -327,7 +347,9 @@ export class CursorAdapter {
     const malformedRecords = [];
 
     const storageRoots = [
-      path.join(platformServices.homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage')
+      platformServices.isWindowsLayout
+        ? path.join(platformServices.getWindowsAppDataDirs().roaming, 'Cursor', 'User', 'workspaceStorage')
+        : path.join(platformServices.homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage')
     ];
 
     for (const root of authorizedRoots) {
@@ -503,6 +525,9 @@ export class CodexAdapter {
 
   getCandidateDataDirectories({ bundleId, platformServices }) {
     const home = platformServices.homeDir;
+    if (platformServices.isWindowsLayout) {
+      return [{ role: 'CODEX_HOME', path: path.join(home, '.codex') }];
+    }
     return [
       { role: 'CODEX_HOME', path: path.join(home, '.codex') },
       { role: 'APP_SUPPORT', path: path.join(home, 'Library', 'Application Support', 'Codex') },
@@ -647,6 +672,9 @@ export class GenericMacOSAppAdapter {
   }
 
   getCandidateDataDirectories({ name, bundleId, platformServices }) {
+    if (platformServices.isWindowsLayout) {
+      return platformServices.getStandardWindowsLocations({ appName: name });
+    }
     return platformServices.getStandardMacOSLocations({
       bundleId,
       appName: name

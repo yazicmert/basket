@@ -189,6 +189,30 @@ function showToast(message) {
   }, 3800);
 }
 
+/* Platform wording: the same window runs inside the macOS app and the Windows app. */
+function isWindows() {
+  return uiState.bootstrap?.platform === 'win32';
+}
+
+function deviceName() {
+  return isWindows() ? 'this PC' : 'this Mac';
+}
+
+function fileManagerName() {
+  return isWindows() ? 'File Explorer' : 'Finder';
+}
+
+/** Last segment of a path written with either separator. */
+function baseName(filePath) {
+  return String(filePath || '').split(/[\\/]/).filter(Boolean).pop() || '';
+}
+
+function appNameFromPath(appPath) {
+  // The picker knows the application's name; a typed path only has its file name
+  const listed = (uiState.bootstrap?.availableBundles || []).find((b) => b.bundlePath === appPath);
+  return listed ? listed.name : baseName(appPath).replace(/\.(app|lnk|exe)$/i, '');
+}
+
 function getLocalApiToken() {
   const meta = document.querySelector('meta[name="atlas-api-token"]');
   if (meta && meta.content) {
@@ -230,7 +254,7 @@ async function initApp() {
   window.handleNativeMacOSWorkspacePicked = (workspacePath) => {
     if (workspacePath) {
       uiState.pendingWorkspacePath = String(workspacePath).trim();
-      executeScan({
+      requestScan({
         bundlePath: uiState.pendingBundlePath || null,
         workspacePath: uiState.pendingWorkspacePath
       });
@@ -251,11 +275,9 @@ async function initApp() {
     document.documentElement.classList.add('native-shell');
   }
 
-  const boot = await loadBootstrap();
-  // First launch: explain the permissions before anything on the real disk is read
-  if (boot && boot.canSwitchMode && boot.mode === 'demo' && !homeScanGranted(boot.permissions)) {
-    openPermissionsModal();
-  }
+  // Permissions are asked when a scan of a real application starts (see requestScan), and
+  // can be changed afterwards in the Permissions window.
+  await loadBootstrap();
 }
 
 /**
@@ -273,8 +295,9 @@ async function loadBootstrap() {
     document.getElementById('demo-env-badge').classList.toggle('hidden', isLive);
     document.getElementById('live-env-badge').classList.toggle('hidden', !isLive);
     document.getElementById('bundle-dock-caption').textContent = isLive
-      ? 'AI apps on this Mac'
+      ? `AI apps on ${deviceName()}`
       : 'Sample apps';
+    applyPlatformWording();
     document.getElementById('custom-bundle-path-input').value = '';
 
     renderDraggableBundles(boot.availableBundles || []);
@@ -316,66 +339,113 @@ async function openSystemTarget(target) {
   }
 }
 
+/* The Permissions window has two uses. Opened from the title bar it shows and changes the
+   permissions. Opened by a scan ("pre-scan") it asks the same questions before anything on
+   the real disk is read, and its main button starts the scan. */
 function renderPermissionsModal(payload) {
   const granted = homeScanGranted(payload.permissions);
   const isLive = payload.mode === 'live';
+  const pending = uiState.pendingScan;
+  const where = payload.platform === 'win32' ? 'this PC' : 'this Mac';
 
-  document.getElementById('permissions-intro').textContent = !payload.canSwitchMode
-    ? `The home folder is fixed by the command line to ${payload.liveHomeDir}.`
-    : isLive
-      ? 'Artifact Atlas can read your home folder. Nothing about your files leaves this Mac, and files are only moved to Quarantine after you confirm.'
-      : uiState.bundleAwaitingConsent
-        ? `To scan ${uiState.bundleAwaitingConsent.split('/').pop().replace(/\.app$/, '')}, allow Artifact Atlas to read your home folder. The scan starts as soon as you allow it.`
-        : 'You are looking at sample data. To see what the apps on this Mac left behind, allow Artifact Atlas to read your home folder.';
+  document.getElementById('permissions-modal-title').textContent = pending
+    ? `Before scanning ${pending.label}`
+    : 'Permissions';
+  document.getElementById('permissions-intro').textContent = pending
+    ? `Choose what this scan may read. Nothing about your files leaves ${where}. You can change these later under Permissions.`
+    : !payload.canSwitchMode
+      ? `The home folder is fixed by the command line to ${payload.liveHomeDir}.`
+      : isLive
+        ? `Artifact Atlas can read your home folder. Nothing about your files leaves ${where}, and files are only moved to Quarantine after you confirm.`
+        : `You are looking at sample data. To see what the apps on ${where} left behind, allow Artifact Atlas to read your home folder.`;
 
   const list = document.getElementById('permissions-list');
   list.innerHTML = '';
-  for (const perm of payload.permissions) {
-    const label = PERMISSION_STATUS_LABELS[perm.status] || perm.status;
-    const isGranted = perm.status === 'GRANTED' || perm.status === 'COVERED_BY_FULL_DISK_ACCESS';
-    const card = document.createElement('div');
-    card.className = 'permission-card';
-    card.dataset.permissionId = perm.id;
-
-    const actions = [];
-    if (perm.id === 'home-folder-scan' && payload.canSwitchMode) {
-      actions.push(
-        perm.status === 'GRANTED'
-          ? '<button class="secondary-btn" data-action="revoke-home" type="button">Stop Scanning</button>'
-          : '<button class="primary-btn" data-action="grant-home" type="button">Allow</button>'
-      );
+  const sections = [
+    { title: 'Access', kinds: ['IN_APP_CONSENT', 'MACOS_PRIVACY'] },
+    { title: 'What a scan counts', kinds: ['SCAN_SCOPE'] }
+  ];
+  for (const section of sections) {
+    // Permissions that do not exist on this system are left out
+    const perms = payload.permissions.filter(
+      (p) => section.kinds.includes(p.kind) && p.status !== 'NOT_APPLICABLE'
+    );
+    if (perms.length === 0) continue;
+    const heading = document.createElement('div');
+    heading.className = 'permissions-section-title';
+    heading.textContent = section.title;
+    list.appendChild(heading);
+    for (const perm of perms) {
+      list.appendChild(renderPermissionCard(perm, payload));
     }
-    if (perm.settingsUrl && payload.platform === 'darwin') {
-      actions.push('<button class="secondary-btn" data-action="open-settings" type="button">Open System Settings</button>');
-    }
-    actions.push('<button class="ghost-btn" data-action="open-docs" type="button">Learn More</button>');
-
-    card.innerHTML = `
-      <div class="permission-card-head">
-        <span class="permission-card-title">${escapeHtml(perm.title)}<span class="permission-tag">${perm.required ? 'Required' : 'Optional'}</span></span>
-        <span class="permission-status ${isGranted ? 'is-granted' : ''}">${escapeHtml(label)}</span>
-      </div>
-      <p class="permission-card-summary">${escapeHtml(perm.summary)}</p>
-      <div class="permission-card-actions">${actions.join('')}</div>
-    `;
-
-    card.querySelectorAll('button[data-action]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const action = btn.dataset.action;
-        if (action === 'open-docs') {
-          await openSystemTarget(`docs:${perm.id}`);
-        } else if (action === 'open-settings') {
-          await openSystemTarget(`settings:${perm.id}`);
-        } else if (action === 'grant-home' || action === 'revoke-home') {
-          await setHomeScanConsent(action === 'grant-home');
-        }
-      });
-    });
-    list.appendChild(card);
   }
 
-  document.getElementById('done-permissions-modal-btn').textContent =
-    granted || !payload.canSwitchMode ? 'Done' : 'Use Sample Data';
+  const done = document.getElementById('done-permissions-modal-btn');
+  if (pending) {
+    done.textContent = 'Scan';
+    done.disabled = !granted && payload.canSwitchMode;
+    done.title = done.disabled ? 'Allow the home folder scan first' : '';
+  } else {
+    done.textContent = granted || !payload.canSwitchMode ? 'Done' : 'Use Sample Data';
+    done.disabled = false;
+    done.title = '';
+  }
+}
+
+function renderPermissionCard(perm, payload) {
+  const label =
+    perm.kind === 'SCAN_SCOPE'
+      ? perm.status === 'GRANTED' ? 'Included' : 'Left out'
+      : PERMISSION_STATUS_LABELS[perm.status] || perm.status;
+  const isGranted = perm.status === 'GRANTED' || perm.status === 'COVERED_BY_FULL_DISK_ACCESS';
+  const card = document.createElement('div');
+  card.className = 'permission-card';
+  card.dataset.permissionId = perm.id;
+
+  const actions = [];
+  if (perm.id === 'home-folder-scan' && payload.canSwitchMode) {
+    actions.push(
+      perm.status === 'GRANTED'
+        ? '<button class="secondary-btn" data-action="revoke-home" type="button">Stop Scanning</button>'
+        : '<button class="primary-btn" data-action="grant-home" type="button">Allow</button>'
+    );
+  }
+  if (perm.kind === 'SCAN_SCOPE') {
+    actions.push(
+      perm.status === 'GRANTED'
+        ? '<button class="secondary-btn" data-action="scope-off" type="button">Leave Out</button>'
+        : '<button class="secondary-btn" data-action="scope-on" type="button">Include</button>'
+    );
+  }
+  if (perm.settingsUrl && payload.platform === 'darwin') {
+    actions.push('<button class="secondary-btn" data-action="open-settings" type="button">Open System Settings</button>');
+  }
+  actions.push('<button class="ghost-btn" data-action="open-docs" type="button">Learn More</button>');
+
+  card.innerHTML = `
+    <div class="permission-card-head">
+      <span class="permission-card-title">${escapeHtml(perm.title)}<span class="permission-tag">${perm.required ? 'Required' : 'Optional'}</span></span>
+      <span class="permission-status ${isGranted ? 'is-granted' : ''}">${escapeHtml(label)}</span>
+    </div>
+    <p class="permission-card-summary">${escapeHtml(perm.summary)}</p>
+    <div class="permission-card-actions">${actions.join('')}</div>
+  `;
+
+  card.querySelectorAll('button[data-action]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.action;
+      if (action === 'open-docs') {
+        await openSystemTarget(`docs:${perm.id}`);
+      } else if (action === 'open-settings') {
+        await openSystemTarget(`settings:${perm.id}`);
+      } else if (action === 'grant-home' || action === 'revoke-home') {
+        await setHomeScanConsent(action === 'grant-home');
+      } else if (action === 'scope-on' || action === 'scope-off') {
+        await setScanScope(perm.id, action === 'scope-on');
+      }
+    });
+  });
+  return card;
 }
 
 async function openPermissionsModal() {
@@ -388,28 +458,114 @@ async function openPermissionsModal() {
   }
 }
 
+function closePermissionsModal() {
+  uiState.pendingScan = null;
+  document.getElementById('permissions-modal').classList.add('hidden');
+}
+
 async function setHomeScanConsent(granted) {
   try {
     const payload = await apiRequest('/api/permissions/home-folder-scan', 'POST', { granted });
-    renderPermissionsModal(payload);
+    // The data scope changed: reload the app list. A scan that is waiting for an answer stays
+    // waiting; it starts from the Scan button.
+    const pending = uiState.pendingScan;
+    const sampleFolder = uiState.bootstrap?.defaultWorkspacePath || '';
     resetToEmptyWorkspace();
     await loadBootstrap();
-
-    // An app was dropped before permission was given: scan it now
-    const waiting = uiState.bundleAwaitingConsent;
-    uiState.bundleAwaitingConsent = null;
-    if (granted && waiting && uiState.bootstrap?.mode === 'live') {
-      await handleDroppedOrSelectedBundle(waiting);
-      return;
+    uiState.pendingScan = pending;
+    if (pending) {
+      uiState.pendingBundlePath = pending.bundlePath;
+      // The sample project folder belongs to the sample data, not to a real scan
+      if (sampleFolder && pending.workspacePath === sampleFolder) pending.workspacePath = '';
     }
-    showToast(
-      granted
-        ? 'Ready. Drop an app to see what it left behind.'
-        : 'Back to sample data.'
-    );
+    renderPermissionsModal(payload);
+    if (!pending) {
+      showToast(granted ? 'Ready. Choose an app to see what it left behind.' : 'Back to sample data.');
+    }
   } catch (err) {
     showToast(`Could not change permission: ${err.message}`);
   }
+}
+
+async function setScanScope(id, granted) {
+  try {
+    const payload = await apiRequest('/api/permissions/scan-scope', 'POST', { id, granted });
+    if (uiState.bootstrap) uiState.bootstrap.scanScope = payload.scanScope;
+    renderPermissionsModal(payload);
+    if (!uiState.pendingScan && uiState.activeState && !uiState.activeState.isDemoEnvironment) {
+      showToast('Saved. Scan again to see the change.');
+    }
+  } catch (err) {
+    showToast(`Could not change permission: ${err.message}`);
+  }
+}
+
+/**
+ * Every scan starts here. A scan of a real application first asks for the permissions it
+ * needs: always while the home folder scan is not allowed, and once more the first time so
+ * the user chooses what a scan counts. Sample apps are scanned without questions.
+ */
+async function requestScan({ bundlePath = null, workspacePath = null }) {
+  const boot = uiState.bootstrap || {};
+  const isSampleApp = (boot.availableBundles || []).some(
+    (b) => b.isDemoFixture && b.bundlePath === bundlePath
+  );
+  const sampleScan = boot.mode !== 'live' && (isSampleApp || !bundlePath);
+  if (sampleScan) {
+    await executeScan({ bundlePath, workspacePath });
+    return;
+  }
+  if (boot.mode !== 'live' && !boot.canSwitchMode) {
+    showToast('This window only shows sample data.');
+    return;
+  }
+  if (boot.mode !== 'live' || !boot.scanPermissionsReviewed) {
+    uiState.pendingScan = {
+      bundlePath,
+      workspacePath,
+      label: bundlePath ? appNameFromPath(bundlePath) : baseName(workspacePath) || 'this folder'
+    };
+    document.getElementById('app-picker-modal').classList.add('hidden');
+    await openPermissionsModal();
+    return;
+  }
+  await executeScan({ bundlePath, workspacePath });
+}
+
+/** The Scan button of the pre-scan questions. */
+async function startPendingScan() {
+  const pending = uiState.pendingScan;
+  if (!pending) return;
+  try {
+    const payload = await apiRequest('/api/permissions/reviewed', 'POST', {});
+    closePermissionsModal();
+    if (uiState.bootstrap) {
+      uiState.bootstrap.scanPermissionsReviewed = payload.scanPermissionsReviewed;
+      uiState.bootstrap.mode = payload.mode;
+    }
+    await executeScan({ bundlePath: pending.bundlePath, workspacePath: pending.workspacePath });
+  } catch (err) {
+    showToast(`Could not start the scan: ${err.message}`);
+  }
+}
+
+/* Text that names the system: the Mac wording is in the markup, Windows replaces it. */
+function applyPlatformWording() {
+  const win = isWindows();
+  document.getElementById('live-env-badge').textContent = win ? 'Your PC' : 'Your Mac';
+  document.getElementById('ctx-reveal-finder-btn').textContent = `Show in ${fileManagerName()}`;
+  document.getElementById('dropzone-how').textContent = win
+    ? 'Pick an app from the list below, or use Choose App to enter the path of a program, a shortcut or its folder.'
+    : 'Drag an app from the Applications folder in Finder. Apps cannot be dragged out of the Dock; pick one from the list below instead.';
+  document.getElementById('dropzone-headline').textContent = win
+    ? 'Choose an app to see what it left behind.'
+    : 'Drop an app to see what it left behind.';
+  document.getElementById('custom-bundle-path-input').placeholder = win
+    ? 'C:\\Users\\you\\AppData\\Local\\Programs\\cursor\\Cursor.exe'
+    : '/Applications/Claude.app';
+  document.getElementById('custom-workspace-path-input').placeholder = win
+    ? 'C:\\Users\\you\\Projects\\my-project'
+    : '/Users/you/Projects/my-project';
 }
 
 function resetToEmptyWorkspace() {
@@ -424,10 +580,16 @@ function resetToEmptyWorkspace() {
 }
 
 function bindPermissionsEvents() {
-  const close = () => document.getElementById('permissions-modal').classList.add('hidden');
-  document.getElementById('permissions-btn').addEventListener('click', openPermissionsModal);
+  const close = closePermissionsModal;
+  document.getElementById('permissions-btn').addEventListener('click', () => {
+    uiState.pendingScan = null;
+    openPermissionsModal();
+  });
   document.getElementById('close-permissions-modal-btn').addEventListener('click', close);
-  document.getElementById('done-permissions-modal-btn').addEventListener('click', close);
+  document.getElementById('done-permissions-modal-btn').addEventListener('click', () => {
+    if (uiState.pendingScan) startPendingScan();
+    else close();
+  });
   document.getElementById('permissions-recheck-btn').addEventListener('click', openPermissionsModal);
   document.getElementById('permissions-overview-btn').addEventListener('click', () =>
     openSystemTarget('docs:overview')
@@ -537,11 +699,11 @@ function bindDropzoneEvents() {
       droppedPath = f.path || f.name;
     }
 
-    if (droppedPath && !droppedPath.includes('/')) {
+    if (droppedPath && !/[\\/]/.test(droppedPath)) {
       // A browser only reveals the file name. Match it against the listed applications.
       const wanted = droppedPath.trim().toLowerCase();
       const match = (uiState.bootstrap?.availableBundles || []).find(
-        (b) => b.bundlePath.split('/').pop().toLowerCase() === wanted
+        (b) => baseName(b.bundlePath).toLowerCase() === wanted
       );
       droppedPath = match ? match.bundlePath : '';
       if (!match) {
@@ -564,30 +726,9 @@ function bindDropzoneEvents() {
 }
 
 async function handleDroppedOrSelectedBundle(bundlePath) {
-  // While the app shows sample data it must not scan a real application. Ask for the
-  // home-folder permission first and start the scan as soon as it is granted.
-  const boot = uiState.bootstrap || {};
-  const isSampleApp = (boot.availableBundles || []).some(
-    (b) => b.isDemoFixture && b.bundlePath === bundlePath
-  );
-  if (boot.mode !== 'live' && !isSampleApp) {
-    if (!boot.canSwitchMode) {
-      showToast('This window only shows sample data.');
-      return;
-    }
-    uiState.bundleAwaitingConsent = bundlePath;
-    await openPermissionsModal();
-    return;
-  }
-  uiState.bundleAwaitingConsent = null;
-  document.getElementById('permissions-modal').classList.add('hidden');
-
   try {
     uiState.pendingBundlePath = bundlePath;
-    await executeScan({
-      bundlePath,
-      workspacePath: uiState.pendingWorkspacePath
-    });
+    await requestScan({ bundlePath, workspacePath: uiState.pendingWorkspacePath });
   } catch (err) {
     showToast(`Could not read this app: ${err.message}`);
   }
@@ -668,9 +809,11 @@ const scanViz = {
   // The folder key: up to three path segments below the home folder
   keyFor(dirPath) {
     let rel = dirPath;
-    if (this.home && dirPath.startsWith(this.home + '/')) rel = dirPath.slice(this.home.length + 1);
-    const parts = rel.split('/').filter(Boolean);
-    const depth = parts[0] === 'Library' ? 3 : parts[0]?.startsWith('.') ? 2 : 2;
+    if (this.home && (dirPath.startsWith(this.home + '/') || dirPath.startsWith(this.home + '\\'))) {
+      rel = dirPath.slice(this.home.length + 1);
+    }
+    const parts = rel.split(/[\\/]/).filter(Boolean);
+    const depth = parts[0] === 'Library' || parts[0] === 'AppData' ? 3 : 2;
     return parts.slice(0, depth).join('/') || rel;
   },
 
@@ -789,12 +932,12 @@ async function executeScan({ bundlePath, workspacePath }) {
   document.getElementById('scanning-view').classList.remove('hidden');
 
   document.getElementById('scan-status-title').textContent = `Scanning ${
-    bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'folder'
+    bundlePath ? appNameFromPath(bundlePath) : 'folder'
   }…`;
   document.getElementById('scan-current-path').textContent = 'Preparing…';
   const scannedBundle = (uiState.bootstrap?.availableBundles || []).find((b) => b.bundlePath === bundlePath);
-  loadGraphAppIcon(scannedBundle || (bundlePath ? { name: bundlePath.split('/').pop().replace(/\.app$/, ''), bundlePath } : null));
-  scanViz.start(bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'Folder');
+  loadGraphAppIcon(scannedBundle || (bundlePath ? { name: appNameFromPath(bundlePath), bundlePath } : null));
+  scanViz.start(bundlePath ? appNameFromPath(bundlePath) : 'Folder');
   document.getElementById('scan-metric-roots').textContent = '0';
   document.getElementById('scan-metric-count').textContent = '0';
   document.getElementById('scan-metric-bytes').textContent = '0 B';
@@ -896,7 +1039,7 @@ function renderScanNoticesBanner(state) {
   }
   if (state.application && (state.application.unreadableContainers || []).length > 0) {
     notices.push(
-      `${pluralize(state.application.unreadableContainers.length, 'folder')} could not be read, so some files may be missing. Allow Full Disk Access under Permissions and scan again.`
+      `${pluralize(state.application.unreadableContainers.length, 'folder')} could not be read, so some files may be missing. ${isWindows() ? 'Check Permissions and scan again.' : 'Allow Full Disk Access under Permissions and scan again.'}`
     );
   }
   if (state.application && state.scan.discoveredArtifactCount === 0) {
@@ -914,7 +1057,7 @@ function renderScanNoticesBanner(state) {
   }
   if (state.scan.permissionLimitations.length > 0) {
     notices.push(
-      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped.`
+      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped, so the total is smaller than what is on disk. See Permissions.`
     );
   }
 
@@ -1712,6 +1855,18 @@ function summarizeScan() {
   };
 }
 
+// One sentence on what the scan counted inside project folders
+function scopeNote(scan) {
+  const scope = scan?.scope || {};
+  const leftOut = (scope.projectFoldersLeftOut || []).length;
+  if (scope.projectFolders) {
+    return `Project folders are counted in full${
+      scope.dependencyFolders ? ', with dependency and Git folders' : ', without dependency and Git folders'
+    }.${leftOut > 0 ? ` ${pluralize(leftOut, 'folder')} too broad to walk (such as the home folder) ${leftOut === 1 ? 'was' : 'were'} left out.` : ''} They hold your own work.`;
+  }
+  return "Project folders are your own work. Only files a session's tool calls named are counted there, so this total is smaller than the folders themselves.";
+}
+
 function renderGlobalInspectorSummary() {
   const box = document.getElementById('inspector-global-stats');
   const sum = summarizeScan();
@@ -1768,7 +1923,7 @@ function renderGlobalInspectorSummary() {
         <div class="kv-item"><span class="kv-key">${escapeHtml(uiState.activeState.application?.name || 'App')}'s own folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.appData.count, 'file')} · ${formatBytes(g.stats.scopeTotals.appData.bytes)}</span></div>
         <div class="kv-item"><span class="kv-key">In project folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.projects.count, 'file')} · ${formatBytes(g.stats.scopeTotals.projects.bytes)}</span></div>
       </div>
-      <div class="inspector-note">Project folders are your own work. Only files a session's tool calls named are counted there, unless you scan a project folder yourself.</div>
+      <div class="inspector-note">${escapeHtml(scopeNote(uiState.activeState.scan))} <button id="scope-open-permissions-btn" class="link-btn" type="button">Change under Permissions</button></div>
     </div>`
         : ''
     }
@@ -1796,9 +1951,70 @@ function renderGlobalInspectorSummary() {
         : ''
     }
   `;
+  const scopeBtn = document.getElementById('scope-open-permissions-btn');
+  if (scopeBtn) {
+    scopeBtn.addEventListener('click', () => {
+      uiState.pendingScan = null;
+      openPermissionsModal();
+    });
+  }
+}
+
+const PROMPT_UNAVAILABLE_REASONS = {
+  NOT_RECORDED_FOR_THIS_APP: 'Prompts cannot be read from this app\'s session records.',
+  NO_PROMPT_IN_TRANSCRIPT: 'No prompt was found at the start of this session\'s record.',
+  TRANSCRIPT_NOT_FOUND: 'The session\'s record is no longer on disk.',
+  TRANSCRIPT_NOT_READABLE: 'The session\'s record could not be read. See Permissions.'
+};
+
+/* The prompt that started the session(s) behind the selected item. It is read from the
+   session's own record when the item is selected and is not kept by Artifact Atlas. */
+async function loadNodePrompts(node) {
+  const box = document.getElementById('inspector-prompt-section');
+  if (!box) return;
+  let res;
+  try {
+    res = await apiRequest('/api/node/prompt', 'POST', { nodeId: node.id });
+  } catch {
+    return;
+  }
+  // The selection may have changed while the request was running
+  const current = document.getElementById('inspector-prompt-section');
+  if (current !== box || uiState.inspectedNodeId !== node.id || !res.prompts || res.prompts.length === 0) {
+    return;
+  }
+  const many = res.sessionCount > 1;
+  const cards = res.prompts
+    .map(
+      (p) => `
+      <div class="prompt-card">
+        <div class="prompt-card-head">
+          <strong>${escapeHtml(p.title || 'Session')}</strong>
+          <span>${escapeHtml(formatDate(p.startedAt) || '')}</span>
+        </div>
+        ${
+          p.available
+            ? `<pre class="prompt-text">${escapeHtml(p.text)}${p.truncated ? '…' : ''}</pre>`
+            : `<div class="row-detail">${escapeHtml(PROMPT_UNAVAILABLE_REASONS[p.reason] || 'Not available.')}</div>`
+        }
+      </div>`
+    )
+    .join('');
+  box.innerHTML = `
+    <div class="inspector-section">
+      <div class="inspector-section-title">${many ? 'Starting prompts' : 'Starting prompt'}</div>
+      ${cards}
+      ${
+        res.sessionCount > res.prompts.length
+          ? `<div class="inspector-note">Showing the first ${res.prompts.length} of ${res.sessionCount} sessions linked to this item.</div>`
+          : ''
+      }
+      <div class="inspector-note">Read from the session's own record just now. Artifact Atlas does not keep it.</div>
+    </div>`;
 }
 
 function renderNodeInspector(node, trace) {
+  uiState.inspectedNodeId = node.id;
   document.getElementById('inspector-empty-state').classList.add('hidden');
   const detail = document.getElementById('inspector-detail-content');
   detail.classList.remove('hidden');
@@ -1918,6 +2134,8 @@ function renderNodeInspector(node, trace) {
       }
     </div>
 
+    <div id="inspector-prompt-section"></div>
+
     ${cleanupSectionHtml}
     ${sharedHtml}
 
@@ -1939,6 +2157,8 @@ function renderNodeInspector(node, trace) {
         : ''
     }
   `;
+
+  loadNodePrompts(node);
 
   const folderBtn = document.getElementById('select-level-files-btn');
   if (folderBtn) {
@@ -2268,8 +2488,8 @@ function bindContextualToolbarEvents() {
       });
       showToast(
         res.commandPreview
-          ? `Reveal in Finder: ${res.commandPreview}`
-          : `Revealed ${selectionSummary.firstName} in Finder`
+          ? `Show in ${fileManagerName()}: ${res.commandPreview}`
+          : `Showing ${selectionSummary.firstName} in ${fileManagerName()}`
       );
     } catch (err) {
       showToast(`Reveal failed: ${err.message}`);
@@ -2423,7 +2643,7 @@ function bindModalEvents() {
     const bundlePath = document.getElementById('custom-bundle-path-input').value.trim();
     const wsPath = document.getElementById('custom-workspace-path-input').value.trim();
     uiState.pendingWorkspacePath = wsPath;
-    await executeScan({
+    await requestScan({
       bundlePath: bundlePath || null,
       workspacePath: wsPath || null
     });
@@ -2486,11 +2706,11 @@ function openSettingsModal() {
   document.getElementById('reset-demo-sandbox-btn').classList.toggle('hidden', isLive);
   body.innerHTML = `
     <div class="kv-list">
-      <div class="kv-item"><span class="kv-key">Showing</span><span class="kv-val">${isLive ? 'Your Mac' : 'Sample data'}</span></div>
+      <div class="kv-item"><span class="kv-key">Showing</span><span class="kv-val">${isLive ? (isWindows() ? 'Your PC' : 'Your Mac') : 'Sample data'}</span></div>
       <div class="kv-item"><span class="kv-key">Home folder</span><span class="kv-val mono">${escapeHtml(boot.homeDir || '')}</span></div>
       <div class="kv-item"><span class="kv-key">Quarantine folder</span><span class="kv-val mono">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
     </div>
-    <p class="inspector-note">Nothing about you or your files leaves this Mac. Apps you drop are read, never opened. Removed files go to Quarantine and can be put back.</p>
+    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back.</p>
     <div class="inspector-section">
       <div class="inspector-section-title">Updates</div>
       <div class="kv-list">

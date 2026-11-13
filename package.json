@@ -1,6 +1,6 @@
 {
   "name": "artifact-atlas",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Artifact Atlas — Local-First AI Artifact Provenance & Cleanup Explorer",
   "license": "MIT",
   "type": "module",

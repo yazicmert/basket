@@ -107,7 +107,7 @@ test('L2. Any dropped app: leftovers are found across Library containers and hid
       bundleId: 'ai.orbit.chat'
     });
 
-    const service = new ArtifactAtlasService({ homeDir: home.dir });
+    const service = new ArtifactAtlasService({ homeDir: home.dir, platform: 'darwin' });
     const progressPaths = [];
     const state = await service.scanAndAnalyze({
       bundlePath,
@@ -146,7 +146,7 @@ test('L2. Any dropped app: leftovers are found across Library containers and hid
 test('L3. Footprint never follows symlinked containers or protected locations, and reports unreadable containers', () => {
   const home = createTempHome();
   try {
-    const platform = new PlatformServices({ homeDir: home.dir });
+    const platform = new PlatformServices({ homeDir: home.dir, platform: 'darwin' });
     const outside = path.join(home.dir, 'elsewhere');
     writeFile(path.join(outside, 'secret.txt'));
     fs.mkdirSync(path.join(home.dir, 'Library', 'Caches'), { recursive: true });
@@ -223,7 +223,7 @@ test('L4. Binary Info.plist bundles are identified (name, bundle identifier, ver
     const bundlePath = path.join(home.dir, 'Applications', 'Renamed.app');
     writeFile(path.join(bundlePath, 'Contents', 'Info.plist'), bplist);
     writeFile(path.join(home.dir, 'Library', 'Caches', 'ai.orbit.chat', 'Cache.db'));
-    const service = new ArtifactAtlasService({ homeDir: home.dir });
+    const service = new ArtifactAtlasService({ homeDir: home.dir, platform: 'darwin' });
     const app = service.identifyApplication(bundlePath);
     assert.equal(app.name, 'Orbit Chat');
     assert.equal(app.bundleId, 'ai.orbit.chat');
@@ -264,7 +264,7 @@ test('L5. Cursor: sessions are read from the real state.vscdb composer index wit
       name: 'Cursor',
       bundleId: 'com.todesktop.230313mzl4w4u92'
     });
-    const service = new ArtifactAtlasService({ homeDir: home.dir });
+    const service = new ArtifactAtlasService({ homeDir: home.dir, platform: 'darwin' });
     const state = await service.scanAndAnalyze({ bundlePath });
     assert.equal(state.sessions.length, 2);
     assert.ok(state.workspaces.some((w) => w.canonicalPath === workspace));
@@ -332,6 +332,7 @@ test('L7. Server data scope: sample data until consent, then the real home folde
     const options = {
       dataDir: sandbox.dir,
       liveHomeDir: home.dir,
+      platform: 'darwin',
       applicationDirs: [appsDir],
       simulateSystemOpen: true
     };

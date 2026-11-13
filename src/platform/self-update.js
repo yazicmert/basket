@@ -34,8 +34,7 @@ const MAX_ZIP_BYTES = 400 * 1024 * 1024;
 
 /** The .app bundle this backend runs inside, or null when run from source. */
 export function findRunningAppBundle(modulePath) {
-  const marker = `.app${path.sep}Contents${path.sep}Resources${path.sep}`;
-  const at = String(modulePath || '').indexOf(marker);
+  const at = String(modulePath || '').search(/\.app[\\/]Contents[\\/]Resources[\\/]/);
   return at < 0 ? null : modulePath.slice(0, at + 4);
 }
 

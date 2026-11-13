@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { toPathKey } from '../platform/path-keys.js';
 import {
   EdgeType,
   ProvenanceConfidence,
@@ -254,7 +255,7 @@ export class ProvenanceEngine {
       // Case 4: INFERRED provenance when artifact is derived from a verified source file in the same workspace
       // (e.g., dist/bundle.js.map or build output matching a verified source stem)
       const isBuildOrDerivedDir = /\/(dist|build|\.next|out|DerivedData|\.cache|\.parcel-cache|__pycache__)\//.test(
-        artifact.canonicalPath
+        toPathKey(artifact.canonicalPath)
       );
       if (isBuildOrDerivedDir && artifact.workspaceId) {
         const stem = path.basename(artifact.name, artifact.extension).replace(/\.(bundle|min|chunk|js|css)$/i, '');

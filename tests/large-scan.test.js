@@ -103,6 +103,7 @@ test('the UI receives summaries, selects files by description, and app-container
   const { server, sessionToken, shutdown } = createAtlasServer({
     sandboxRoot: path.join(root, 'sandbox'),
     homeDir,
+    platform: 'darwin',
     dataDir: path.join(root, 'data'),
     applicationDirs: [appsDir]
   });
@@ -326,9 +327,10 @@ test('session project folders: only files a tool call named are read', async () 
   const { createDeterministicDemoEnvironment } = await import('../src/fixtures/demo-environment.js');
   const { ArtifactAtlasService } = await import('../src/atlas-service.js');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-recorded-'));
+  let service = null;
   try {
     const demo = createDeterministicDemoEnvironment(root);
-    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, dbPath: path.join(root, 'i.sqlite'), quarantineRoot: path.join(root, 'vault') });
+    service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin', dbPath: path.join(root, 'i.sqlite'), quarantineRoot: path.join(root, 'vault') });
     const state = await service.scanAndAnalyze({ bundlePath: demo.appBundles.claude.bundlePath });
     const inProject = state.artifacts.filter((a) => a.canonicalPath.startsWith(demo.workspaceDir + path.sep));
     assert.ok(inProject.length > 0, 'recorded project files are found');
@@ -345,6 +347,7 @@ test('session project folders: only files a tool call named are read', async () 
     const trace = service.inspectNodeProvenance(inProject[0].id);
     assert.ok(trace && trace.highlightedNodeIds.includes(inProject[0].id));
   } finally {
+    if (service) service.sqliteStore.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

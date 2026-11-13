@@ -114,6 +114,7 @@ test('icon endpoint serves icons only for bundles listed in the picker', async (
   const { server, sessionToken, shutdown } = createAtlasServer({
     sandboxRoot: path.join(root, 'sandbox'),
     homeDir,
+    platform: 'darwin',
     dataDir: path.join(root, 'data'),
     applicationDirs: [appsDir]
   });

@@ -1,3 +1,4 @@
+import { toPathKey, fromPathKey } from '../platform/path-keys.js';
 import {
   NodeType,
   EdgeType,
@@ -72,7 +73,7 @@ export function buildFolderRollups(artifacts, { maxFolders = MAX_FOLDER_ROLLUPS 
   if (artifacts.length === 0) {
     return [];
   }
-  const dirOf = (a) => a.parentDir || parentOf(a.canonicalPath);
+  const dirOf = (a) => (a.parentDir ? toPathKey(a.parentDir) : parentOf(toPathKey(a.canonicalPath)));
 
   // Common ancestor of every file's directory
   let common = dirOf(artifacts[0]).split('/');
@@ -152,7 +153,7 @@ export function buildFolderRollups(artifacts, { maxFolders = MAX_FOLDER_ROLLUPS 
     const baseLabel = relative || root.slice(root.lastIndexOf('/') + 1) || '/';
     const rollup = {
       id: `folder:${item.path}${item.directOnly ? ':files' : ''}`,
-      path: item.path,
+      path: fromPathKey(item.path),
       label: item.directOnly ? `${baseLabel} (files directly inside)` : baseLabel,
       directOnly: item.directOnly,
       artifactCount: item.directOnly ? entry.direct : entry.count,

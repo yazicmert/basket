@@ -192,6 +192,13 @@ export function createDeterministicDemoEnvironment(rootDir) {
   const sessionAlphaJsonl = path.join(claudeProjectDir, 'sess_alpha_01.jsonl');
   const sessionAlphaLines = [
     JSON.stringify({
+      type: 'user',
+      sessionId: 'sess_alpha_01',
+      cwd: workspaceDir,
+      timestamp: '2026-11-10T09:15:00.000Z',
+      message: { role: 'user', content: 'Set up the core vector index and a query router for the search service.' }
+    }),
+    JSON.stringify({
       sessionId: 'sess_alpha_01',
       summary: 'Session Alpha: Core Vector Index Architecture',
       cwd: workspaceDir,
@@ -220,6 +227,13 @@ export function createDeterministicDemoEnvironment(rootDir) {
   // Session Beta: Modifies vector-index.ts (creating multi-session shared provenance!) and writes build output
   const sessionBetaJsonl = path.join(claudeProjectDir, 'sess_beta_02.jsonl');
   const sessionBetaLines = [
+    JSON.stringify({
+      type: 'user',
+      sessionId: 'sess_beta_02',
+      cwd: workspaceDir,
+      timestamp: '2026-11-10T11:40:00.000Z',
+      message: { role: 'user', content: 'Speed up vector search with SIMD and shrink the production bundle.' }
+    }),
     JSON.stringify({
       sessionId: 'sess_beta_02',
       summary: 'Session Beta: SIMD Search & Bundle Optimization',
@@ -334,6 +348,18 @@ export function createDeterministicDemoEnvironment(rootDir) {
   fs.writeFileSync(
     path.join(codexSessionsDir, 'rollout-20261110-codex_901.jsonl'),
     [
+      JSON.stringify({
+        session_id: 'codex_901',
+        title: 'Codex CLI: Tokenizer Whitespace Patch',
+        cwd: workspaceDir,
+        timestamp: '2026-11-10T14:00:00.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'The tokenizer drops trailing whitespace. Find out why and patch it.' }]
+        }
+      }),
       JSON.stringify({
         session_id: 'codex_901',
         title: 'Codex CLI: Tokenizer Whitespace Patch',

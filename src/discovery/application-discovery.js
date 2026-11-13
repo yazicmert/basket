@@ -1,7 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createApplicationModel, createWorkspaceModel } from '../models/entities.js';
-import { discoverApplicationFootprint } from './app-footprint.js';
+import {
+  discoverApplicationFootprint,
+  KNOWN_APP_PROFILES,
+  profileDisplayName
+} from './app-footprint.js';
+import { describeWindowsApplication } from './windows-apps.js';
+
+/** Reference to a known application that is offered by its data, not by a bundle or program. */
+export const KNOWN_APP_PREFIX = 'atlas-known:';
 
 /**
  * Minimal reader for binary property lists (`bplist00`), which some application bundles ship
@@ -133,6 +141,45 @@ export class ApplicationDiscovery {
   }
 
   /**
+   * Identifies an application from what the user chose: a macOS .app bundle, a Windows
+   * program, shortcut or installation folder, or a known application offered by its data.
+   * Nothing is executed.
+   */
+  identifyApplication(reference) {
+    const ref = String(reference || '');
+    if (ref.startsWith(KNOWN_APP_PREFIX)) {
+      const profile = KNOWN_APP_PROFILES.find((p) => p.id === ref.slice(KNOWN_APP_PREFIX.length));
+      if (!profile) {
+        throw new Error(`Unknown application: ${ref}`);
+      }
+      return this.buildApplication({
+        name: profileDisplayName(profile),
+        bundleId: null,
+        reference: ref,
+        executablePath: null,
+        version: 'Unknown',
+        developerMetadata: null,
+        fallbackName: null,
+        genericStatus: 'KNOWN_APP_DATA'
+      });
+    }
+    if (this.platformServices.isWindowsLayout) {
+      const described = describeWindowsApplication(ref);
+      return this.buildApplication({
+        name: described.name,
+        bundleId: null,
+        reference: path.resolve(ref),
+        executablePath: described.executablePath,
+        version: 'Unknown',
+        developerMetadata: null,
+        fallbackName: described.programFileName,
+        genericStatus: 'GENERIC_WINDOWS_APP'
+      });
+    }
+    return this.identifyAppBundle(ref);
+  }
+
+  /**
    * Inspects a macOS .app bundle without executing it.
    */
   identifyAppBundle(bundlePath) {
@@ -182,22 +229,38 @@ export class ApplicationDiscovery {
       isCodeSignedStructurePresent: codeSignatureExists
     };
 
+    return this.buildApplication({
+      name,
+      bundleId,
+      reference: resolvedBundlePath,
+      executablePath,
+      version: String(version),
+      developerMetadata,
+      fallbackName,
+      genericStatus: 'GENERIC_MACOS_ADAPTER'
+    });
+  }
+
+  /**
+   * Resolves the adapter and the data locations for an identified application.
+   */
+  buildApplication({ name, bundleId, reference, executablePath, version, developerMetadata, fallbackName, genericStatus }) {
     const matchedAdapter = this.adapterRegistry.resolveAdapterForApp({
       name,
       bundleId,
-      bundlePath: resolvedBundlePath
+      bundlePath: reference
     });
 
     const adapterDirectories = matchedAdapter.getCandidateDataDirectories({
       name,
       bundleId,
-      bundlePath: resolvedBundlePath,
+      bundlePath: reference,
       platformServices: this.platformServices
     });
 
     // Generic footprint discovery runs for every application, with or without a session
-    // adapter: Library containers, sandbox containers, and hidden home dot-directories that
-    // are named after the app or its bundle identifier.
+    // adapter: Library containers (AppData on Windows), sandbox containers, and hidden home
+    // dot-directories that are named after the app or its bundle identifier.
     const footprint = discoverApplicationFootprint({
       name,
       bundleId,
@@ -216,15 +279,13 @@ export class ApplicationDiscovery {
     return createApplicationModel({
       name,
       bundleId,
-      bundlePath: resolvedBundlePath,
+      bundlePath: reference,
       executablePath,
-      version: String(version),
+      version,
       developerMetadata,
       adapterId: matchedAdapter.id,
       isSupportedAIApp: matchedAdapter.isSpecializedAIAdapter,
-      recognitionStatus: matchedAdapter.isSpecializedAIAdapter
-        ? 'VERIFIED_AI_ADAPTER'
-        : 'GENERIC_MACOS_ADAPTER',
+      recognitionStatus: matchedAdapter.isSpecializedAIAdapter ? 'VERIFIED_AI_ADAPTER' : genericStatus,
       knownDataDirectories,
       isKnownAIApp: matchedAdapter.isSpecializedAIAdapter || footprint.isKnownAIApp,
       unreadableContainers: footprint.unreadableContainers

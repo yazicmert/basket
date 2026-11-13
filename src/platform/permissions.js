@@ -61,11 +61,54 @@ const DEFINITIONS = [
       'macOS asks the first time a scan reaches a project stored in Desktop, Documents or Downloads. Needed only when an AI session worked in those folders; covered automatically by Full Disk Access.',
     docsPath: '/permissions/files-and-folders/',
     settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders'
+  },
+  {
+    id: 'project-folders',
+    title: 'Whole project folders',
+    kind: 'SCAN_SCOPE',
+    required: false,
+    summary:
+      'Counts every file in the project folders an AI session worked in. When this is off, only the files a session\'s tool calls named are counted there, so totals are smaller. Project folders hold your own work; it is never marked safe to remove.',
+    docsPath: '/permissions/project-folders/',
+    settingsUrl: null
+  },
+  {
+    id: 'dependency-folders',
+    title: 'Dependency and Git folders',
+    kind: 'SCAN_SCOPE',
+    required: false,
+    summary:
+      'Also lists node_modules, .git, virtual environments and similar folders inside project folders. They can hold hundreds of thousands of files and make a scan much slower.',
+    docsPath: '/permissions/dependency-folders/',
+    settingsUrl: null
   }
 ];
 
-export function listPermissionDefinitions() {
-  return DEFINITIONS.map((d) => ({ ...d, docsUrl: `${SITE_BASE_URL}${d.docsPath}` }));
+/** Scan scope choices and the permission id that stands for each. */
+export const SCAN_SCOPE_PERMISSIONS = Object.freeze({
+  'project-folders': 'projectFolders',
+  'dependency-folders': 'dependencyFolders'
+});
+
+/** Normalizes stored scan scope settings; everything is off unless explicitly turned on. */
+export function normalizeScanScope(raw) {
+  return {
+    projectFolders: Boolean(raw && raw.projectFolders === true),
+    dependencyFolders: Boolean(raw && raw.dependencyFolders === true)
+  };
+}
+
+const WINDOWS_SUMMARIES = {
+  'home-folder-scan':
+    'Lets Artifact Atlas read file names, sizes and timestamps in the data folders of the application you choose, including AppData and hidden folders such as .claude in your user folder. Without it the app only shows built-in sample data.'
+};
+
+export function listPermissionDefinitions(platform = null) {
+  return DEFINITIONS.map((d) => ({
+    ...d,
+    summary: (platform === 'win32' && WINDOWS_SUMMARIES[d.id]) || d.summary,
+    docsUrl: `${SITE_BASE_URL}${d.docsPath}`
+  }));
 }
 
 /**
@@ -90,7 +133,8 @@ export function probeFullDiskAccess({ platform, homeDir }) {
 /**
  * Current status of every permission for the given home folder.
  */
-export function describePermissions({ platform, homeDir, homeScanConsentAt = null }) {
+export function describePermissions({ platform, homeDir, homeScanConsentAt = null, scanScope = null }) {
+  const scope = normalizeScanScope(scanScope);
   const fullDiskAccess = probeFullDiskAccess({ platform, homeDir });
   const coveredOrOnDemand =
     platform !== 'darwin'
@@ -103,10 +147,12 @@ export function describePermissions({ platform, homeDir, homeScanConsentAt = nul
     'home-folder-scan': homeScanConsentAt ? PermissionStatus.GRANTED : PermissionStatus.NOT_GRANTED,
     'full-disk-access': fullDiskAccess,
     'app-data': coveredOrOnDemand,
-    'files-and-folders': coveredOrOnDemand
+    'files-and-folders': coveredOrOnDemand,
+    'project-folders': scope.projectFolders ? PermissionStatus.GRANTED : PermissionStatus.NOT_GRANTED,
+    'dependency-folders': scope.dependencyFolders ? PermissionStatus.GRANTED : PermissionStatus.NOT_GRANTED
   };
 
-  return listPermissionDefinitions().map((definition) => ({
+  return listPermissionDefinitions(platform).map((definition) => ({
     ...definition,
     status: statusById[definition.id],
     grantedAt: definition.id === 'home-folder-scan' ? homeScanConsentAt : null

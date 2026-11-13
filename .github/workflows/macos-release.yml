@@ -1,4 +1,4 @@
-name: Publish Verified macOS Release (Manual Only)
+name: Publish Verified Release for macOS and Windows (Manual Only)
 
 # Explicitly triggered workflow only — never publishes a public release automatically (Requirement 16).
 on:
@@ -28,8 +28,46 @@ permissions:
   contents: write
 
 jobs:
-  publish-macos-release:
-    name: Package, Verify & Publish macOS Release
+  build-windows:
+    name: Package & Verify Windows ZIP
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      APP_VERSION: ${{ inputs.release_tag }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run Portable Core & Loopback Security Tests
+        run: npm test
+
+      - name: Build ArtifactAtlas.exe, Bundle the Runtime, ZIP & SHA-256
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+
+      - name: Verify the ZIP (Extract, End-to-End Check, Launcher Smoke Test)
+        shell: pwsh
+        run: ./scripts/verify-windows-bundle.ps1
+
+      - name: Hand the Verified ZIP to the Publish Job
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            dist/ArtifactAtlas-Windows.zip
+            dist/SHA256SUMS-Windows.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Package & Verify macOS, Publish Both
+    needs: build-windows
     runs-on: macos-15
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
@@ -102,6 +140,21 @@ jobs:
       - name: Verify In-Place Update (Stage, Check, Swap)
         run: ./scripts/test-self-update-macos.sh
 
+      - name: Fetch the Verified Windows ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: windows-release
+
+      # One checksum list covers every download; the Windows ZIP is checked against the
+      # digest its own job computed before its line is added.
+      - name: Add the Windows ZIP to the Release Files
+        run: |
+          (cd windows-release && shasum -a 256 -c SHA256SUMS-Windows.txt)
+          cp windows-release/ArtifactAtlas-Windows.zip dist/
+          cat windows-release/SHA256SUMS-Windows.txt >> dist/SHA256SUMS.txt
+          cat dist/SHA256SUMS.txt
+
       - name: Publish Verified Assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,11 +173,15 @@ jobs:
           cat <<EOF | gh release create "$TAG" \
             dist/ArtifactAtlas-macOS.dmg \
             dist/ArtifactAtlas-macOS.zip \
+            dist/ArtifactAtlas-Windows.zip \
             dist/SHA256SUMS.txt \
             "${FLAGS[@]}"
-          ## Artifact Atlas ${TAG} (macOS)
+          ## Artifact Atlas ${TAG}
 
-          Self-contained macOS desktop application (\`ArtifactAtlas.app\`) with bundled Node.js runtime, SQLite persistence, and native SwiftUI + WebKit shell.
+          - **macOS** (Apple silicon, macOS 14 or later): \`ArtifactAtlas-macOS.dmg\`. Open it and drag Artifact Atlas to Applications.
+          - **Windows** (10 or 11, 64-bit): \`ArtifactAtlas-Windows.zip\`. Extract it and start \`ArtifactAtlas.exe\`. The build is not signed with a certificate, so Windows asks before the first start: choose "More info", then "Run anyway".
+
+          Both downloads carry their own Node.js runtime; nothing else has to be installed.
 
           ### SHA-256 Checksums
           \`\`\`

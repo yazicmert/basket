@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Artifact Atlas</title>
-  <meta name="description" content="See what an application left on your Mac, which AI session created each file, and remove it safely." />
+  <meta name="description" content="See what an application left on your computer, which AI session created each file, and remove it safely." />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
   <link rel="stylesheet" href="/styles.css" />
@@ -14,7 +14,7 @@
     <div class="window-title-group">
       <h1 class="window-app-title">Artifact Atlas</h1>
       <span id="demo-env-badge" class="env-pill hidden" title="Built-in sample data. Nothing on your disk is being read.">Sample data</span>
-      <span id="live-env-badge" class="env-pill hidden" title="Scanning your home folder">Your Mac</span>
+      <span id="live-env-badge" class="env-pill hidden" title="Showing the real files in your home folder">Your Mac</span>
     </div>
 
     <div class="window-actions">
@@ -30,12 +30,11 @@
     <section id="empty-workspace-view" class="empty-workspace-view" aria-label="Choose an application">
       <div class="dropzone-card" id="app-dropzone" tabindex="0" role="region" aria-label="Drop an application here">
         <div class="dropzone-intro">
-          <h2 class="dropzone-headline">Drop an app to see what it left behind.</h2>
+          <h2 class="dropzone-headline" id="dropzone-headline">Drop an app to see what it left behind.</h2>
           <p class="dropzone-subtext">
             Artifact Atlas finds the app's caches, logs, models and session files, shows where each one came from, and lets you remove them safely. The app itself is never opened.
-          
-            <br />Drag an app from the Applications folder in Finder. Apps cannot be dragged out of the Dock; pick one from the list below instead.
           </p>
+          <p class="dropzone-subtext" id="dropzone-how">Drag an app from the Applications folder in Finder. Apps cannot be dragged out of the Dock; pick one from the list below instead.</p>
         </div>
 
         <div class="dropzone-cta-row">

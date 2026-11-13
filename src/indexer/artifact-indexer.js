@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { createArtifactModel } from '../models/entities.js';
 
 export class ArtifactIndexer {
@@ -34,7 +35,7 @@ export class ArtifactIndexer {
       const matchedWorkspace = sortedWorkspaces.find(
         (ws) =>
           entry.canonicalPath === ws.canonicalPath ||
-          entry.canonicalPath.startsWith(ws.canonicalPath + '/')
+          entry.canonicalPath.startsWith(ws.canonicalPath + path.sep)
       );
 
       return createArtifactModel({

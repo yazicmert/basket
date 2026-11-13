@@ -8,8 +8,15 @@ import { ArtifactAtlasService } from '../atlas-service.js';
 import { createDeterministicDemoEnvironment } from '../fixtures/demo-environment.js';
 import { RestoreConflictStrategy } from '../models/entities.js';
 import { execFile } from 'node:child_process';
-import { describePermissions, resolveOpenTarget } from '../platform/permissions.js';
-import { findKnownAppProfile } from '../discovery/app-footprint.js';
+import {
+  describePermissions,
+  resolveOpenTarget,
+  normalizeScanScope,
+  SCAN_SCOPE_PERMISSIONS
+} from '../platform/permissions.js';
+import { findKnownAppProfile, listKnownApplicationsWithData } from '../discovery/app-footprint.js';
+import { listStartMenuApplications } from '../discovery/windows-apps.js';
+import { KNOWN_APP_PREFIX } from '../discovery/application-discovery.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
 import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
@@ -113,10 +120,19 @@ export function createAtlasServer(options = {}) {
       return {
         homeScanConsentAt: typeof raw.homeScanConsentAt === 'string' ? raw.homeScanConsentAt : null,
         mode: raw.mode === 'live' ? 'live' : 'demo',
-        updateCheckEnabled: raw.updateCheckEnabled !== false
+        updateCheckEnabled: raw.updateCheckEnabled !== false,
+        scanScope: normalizeScanScope(raw.scanScope),
+        scanPermissionsReviewedAt:
+          typeof raw.scanPermissionsReviewedAt === 'string' ? raw.scanPermissionsReviewedAt : null
       };
     } catch {
-      return { homeScanConsentAt: null, mode: 'demo', updateCheckEnabled: true };
+      return {
+        homeScanConsentAt: null,
+        mode: 'demo',
+        updateCheckEnabled: true,
+        scanScope: normalizeScanScope(null),
+        scanPermissionsReviewedAt: null
+      };
     }
   };
   const settings = loadSettings();
@@ -213,6 +229,8 @@ export function createAtlasServer(options = {}) {
             })
           : new ArtifactAtlasService({
               homeDir: demoEnv.homeDir,
+              // The sample home folder is laid out like a Mac's on every system
+              platform: 'darwin',
               dbPath,
               quarantineRoot,
               isDemoEnvironment: true
@@ -227,10 +245,14 @@ export function createAtlasServer(options = {}) {
     canSwitchMode: !explicitHomeDir,
     platform,
     liveHomeDir,
+    // False until the user has answered the questions asked before the first real scan
+    scanPermissionsReviewed: Boolean(settings.scanPermissionsReviewedAt),
+    scanScope: settings.scanScope,
     permissions: describePermissions({
       platform,
       homeDir: liveHomeDir,
-      homeScanConsentAt: explicitHomeDir ? 'pinned-by-cli' : settings.homeScanConsentAt
+      homeScanConsentAt: explicitHomeDir ? 'pinned-by-cli' : settings.homeScanConsentAt,
+      scanScope: settings.scanScope
     })
   });
 
@@ -257,44 +279,66 @@ export function createAtlasServer(options = {}) {
     }
   ];
 
-  // Installed applications, listed by directory name only (bundles are never opened or run).
+  // Installed applications, listed by name only (nothing is opened or run). On macOS these
+  // are the .app bundles in the Applications folders; on Windows, the Start Menu shortcuts.
+  // Known applications that left data but have nothing to list (command-line tools) follow.
   const installedBundles = () => {
     const bundles = [];
     const seen = new Set();
-    const appDirs = options.applicationDirs || [
-      '/Applications',
-      '/Applications/Utilities',
-      path.join(liveHomeDir, 'Applications')
-    ];
-    for (const appDir of appDirs) {
-      let entries = [];
-      try {
-        entries = fs.readdirSync(appDir, { withFileTypes: true });
-      } catch {
-        continue;
+    const add = (name, bundlePath, description) => {
+      if (seen.has(bundlePath)) {
+        return;
       }
-      for (const entry of entries) {
-        if (!entry.isDirectory() || !entry.name.endsWith('.app')) {
+      seen.add(bundlePath);
+      const profile = findKnownAppProfile({ name });
+      bundles.push({
+        name,
+        bundleId: null,
+        bundlePath,
+        version: 'Installed',
+        description,
+        isDemoFixture: false,
+        isKnownAIApp: Boolean(profile && profile.ai),
+        profileId: profile ? profile.id : null
+      });
+    };
+
+    if (platform === 'win32') {
+      const startMenuDirs = options.applicationDirs || [
+        path.join(liveHomeDir, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+        path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+      ];
+      for (const app of listStartMenuApplications(startMenuDirs)) {
+        add(app.name, app.shortcutPath, 'Start Menu');
+      }
+    } else {
+      const appDirs = options.applicationDirs || [
+        '/Applications',
+        '/Applications/Utilities',
+        path.join(liveHomeDir, 'Applications')
+      ];
+      for (const appDir of appDirs) {
+        let entries = [];
+        try {
+          entries = fs.readdirSync(appDir, { withFileTypes: true });
+        } catch {
           continue;
         }
-        const bundlePath = path.join(appDir, entry.name);
-        if (seen.has(bundlePath)) {
-          continue;
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name.endsWith('.app')) {
+            add(entry.name.replace(/\.app$/, ''), path.join(appDir, entry.name), `Installed in ${appDir}`);
+          }
         }
-        seen.add(bundlePath);
-        const name = entry.name.replace(/\.app$/, '');
-        const profile = findKnownAppProfile({ name });
-        bundles.push({
-          name,
-          bundleId: null,
-          bundlePath,
-          version: 'Installed',
-          description: `Installed in ${appDir}`,
-          isDemoFixture: false,
-          isKnownAIApp: Boolean(profile && profile.ai)
-        });
       }
     }
+
+    const listedProfiles = new Set(bundles.map((b) => b.profileId).filter(Boolean));
+    for (const known of listKnownApplicationsWithData({ platformServices: activeService().platformServices })) {
+      if (!listedProfiles.has(known.profileId)) {
+        add(known.name, `${KNOWN_APP_PREFIX}${known.profileId}`, 'Found by the data it left');
+      }
+    }
+
     return bundles.sort(
       (a, b) =>
         Number(b.isKnownAIApp) - Number(a.isKnownAIApp) || a.name.localeCompare(b.name)
@@ -607,7 +651,8 @@ export function createAtlasServer(options = {}) {
             : body.workspacePath
               ? [body.workspacePath]
               : [],
-          artificialDelayMs: Number(body.artificialDelayMs || 0)
+          artificialDelayMs: Number(body.artificialDelayMs || 0),
+          scanScope: settings.scanScope
         });
         return sendJson(res, 200, {
           ok: true,
@@ -643,6 +688,26 @@ export function createAtlasServer(options = {}) {
           settings.homeScanConsentAt = null;
           settings.mode = 'demo';
         }
+        saveSettings();
+        return sendJson(res, 200, { ok: true, ...permissionsPayload() });
+      }
+
+      // Scan scope: what a scan may count beyond the application's own folders. Asked before
+      // the first real scan and changeable in the Permissions window at any time.
+      if (url.pathname === '/api/permissions/scan-scope' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const key = SCAN_SCOPE_PERMISSIONS[body.id];
+        if (!key || typeof body.granted !== 'boolean') {
+          return sendJson(res, 400, { ok: false, error: 'UNKNOWN_SCAN_SCOPE' });
+        }
+        settings.scanScope = { ...settings.scanScope, [key]: body.granted };
+        saveSettings();
+        return sendJson(res, 200, { ok: true, ...permissionsPayload() });
+      }
+
+      // The user has answered the questions asked before a scan
+      if (url.pathname === '/api/permissions/reviewed' && req.method === 'POST') {
+        settings.scanPermissionsReviewedAt = new Date().toISOString();
         saveSettings();
         return sendJson(res, 200, { ok: true, ...permissionsPayload() });
       }
@@ -697,6 +762,12 @@ export function createAtlasServer(options = {}) {
         if (!targetUrl) {
           return sendJson(res, 400, { ok: false, error: 'UNKNOWN_OPEN_TARGET' });
         }
+        if (platform === 'win32' && process.platform === 'win32' && !options.simulateSystemOpen && /^https:\/\//.test(targetUrl)) {
+          // Opens the page in the default browser. explorer.exe reports a non-zero exit code
+          // even when it worked, so the result is not read from it.
+          await new Promise((resolve) => execFile('explorer.exe', [targetUrl], () => resolve()));
+          return sendJson(res, 200, { ok: true, opened: true, url: targetUrl });
+        }
         if (platform !== 'darwin' || options.simulateSystemOpen) {
           return sendJson(res, 200, { ok: true, opened: false, url: targetUrl });
         }
@@ -718,6 +789,13 @@ export function createAtlasServer(options = {}) {
           return sendJson(res, 404, { ok: false, error: 'Node not found in active graph' });
         }
         return sendJson(res, 200, { ok: true, trace });
+      }
+
+      // First prompt of the session(s) behind a node, read from the transcript for display.
+      // It is sent to the local window only and is not kept anywhere.
+      if (url.pathname === '/api/node/prompt' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, ...activeService().describeNodePrompts(body.nodeId) });
       }
 
       if (url.pathname === '/api/finder/reveal' && req.method === 'POST') {

@@ -39,6 +39,16 @@ const HOME_SLUG_PARENTS = [
   { rel: '.local/state', prefix: '', role: 'XDG_STATE' }
 ];
 
+/** Windows per-user data folders whose direct children are named after an application. */
+const WINDOWS_APPDATA_CONTAINERS = [
+  { rel: 'AppData/Roaming', role: 'APP_SUPPORT' },
+  { rel: 'AppData/Local', role: 'LOCAL_APP_DATA' },
+  { rel: 'AppData/LocalLow', role: 'LOCAL_APP_DATA' }
+];
+
+/** Folder name endings an application adds to its own name on Windows ("cursor-updater"). */
+const WINDOWS_NAME_SUFFIXES = ['-updater', '-nightly', '.exe'];
+
 const STRIPPABLE_SUFFIXES = ['.savedstate', '.binarycookies', '.plist.lockfile', '.plist'];
 
 /** Names too generic to attribute a shared directory to one application. */
@@ -72,14 +82,16 @@ export const KNOWN_APP_PROFILES = [
     ai: true,
     bundleIdPrefixes: ['com.anthropic.'],
     names: ['claude', 'claude code'],
-    extraLocations: ['.claude', '.claude.json', '.config/claude']
+    extraLocations: ['.claude', '.claude.json', '.config/claude'],
+    windowsLocations: ['AppData/Roaming/Claude', 'AppData/Local/claude-cli-nodejs']
   },
   {
     id: 'cursor',
     ai: true,
     bundleIdPrefixes: ['com.todesktop.230313mzl4w4u92'],
     names: ['cursor'],
-    extraLocations: ['.cursor']
+    extraLocations: ['.cursor'],
+    windowsLocations: ['AppData/Roaming/Cursor', 'AppData/Local/cursor-updater']
   },
   {
     id: 'codex',
@@ -107,7 +119,8 @@ export const KNOWN_APP_PROFILES = [
     ai: false,
     bundleIdPrefixes: ['com.microsoft.vscode'],
     names: ['visual studio code', 'code'],
-    extraLocations: ['.vscode', 'Library/Application Support/Code']
+    extraLocations: ['.vscode', 'Library/Application Support/Code'],
+    windowsLocations: ['AppData/Roaming/Code']
   },
   {
     id: 'ollama',
@@ -121,14 +134,16 @@ export const KNOWN_APP_PROFILES = [
     ai: true,
     bundleIdPrefixes: ['ai.elementlabs.lmstudio'],
     names: ['lm studio'],
-    extraLocations: ['.lmstudio', '.cache/lm-studio']
+    extraLocations: ['.lmstudio', '.cache/lm-studio'],
+    windowsLocations: ['AppData/Roaming/LM Studio']
   },
   {
     id: 'gpt4all',
     ai: true,
     bundleIdPrefixes: ['io.gpt4all.'],
     names: ['gpt4all'],
-    extraLocations: ['Library/Application Support/nomic.ai']
+    extraLocations: ['Library/Application Support/nomic.ai'],
+    windowsLocations: ['AppData/Roaming/nomic.ai', 'AppData/Local/nomic.ai']
   },
   { id: 'zed', ai: true, bundleIdPrefixes: ['dev.zed.'], names: ['zed'], extraLocations: [] },
   { id: 'gemini', ai: true, bundleIdPrefixes: [], names: ['gemini', 'antigravity'], extraLocations: ['.gemini'] },
@@ -141,6 +156,36 @@ export const KNOWN_APP_PROFILES = [
   { id: 'trae', ai: true, bundleIdPrefixes: [], names: ['trae'], extraLocations: ['.trae'] },
   { id: 'kiro', ai: true, bundleIdPrefixes: [], names: ['kiro'], extraLocations: ['.kiro'] }
 ];
+
+/** Every location a known application may keep data in, for the given home layout. */
+export function profileLocations(profile, isWindowsLayout) {
+  return [...profile.extraLocations, ...(isWindowsLayout ? profile.windowsLocations || [] : [])];
+}
+
+/** "lm studio" -> "LM Studio"-like display name for a known application. */
+export function profileDisplayName(profile) {
+  const special = { chatgpt: 'ChatGPT', lmstudio: 'LM Studio', gpt4all: 'GPT4All', vscode: 'Visual Studio Code', copilot: 'GitHub Copilot' };
+  return special[profile.id] || profile.names[0].replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Known applications that have data in this home folder. Command-line tools (Claude Code,
+ * Codex, Ollama) have no application to drop; they are offered by the data they left.
+ * Only the existence of each location is checked.
+ */
+export function listKnownApplicationsWithData({ platformServices }) {
+  const found = [];
+  for (const profile of KNOWN_APP_PROFILES) {
+    const present = profileLocations(profile, platformServices.isWindowsLayout).some((rel) => {
+      const st = lstatSafe(path.join(platformServices.homeDir, rel));
+      return Boolean(st && !st.isSymbolicLink());
+    });
+    if (present) {
+      found.push({ profileId: profile.id, name: profileDisplayName(profile), ai: profile.ai });
+    }
+  }
+  return found;
+}
 
 export function findKnownAppProfile({ name = '', bundleId = '' }) {
   const lowerName = String(name || '').trim().toLowerCase();
@@ -209,6 +254,20 @@ export function matchContainerEntry(entryName, { nameTokens, bundleId }) {
   return null;
 }
 
+/** Windows: the folder is named after the application, optionally with a known ending. */
+function matchWindowsEntry(entryName, nameTokens) {
+  const lower = String(entryName).toLowerCase();
+  if (nameTokens.has(lower)) {
+    return 'APPLICATION_NAME';
+  }
+  for (const suffix of WINDOWS_NAME_SUFFIXES) {
+    if (lower.endsWith(suffix) && nameTokens.has(lower.slice(0, -suffix.length))) {
+      return 'APPLICATION_NAME';
+    }
+  }
+  return null;
+}
+
 function lstatSafe(targetPath) {
   try {
     return fs.lstatSync(targetPath);
@@ -248,8 +307,28 @@ export function discoverApplicationFootprint({
     }
   };
 
+  // 1 (Windows). AppData folders: one directory listing each, matched by application name
+  for (const container of platformServices.isWindowsLayout ? WINDOWS_APPDATA_CONTAINERS : []) {
+    const containerDir = path.join(homeDir, container.rel);
+    let entries;
+    try {
+      entries = fs.readdirSync(containerDir);
+    } catch (err) {
+      if (err.code === 'EACCES' || err.code === 'EPERM') {
+        unreadableContainers.push(containerDir);
+      }
+      continue;
+    }
+    for (const entry of entries) {
+      const matchedBy = matchWindowsEntry(entry, nameTokens);
+      if (matchedBy) {
+        add(container.role, path.join(containerDir, entry), matchedBy);
+      }
+    }
+  }
+
   // 1. Library containers: one directory listing each, matched by bundle id / app name
-  for (const container of LIBRARY_CONTAINERS) {
+  for (const container of platformServices.isWindowsLayout ? [] : LIBRARY_CONTAINERS) {
     const containerDir = path.join(homeDir, 'Library', container.rel);
     let entries;
     try {
@@ -280,7 +359,7 @@ export function discoverApplicationFootprint({
 
   // 3. Locations known for this specific application
   if (profile) {
-    for (const rel of profile.extraLocations) {
+    for (const rel of profileLocations(profile, platformServices.isWindowsLayout)) {
       add('KNOWN_APP_LOCATION', path.join(homeDir, rel), 'KNOWN_APP_PROFILE');
     }
   }
