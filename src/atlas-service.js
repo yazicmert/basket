@@ -15,6 +15,9 @@ import { SQLiteStore } from './persistence/sqlite-store.js';
 // because they work from summaries; the bound keeps memory and scan time predictable.
 export const DEFAULT_MAX_FILES = 300000;
 
+/** Upper bound on files named by session tool calls that are read inside project folders. */
+export const MAX_RECORDED_FILES = 50000;
+
 export class ArtifactAtlasService {
   constructor(options = {}) {
     this.platformServices = new PlatformServices({
@@ -132,14 +135,27 @@ export class ArtifactAtlasService {
         })
       : { workspaces: [], sessions: [], operations: [], malformedRecords: [] };
 
+    // Project folders named in session transcripts are not scanned in full: they hold the
+    // user's own work, and counting all of it as the application's footprint would be wrong.
+    // Only the files a session's tool calls name are read there. A folder the user picks
+    // explicitly (additionalWorkspacePaths) is still scanned in full.
     const workspacesByPath = new Map();
     for (const ws of parsedRecords.workspaces) {
       workspacesByPath.set(ws.canonicalPath, ws);
-      if (
-        fs.existsSync(ws.canonicalPath) &&
-        !this.platformServices.isProtectedSystemPath(ws.canonicalPath)
-      ) {
-        candidateRoots.push(ws.canonicalPath);
+    }
+    const recordedFiles = new Set();
+    for (const op of parsedRecords.operations) {
+      const target = op.targetPath;
+      if (typeof target !== 'string' || !path.isAbsolute(target) || recordedFiles.size >= MAX_RECORDED_FILES) {
+        continue;
+      }
+      const resolved = path.resolve(target);
+      if (this.platformServices.isProtectedSystemPath(resolved)) {
+        continue;
+      }
+      const stat = fs.lstatSync(resolved, { throwIfNoEntry: false });
+      if (stat && stat.isFile()) {
+        recordedFiles.add(resolved);
       }
     }
 
@@ -159,12 +175,15 @@ export class ArtifactAtlasService {
     }
 
     const workspaces = Array.from(workspacesByPath.values());
-    const authorizedRoots = Array.from(new Set(candidateRoots));
+    // Recorded files are authorized one by one, so cleanup can reach them and nothing next to them
+    const authorizedRoots = Array.from(new Set([...candidateRoots, ...recordedFiles]));
+    const walkRoots = Array.from(new Set(candidateRoots));
 
     // Execute cancellable permission-aware scan
     const { scan, rawEntries } = await this.scanner.scan({
       applicationId: application ? application.id : null,
-      authorizedRoots,
+      authorizedRoots: walkRoots,
+      extraFiles: Array.from(recordedFiles),
       projectRoots: workspaces.map((ws) => ws.canonicalPath),
       signal,
       artificialDelayMs,
@@ -268,7 +287,30 @@ export class ArtifactAtlasService {
     if (!this.activeState.graph) {
       return null;
     }
-    return this.graphEngine.traceProvenancePaths(this.activeState.graph, nodeId);
+    const onMap = this.activeState.graph.nodes.some((n) => n.id === nodeId);
+    if (onMap) {
+      return this.graphEngine.traceProvenancePaths(this.activeState.graph, nodeId);
+    }
+    // A file without a mark on the overview map: trace it on a small graph of its own
+    const art = (this.activeState.artifacts || []).find((a) => a.id === nodeId);
+    if (!art) {
+      return null;
+    }
+    const opIds = new Set(art.operationIds || []);
+    const group = (this.activeState.artifactGroups || []).find((g) => g.artifactIds.includes(art.id));
+    const graph = this.graphEngine.buildKnowledgeGraph({
+      application: this.activeState.application,
+      workspaces: this.activeState.workspaces,
+      sessions: this.activeState.sessions,
+      operations: (this.activeState.operations || []).filter((op) => opIds.has(op.id)),
+      artifacts: [art],
+      artifactGroups: group ? [{ ...group, artifactIds: [art.id] }] : [],
+      provenanceEdges: (this.activeState.provenanceEdges || []).filter(
+        (e) => e.sourceId === art.id || e.targetId === art.id || opIds.has(e.sourceId) || opIds.has(e.targetId)
+      ),
+      unknownOriginNodeId: this.activeState.unknownOriginNodeId
+    });
+    return this.graphEngine.traceProvenancePaths(graph, art.id);
   }
 
   prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {

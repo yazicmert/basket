@@ -134,9 +134,16 @@ test('the UI receives summaries, selects files by description, and app-container
       assert.ok(state.graph.treemap[grouping].every((cell) => cell.artifactIds === undefined));
     }
 
+    // The map arrives one level at a time; open the kinds to reach the two files
+    const root = (await post('/api/map/level', { levelId: 'root' })).level;
+    const fileNodes = [];
+    for (const kind of root.nodes.filter((n) => n.drillId)) {
+      const level = (await post('/api/map/level', { levelId: kind.drillId })).level;
+      fileNodes.push(...level.nodes.filter((n) => n.nodeType === 'ARTIFACT'));
+    }
     // The cache file is safe to remove, the stored data is not
-    const cachedNode = state.graph.nodes.find((n) => n.label === 'f_000001');
-    const storedNode = state.graph.nodes.find((n) => n.label === 'store.bin');
+    const cachedNode = fileNodes.find((n) => n.label === 'f_000001');
+    const storedNode = fileNodes.find((n) => n.label === 'store.bin');
     assert.equal(cachedNode.metadata.artifactType, 'REGENERABLE_CACHE');
     assert.equal(cachedNode.riskCategory, 'LOW');
     assert.notEqual(storedNode.riskCategory, 'LOW');
@@ -231,4 +238,104 @@ test('a scan with thousands of tool calls draws only the ones that touched a dra
   assert.ok(opNodes.every((op) => shownFiles.has(`art_${op.id.slice(3)}`)), 'each drawn tool call touched a drawn file');
   assert.equal(graph.stats.operationCount, 9000);
   assert.ok(graph.nodes.length < 700, `map has ${graph.nodes.length} nodes`);
+});
+
+test('map levels: few marks per level, folders open into their contents, and every file is reachable', async () => {
+  const { buildMapLevel, levelArtifactIds } = await import('../src/graph/map-levels.js');
+  const base = '/home/u/Library/Application Support/Big';
+  const artifacts = [];
+  const add = (dir, n, extra = {}) => {
+    for (let i = 0; i < n; i++) {
+      artifacts.push(
+        fakeArtifact(artifacts.length, {
+          canonicalPath: `${base}/${dir}/f_${i}`,
+          parentDir: `${base}/${dir}`,
+          sizeBytes: 100 + i,
+          groupId: extra.groupId,
+          ...extra
+        })
+      );
+    }
+  };
+  add('Cache/Cache_Data', 3000, { groupId: 'grp_cache', cleanupClassification: 'LOW' });
+  add('Cache/GPUCache', 40, { groupId: 'grp_cache', cleanupClassification: 'LOW' });
+  add('logs/2026/11', 500, { groupId: 'grp_logs' });
+  const groupOf = (gid) => artifacts.filter((a) => a.groupId === gid).map((a) => a.id);
+  const state = {
+    application: { id: 'app_big', name: 'Big', adapterId: 'generic-macos-app' },
+    artifacts,
+    artifactGroups: [
+      { id: 'grp_cache', name: 'Regenerable Caches', artifactType: 'REGENERABLE_CACHE', artifactIds: groupOf('grp_cache') },
+      { id: 'grp_logs', name: 'Logs', artifactType: 'LOG', artifactIds: groupOf('grp_logs') }
+    ],
+    sessions: [{ id: 'sess_1', title: 'Session One' }],
+    provenanceEdges: []
+  };
+  artifacts[5].sessionIds = ['sess_1'];
+
+  const root = buildMapLevel(state, 'root');
+  assert.equal(root.nodes[0].pinned, true);
+  assert.deepEqual(
+    root.nodes.slice(1).map((n) => n.drillId).sort(),
+    ['group:grp_cache', 'group:grp_logs', 'sessions']
+  );
+  assert.equal(root.edges.length, root.nodes.length - 1);
+
+  // A kind opens on its folders; a chain of single folders is skipped
+  const caches = buildMapLevel(state, 'group:grp_cache');
+  assert.equal(caches.parentId, 'root');
+  const folders = caches.nodes.filter((n) => n.nodeType === 'FOLDER');
+  assert.deepEqual(folders.map((n) => n.label).sort(), ['Cache_Data', 'GPUCache']);
+  const logs = buildMapLevel(state, 'group:grp_logs');
+  assert.equal(logs.path, `${base}/logs/2026/11`, 'logs/2026/11 holds everything, so it opens directly');
+
+  // A big folder shows its largest files and says how many there are
+  const data = buildMapLevel(state, folders.find((n) => n.label === 'Cache_Data').drillId);
+  const files = data.nodes.filter((n) => n.nodeType === 'ARTIFACT');
+  assert.ok(files.length > 0 && files.length <= 36);
+  assert.ok(data.nodes.length <= 61);
+  assert.match(data.note, /largest of 3,000 files/);
+  assert.equal(data.parentId, 'group:grp_cache');
+  assert.equal(data.breadcrumb.at(-1).title, 'Cache_Data');
+  assert.equal(files[0].metadata.sizeBytes, 100 + 2999, 'largest first');
+
+  // Selecting a level selects every file in it, not only the drawn ones
+  assert.equal(levelArtifactIds(state, data.id).length, 3000);
+  assert.equal(levelArtifactIds(state, 'group:grp_cache').length, 3040);
+  assert.equal(levelArtifactIds(state, 'root').length, 3540);
+
+  // Sessions open on the files they are linked to
+  const session = buildMapLevel(state, 'session:sess_1');
+  assert.deepEqual(session.nodes.filter((n) => n.nodeType === 'ARTIFACT').map((n) => n.id), [artifacts[5].id]);
+  assert.equal(session.edges[0].confidence, 'VERIFIED');
+
+  assert.equal(buildMapLevel(state, 'dir:all::relative/path'), null);
+  assert.equal(buildMapLevel(state, 'group:missing'), null);
+});
+
+test('session project folders: only files a tool call named are read', async () => {
+  const { createDeterministicDemoEnvironment } = await import('../src/fixtures/demo-environment.js');
+  const { ArtifactAtlasService } = await import('../src/atlas-service.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-recorded-'));
+  try {
+    const demo = createDeterministicDemoEnvironment(root);
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, dbPath: path.join(root, 'i.sqlite'), quarantineRoot: path.join(root, 'vault') });
+    const state = await service.scanAndAnalyze({ bundlePath: demo.appBundles.claude.bundlePath });
+    const inProject = state.artifacts.filter((a) => a.canonicalPath.startsWith(demo.workspaceDir + path.sep));
+    assert.ok(inProject.length > 0, 'recorded project files are found');
+    assert.ok(
+      inProject.every((a) => a.provenanceConfidence === 'VERIFIED'),
+      'nothing in the project folder is read unless a session recorded it'
+    );
+    assert.ok(state.artifacts.some((a) => a.canonicalPath === demo.sampleFiles.sharedSourceFile));
+    assert.equal(state.artifacts.some((a) => a.name === '.env'), false);
+    const totals = state.graph.stats.scopeTotals;
+    assert.equal(totals.projects.count, inProject.length);
+    assert.equal(totals.appData.count + totals.projects.count, state.graph.stats.artifactCount);
+    // Recorded files can still be traced although they have no mark on the overview map
+    const trace = service.inspectNodeProvenance(inProject[0].id);
+    assert.ok(trace && trace.highlightedNodeIds.includes(inProject[0].id));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

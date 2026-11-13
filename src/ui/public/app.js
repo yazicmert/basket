@@ -24,7 +24,9 @@ const uiState = {
   draggingNode: null,
   isPanning: false,
   panStart: { x: 0, y: 0 },
-  animTick: 0
+  animTick: 0,
+  // The map level being shown (see src/graph/map-levels.js)
+  mapLevel: null
 };
 
 function formatBytes(bytes) {
@@ -716,7 +718,7 @@ function transitionToExplorerView() {
     `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(state.scan.totalPhysicalBytes)}`;
 
   renderScanNoticesBanner(state);
-  loadGraphFromState(state.graph);
+  loadMapLevel('root');
   renderGlobalInspectorSummary();
   renderTreemapView();
   renderQuarantineVaultView();
@@ -751,12 +753,6 @@ function renderScanNoticesBanner(state) {
       `${pluralize(state.scan.skippedBulkDirectoryCount, 'dependency or Git folder')} inside project folders ${state.scan.skippedBulkDirectoryCount === 1 ? 'was' : 'were'} left out (node_modules, .git and similar). They are never cleaned up from here.`
     );
   }
-  const hiddenOnMap = state.graph?.stats?.hiddenArtifactCount || 0;
-  if (hiddenOnMap > 0) {
-    notices.push(
-      `The map shows ${state.graph.stats.shownArtifactCount.toLocaleString()} of ${state.graph.stats.artifactCount.toLocaleString()} files: every file a session recorded and the largest of each kind. Totals and Sizes cover all of them.`
-    );
-  }
   if (state.scan.permissionLimitations.length > 0) {
     notices.push(
       `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped.`
@@ -774,6 +770,74 @@ function renderScanNoticesBanner(state) {
 /* =========================================================================
    INTERACTIVE KNOWLEDGE GRAPH ENGINE (Section 5)
    ========================================================================= */
+
+/* Map levels: the map shows one level at a time. Clicking a kind, a session or a folder
+   opens it; the breadcrumb and Escape go back up. */
+window.addEventListener('keydown', (e) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  const anyDialogOpen = [...document.querySelectorAll('.modal-backdrop')].some((m) => !m.classList.contains('hidden'));
+  if (typing || anyDialogOpen || uiState.activeTab !== 'graph' || !uiState.mapLevel?.parentId) return;
+  if (e.key === 'Escape' || e.key === 'Backspace') {
+    e.preventDefault();
+    loadMapLevel(uiState.mapLevel.parentId);
+  }
+});
+
+async function loadMapLevel(levelId) {
+  try {
+    const res = await apiRequest('/api/map/level', 'POST', { levelId });
+    showMapLevel(res.level);
+  } catch (err) {
+    if (levelId !== 'root') {
+      // The level may have emptied (for example after a cleanup): fall back to the top
+      await loadMapLevel('root');
+    } else {
+      showToast(`Could not load the map: ${err.message}`);
+    }
+  }
+}
+
+function reloadMapLevel() {
+  return loadMapLevel(uiState.mapLevel?.id || 'root');
+}
+
+function showMapLevel(level) {
+  uiState.mapLevel = level;
+  uiState.selectedNodeId = null;
+  uiState.activeTrace = null;
+  uiState.hoveredNode = null;
+  document.getElementById('graph-hover-tooltip')?.classList.add('hidden');
+  loadGraphFromState(level);
+  renderMapBreadcrumb();
+  const center = uiState.nodes.find((n) => n.pinned);
+  if (center && level.id !== 'root') {
+    renderNodeInspector(center, null);
+  } else {
+    document.getElementById('inspector-detail-content').classList.add('hidden');
+    document.getElementById('inspector-empty-state').classList.remove('hidden');
+  }
+}
+
+function renderMapBreadcrumb() {
+  const nav = document.getElementById('map-breadcrumb');
+  const level = uiState.mapLevel;
+  if (!nav || !level) return;
+  const crumbs = level.breadcrumb
+    .map((crumb, i) =>
+      i === level.breadcrumb.length - 1
+        ? `<span class="crumb current" aria-current="page">${escapeHtml(crumb.title)}</span>`
+        : `<button class="crumb" type="button" data-level="${escapeHtml(crumb.id)}">${escapeHtml(crumb.title)}</button>`
+    )
+    .join('<span class="crumb-sep" aria-hidden="true">/</span>');
+  nav.innerHTML = `
+    ${level.parentId ? `<button class="crumb-up" type="button" data-level="${escapeHtml(level.parentId)}" title="Up one level (Esc)">←</button>` : ''}
+    <div class="crumbs">${crumbs}</div>
+    ${level.note ? `<span class="crumb-note">${escapeHtml(level.note)}</span>` : '<span class="crumb-note">Click a kind, session or folder to open it.</span>'}
+  `;
+  nav.querySelectorAll('[data-level]').forEach((btn) => {
+    btn.addEventListener('click', () => loadMapLevel(btn.dataset.level));
+  });
+}
 
 function loadGraphFromState(graphData) {
   if (!graphData) return;
@@ -893,11 +957,11 @@ function stepGraphPhysics() {
     const delta = (dist - targetDist) * 0.004;
     const fx = (dx / dist) * delta;
     const fy = (dy / dist) * delta;
-    if (s !== uiState.draggingNode && s.nodeType !== 'AI_APPLICATION') {
+    if (s !== uiState.draggingNode && !s.pinned) {
       s.vx += fx;
       s.vy += fy;
     }
-    if (t !== uiState.draggingNode && t.nodeType !== 'AI_APPLICATION') {
+    if (t !== uiState.draggingNode && !t.pinned) {
       t.vx -= fx;
       t.vy -= fy;
     }
@@ -905,7 +969,7 @@ function stepGraphPhysics() {
 
   // Apply velocity & damping
   for (const n of nodes) {
-    if (n === uiState.draggingNode || n.nodeType === 'AI_APPLICATION') {
+    if (n === uiState.draggingNode || n.pinned) {
       n.vx = 0;
       n.vy = 0;
       continue;
@@ -937,11 +1001,40 @@ function fitCameraToGraph() {
     (rect.height - 120) / Math.max(1, maxY - minY),
     1.1
   );
+  const fitted = Math.max(MIN_ZOOM, scale);
   uiState.camera = {
-    scale: Math.max(0.2, scale),
-    x: -((minX + maxX) / 2) * Math.max(0.2, scale),
-    y: -((minY + maxY) / 2) * Math.max(0.2, scale) - 10
+    scale: fitted,
+    x: -((minX + maxX) / 2) * fitted,
+    y: -((minY + maxY) / 2) * fitted - 10
   };
+}
+
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 4;
+
+// Everything a drawn frame depends on, apart from node positions while the layout moves.
+function mapSignature() {
+  const cam = uiState.camera;
+  const canvas = document.getElementById('knowledge-graph-canvas');
+  return [
+    uiState.nodes.length,
+    uiState.mapLevel?.id,
+    cam.x.toFixed(1),
+    cam.y.toFixed(1),
+    cam.scale.toFixed(4),
+    uiState.hoveredNode?.id,
+    uiState.selectedNodeId,
+    uiState.selectedArtifactIds.size,
+    uiState.activeTrace ? uiState.activeTrace.highlightedNodeIds?.length : -1,
+    uiState.searchQuery,
+    uiState.filterRisk,
+    uiState.filterConfidence,
+    uiState.filterNodeType,
+    uiState.focusMode,
+    canvas ? `${canvas.width}x${canvas.height}` : '',
+    cachedThemeColors ? 1 : 0,
+    uiState.appIconImage ? 1 : 0
+  ].join('|');
 }
 
 function renderGraphCanvas() {
@@ -951,11 +1044,17 @@ function renderGraphCanvas() {
     fitCameraToGraph();
   }
   if (uiState.activeTab === 'graph' && uiState.nodes.length > 0) {
-    // The layout runs until it has settled, then rests; dragging a mark wakes it up.
-    if (uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick) {
+    // The layout runs until it has settled, then rests; dragging a mark wakes it up. A map
+    // at rest is only redrawn when something it shows has changed.
+    const moving = uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick;
+    if (moving) {
       stepGraphPhysics();
     }
-    drawGraph();
+    const signature = mapSignature();
+    if (moving || signature !== uiState.lastDrawnSignature) {
+      uiState.lastDrawnSignature = signature;
+      drawGraph();
+    }
   }
   requestAnimationFrame(renderGraphCanvas);
 }
@@ -1032,7 +1131,8 @@ function drawGraph() {
   }
 
   // Items
-  const showFileLabels = uiState.camera.scale >= 0.95;
+  const showFileLabels =
+    uiState.camera.scale >= 0.95 || uiState.nodes.filter((n) => n.nodeType === 'ARTIFACT').length <= 14;
   for (const node of uiState.nodes) {
     if (!visibleNodeIds.has(node.id)) continue;
 
@@ -1135,6 +1235,17 @@ function drawGraph() {
       ctx.fillStyle = isStructural || isSelected ? colors.ink : colors.ink2;
       ctx.textAlign = 'center';
       ctx.fillText(node.label, node.x, node.y + r + 3 + labelPx);
+      // Kinds, sessions and folders also show how much they hold
+      if (node.metadata?.summary && (isStructural || isSelected)) {
+        const metaPx = 10 / uiState.camera.scale;
+        ctx.font = `${metaPx}px -apple-system, sans-serif`;
+        ctx.fillStyle = colors.ink3;
+        ctx.fillText(
+          `${Number(node.metadata.summary.artifactCount).toLocaleString()} files · ${formatBytes(node.metadata.summary.bytes)}`,
+          node.x,
+          node.y + r + 5 + labelPx + metaPx
+        );
+      }
     }
 
     ctx.restore();
@@ -1238,7 +1349,9 @@ function initGraphCanvas() {
     if (movedDist < 6 && e.target === canvas) {
       const world = screenToWorld(e.clientX, e.clientY);
       const hit = findNodeAtWorld(world.x, world.y);
-      if (hit) {
+      if (hit && hit.drillId && !e.shiftKey && !e.metaKey) {
+        await loadMapLevel(hit.drillId);
+      } else if (hit) {
         await selectNodeInGraph(hit, e.shiftKey || e.metaKey);
       } else {
         clearNodeSelection();
@@ -1253,9 +1366,20 @@ function initGraphCanvas() {
     'wheel',
     (e) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 0.9;
       uiState.fitCameraAtTick = null;
-      uiState.camera.scale = Math.max(0.22, Math.min(2.6, uiState.camera.scale * factor));
+      // Proportional to the scroll distance, so trackpads and pinch zoom feel even, and
+      // anchored on the pointer so the point under it stays put.
+      const step = Math.max(-0.5, Math.min(0.5, -e.deltaY * (e.ctrlKey ? 0.01 : 0.0025)));
+      const cam = uiState.camera;
+      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cam.scale * Math.exp(step)));
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left - rect.width / 2;
+      const sy = e.clientY - rect.top - rect.height / 2;
+      const wx = (sx - cam.x) / cam.scale;
+      const wy = (sy - cam.y) / cam.scale;
+      cam.scale = next;
+      cam.x = sx - wx * next;
+      cam.y = sy - wy * next;
     },
     { passive: false }
   );
@@ -1335,6 +1459,7 @@ function renderGlobalInspectorSummary() {
   const box = document.getElementById('inspector-global-stats');
   const sum = summarizeScan();
   if (!sum) return;
+  const g = uiState.activeState.graph;
 
   const share = (bytes) => (sum.totalBytes > 0 ? Math.max(0, (bytes / sum.totalBytes) * 100) : 0);
   const riskRows = sum.risks
@@ -1378,6 +1503,18 @@ function renderGlobalInspectorSummary() {
         <span class="dot-high" style="width:${share(sum.risks[2].bytes)}%"></span>
       </div>
     </div>
+    ${
+      g.stats.scopeTotals
+        ? `<div class="inspector-section">
+      <div class="inspector-section-title">Where it is</div>
+      <div class="kv-list">
+        <div class="kv-item"><span class="kv-key">${escapeHtml(uiState.activeState.application?.name || 'App')}'s own folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.appData.count, 'file')} · ${formatBytes(g.stats.scopeTotals.appData.bytes)}</span></div>
+        <div class="kv-item"><span class="kv-key">In project folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.projects.count, 'file')} · ${formatBytes(g.stats.scopeTotals.projects.bytes)}</span></div>
+      </div>
+      <div class="inspector-note">Project folders are your own work. Only files a session's tool calls named are counted there, unless you scan a project folder yourself.</div>
+    </div>`
+        : ''
+    }
     <div class="inspector-section">
       <div class="inspector-section-title">By cleanup risk</div>
       <div class="kv-list">${riskRows}</div>
@@ -1500,26 +1637,26 @@ function renderNodeInspector(node, trace) {
             : ''
         }
         ${
-          node.nodeType === 'FOLDER'
+          meta.summary
             ? `
-          <div class="kv-item"><span class="kv-key">Files</span><span class="kv-val">${Number(meta.artifactCount || 0).toLocaleString()}</span></div>
-          <div class="kv-item"><span class="kv-key">Size</span><span class="kv-val">${formatBytes(meta.bytes || 0)}</span></div>
+          <div class="kv-item"><span class="kv-key">Files</span><span class="kv-val">${Number(meta.summary.artifactCount || 0).toLocaleString()}</span></div>
+          <div class="kv-item"><span class="kv-key">Size</span><span class="kv-val">${formatBytes(meta.summary.bytes || 0)}</span></div>
           ${['LOW', 'REVIEW', 'HIGH', 'PROTECTED']
-            .filter((risk) => meta.riskCounts?.[risk] > 0)
+            .filter((risk) => meta.summary.riskCounts?.[risk] > 0)
             .map(
               (risk) =>
-                `<div class="kv-item"><span class="kv-key">${escapeHtml(RISK_LABELS[risk])}</span><span class="kv-val">${pluralize(meta.riskCounts[risk], 'file')}</span></div>`
+                `<div class="kv-item"><span class="kv-key"><span class="legend-dot ${RISK_DOT_CLASS[risk]}"></span> ${escapeHtml(RISK_LABELS[risk])}</span><span class="kv-val">${pluralize(meta.summary.riskCounts[risk], 'file')}</span></div>`
             )
             .join('')}
-          <div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path || '')}</span></div>
+          ${meta.path ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path)}</span></div>` : ''}
         `
             : ''
         }
       </div>
       ${
-        node.nodeType === 'FOLDER'
-          ? `<div class="inspector-note">This folder stands for all of its files. Cleanup still moves files one by one, and protected files stay where they are.</div>
-             <button id="select-folder-files-btn" class="secondary-btn" type="button">Select Files in This Folder</button>`
+        meta.summary && node.nodeType !== 'AI_APPLICATION'
+          ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
+             <button id="select-level-files-btn" class="secondary-btn" type="button">Select These ${pluralize(meta.summary.artifactCount, 'File')}</button>`
           : ''
       }
     </div>
@@ -1546,11 +1683,14 @@ function renderNodeInspector(node, trace) {
     }
   `;
 
-  const folderBtn = document.getElementById('select-folder-files-btn');
+  const folderBtn = document.getElementById('select-level-files-btn');
   if (folderBtn) {
     folderBtn.addEventListener('click', async () => {
       try {
-        const count = await selectByDescription({ kind: 'cell', groupBy: 'byFolder', cellId: node.id });
+        const count = await selectByDescription({
+          kind: 'level',
+          levelId: node.drillId || uiState.mapLevel?.id || 'root'
+        });
         showToast(`Selected ${pluralize(count, 'file')} in ${node.label}.`);
       } catch (err) {
         showToast(`Could not select files: ${err.message}`);
@@ -1703,9 +1843,16 @@ function renderTreemapView() {
     // Clicking a row selects its files on the map
     tile.addEventListener('click', async () => {
       document.getElementById('tab-graph-btn').click();
-      const node = cell.focusNodeId ? uiState.nodes.find((n) => n.id === cell.focusNodeId) : null;
-      if (node) {
-        await selectNodeInGraph(node, false);
+      const levelId =
+        uiState.treemapGroupBy === 'byGroup'
+          ? `group:${cell.id}`
+          : uiState.treemapGroupBy === 'bySession' && !cell.id.startsWith('__')
+            ? `session:${cell.id}`
+            : uiState.treemapGroupBy === 'byFolder' && cell.path
+              ? `dir:all::${cell.path}`
+              : null;
+      if (levelId) {
+        await loadMapLevel(levelId);
       } else {
         clearNodeSelection();
       }
@@ -1773,7 +1920,8 @@ function renderQuarantineVaultView() {
         });
         uiState.activeState = res.activeState;
         uiState.quarantineEntries = res.quarantineEntries || [];
-        loadGraphFromState(res.activeState.graph);
+        reloadMapLevel();
+        renderGlobalInspectorSummary();
         renderQuarantineVaultView();
         renderTreemapView();
         updateQuarantineCountPill();
@@ -2042,7 +2190,7 @@ function bindModalEvents() {
       uiState.activeState = res.activeState;
       uiState.quarantineEntries = res.quarantineEntries || [];
       clearNodeSelection();
-      loadGraphFromState(res.activeState.graph);
+      reloadMapLevel();
       renderGlobalInspectorSummary();
       renderTreemapView();
       renderQuarantineVaultView();

@@ -87,7 +87,8 @@ test('2 & 3 & 4 & 5. Filesystem scanning, symlink boundaries, duplicate physical
     const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
 
     const state = await service.scanAndAnalyze({
-      bundlePath: demo.appBundles.claude.bundlePath
+      bundlePath: demo.appBundles.claude.bundlePath,
+      additionalWorkspacePaths: [demo.workspaceDir]
     });
 
     assert.equal(state.scan.status, ScanStatus.COMPLETED);
@@ -138,7 +139,8 @@ test('6 & 7 & 8 & 9 & 10. Session parsing, Graph construction, Multi-parent prov
     const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
 
     const state = await service.scanAndAnalyze({
-      bundlePath: demo.appBundles.claude.bundlePath
+      bundlePath: demo.appBundles.claude.bundlePath,
+      additionalWorkspacePaths: [demo.workspaceDir]
     });
 
     // Malformed JSONL record is gracefully recorded without aborting session parsing
@@ -251,7 +253,8 @@ test('11. Risk classification: distinguishes all 10 artifact types and never rel
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
     const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
     const state = await service.scanAndAnalyze({
-      bundlePath: demo.appBundles.claude.bundlePath
+      bundlePath: demo.appBundles.claude.bundlePath,
+      additionalWorkspacePaths: [demo.workspaceDir]
     });
 
     const byPath = new Map(state.artifacts.map((a) => [a.canonicalPath, a]));
@@ -350,7 +353,8 @@ test('12 & 13 & 14. Quarantine, Manifest persistence, Restore with conflict stra
     });
 
     const state = await service.scanAndAnalyze({
-      bundlePath: demo.appBundles.claude.bundlePath
+      bundlePath: demo.appBundles.claude.bundlePath,
+      additionalWorkspacePaths: [demo.workspaceDir]
     });
 
     const lowRiskCache = state.artifacts.find(
@@ -439,7 +443,8 @@ test('15 & 17. Scan cancellation and permission failure resilience', async () =>
 
     const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
     const state = await service.scanAndAnalyze({
-      bundlePath: demo.appBundles.claude.bundlePath
+      bundlePath: demo.appBundles.claude.bundlePath,
+      additionalWorkspacePaths: [demo.workspaceDir]
     });
 
     // Note: on Linux non-root user, mode 0o000 triggers permissionLimitations
