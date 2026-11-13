@@ -441,6 +441,11 @@ test('C2. Files of a session that may still be running are never moved, however 
     assert.equal(review.eligibleItems.length, 0);
     assert.deepEqual(review.blockedItems.map((b) => b.code), ['SESSION_MAY_BE_RUNNING']);
     assert.equal(review.totalBlockedCount, 1);
+    // Setting a file aside does not turn a two-file selection into a single one: a high-risk
+    // file of no session stays under the bulk rule even with the single-file override
+    const highRisk = { ...state.artifacts.find((a) => a.name === 'settings.json'), cleanupClassification: 'HIGH' };
+    const review2 = service.cleanupEngine.prepareCleanupReview({ artifacts: [highRisk], authorizedRoots: state.authorizedRoots, allowHighRiskSingleOverride: true, selectionSize: 2 });
+    assert.deepEqual(review2.blockedItems.map((b) => b.code), ['BULK_HIGH_RISK_OR_UNKNOWN_BLOCKED']);
     const result = service.executeQuarantine({ artifactIds: [probe.id], confirmationToken: review.confirmationToken });
     assert.equal((result.quarantinedEntries || []).length, 0);
     assert.ok(fs.existsSync(scratch), 'the file is still where it was');

@@ -473,6 +473,7 @@ export class ArtifactAtlasService {
     const costs = computePromptCosts(this.activeState);
     const running = (art) => (art.sessionIds || []).some((sid) => costs.sessions[sid]?.possiblyRunning);
     return {
+      selectionSize: selected.length,
       allowed: selected.filter((art) => !running(art)),
       blocked: selected.filter(running).map((art) => ({
         artifactId: art.id,
@@ -489,19 +490,22 @@ export class ArtifactAtlasService {
   }
 
   prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {
-    const { allowed, blocked } = this.splitBySessionActivity(artifactIds);
+    const { allowed, blocked, selectionSize } = this.splitBySessionActivity(artifactIds);
+    // Bulk rules follow what the user selected, not what is left after setting files aside
     const review = this.cleanupEngine.prepareCleanupReview({
       artifacts: allowed,
       authorizedRoots: this.activeState.authorizedRoots,
-      allowHighRiskSingleOverride
+      allowHighRiskSingleOverride,
+      selectionSize
     });
     const blockedItems = [...(review.blockedItems || []), ...blocked];
     return { ...review, blockedItems, totalBlockedCount: blockedItems.length };
   }
 
   executeQuarantine({ artifactIds = [], confirmationToken, allowHighRiskSingleOverride = false }) {
-    const { allowed: selected } = this.splitBySessionActivity(artifactIds);
+    const { allowed: selected, selectionSize } = this.splitBySessionActivity(artifactIds);
     const result = this.cleanupEngine.executeQuarantine({
+      selectionSize,
       artifacts: selected,
       authorizedRoots: this.activeState.authorizedRoots,
       confirmationToken,
