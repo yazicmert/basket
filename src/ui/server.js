@@ -19,6 +19,7 @@ import { listStartMenuApplications } from '../discovery/windows-apps.js';
 import { KNOWN_APP_PREFIX } from '../discovery/application-discovery.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
 import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
+import { sessionLeftoverIds } from '../graph/prompt-costs.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
 import {
   findRunningAppBundle,
@@ -429,7 +430,8 @@ export function createAtlasServer(options = {}) {
           }
         : state.scan,
       graph,
-      isDemoEnvironment: state.isDemoEnvironment
+      isDemoEnvironment: state.isDemoEnvironment,
+      promptCosts: state.promptCosts || null
     };
   };
 
@@ -444,6 +446,10 @@ export function createAtlasServer(options = {}) {
       if (!ids) return [];
       const liveIds = new Set(live.map((a) => a.id));
       return ids.filter((id) => liveIds.has(id));
+    }
+    // The files a finished session left behind outside your projects (see prompt-costs.js)
+    if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
+      return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
     }
     if (body.kind === 'cell' && TREEMAP_GROUPINGS.includes(body.groupBy)) {
       const cell = (state.graph?.treemap?.[body.groupBy] || []).find((c) => c.id === body.cellId);

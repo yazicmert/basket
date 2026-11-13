@@ -356,3 +356,61 @@ test('S7. Project files no session recorded are your own work: protected, and sh
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('C1. What a prompt cost: output, scratch, files kept for it and its record, adding up to the scan', async () => {
+  const env = makeHome();
+  // A scratch file a tool call wrote outside any project, and a tool result kept for the session
+  const scratch = path.join(env.home, 'scratch', 'screenshot.png');
+  fs.mkdirSync(path.dirname(scratch), { recursive: true });
+  fs.writeFileSync(scratch, 's'.repeat(2000));
+  const kept = path.join(path.dirname(env.transcript), 'sess-one', 'tool-results', 'result.txt');
+  fs.mkdirSync(path.dirname(kept), { recursive: true });
+  fs.writeFileSync(kept, 'r'.repeat(700));
+  const base = { sessionId: 'sess-one', cwd: env.project, timestamp: '2026-11-01T10:00:00.000Z' };
+  fs.appendFileSync(env.transcript, JSON.stringify({ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Write', input: { file_path: scratch } }] } }) + '\n');
+  // Nothing has changed for a day: the session is finished
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+  for (const f of [env.transcript, kept, path.join(path.dirname(env.transcript), 'sess-one', 'subagents', 'agent-1.jsonl')]) fs.utimesSync(f, dayAgo, dayAgo);
+
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const session = state.sessions[0];
+    const cost = state.promptCosts.sessions[session.id];
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(cost.parts).map(([k, v]) => [k, v.count])),
+      { output: 1, scratch: 1, kept: 1, record: 2 },
+      'importer.js; the screenshot; the tool result; the transcript and the subagent transcript'
+    );
+    assert.equal(cost.parts.scratch.bytes, 2000);
+    assert.equal(cost.costCount, 4);
+    assert.equal(cost.costBytes, cost.parts.scratch.bytes + cost.parts.kept.bytes + cost.parts.record.bytes);
+    assert.equal(cost.possiblyRunning, false);
+
+    // Traced, app-wide and project parts add up to every listed file
+    const t = state.promptCosts.totals;
+    assert.equal(t.traced.count + t.appWide.count + t.projects.count, state.artifacts.length);
+    assert.equal(t.all.bytes, state.scan.totalPhysicalBytes);
+    assert.equal(t.traced.bytes + t.appWide.bytes + t.projects.bytes, t.all.bytes);
+
+    // The leftovers offered: the screenshot and the files kept for it, never the output or the record
+    const { sessionLeftoverIds, computePromptCosts } = await import('../src/graph/prompt-costs.js');
+    const names = sessionLeftoverIds(state, session.id, state.promptCosts).map((id) => state.artifacts.find((a) => a.id === id).name).sort();
+    assert.ok(names.includes('screenshot.png') && names.includes('result.txt'), names.join(', '));
+    assert.ok(!names.includes('importer.js') && !names.includes('sess-one.jsonl') && !names.includes('agent-1.jsonl'), names.join(', '));
+
+    // A session that changed in the last hour may still be running: nothing is offered
+    const running = computePromptCosts(state, { now: Date.parse(cost.lastActiveAt) + 60 * 1000 });
+    assert.equal(running.sessions[session.id].possiblyRunning, true);
+    assert.deepEqual(sessionLeftoverIds(state, session.id, running), []);
+
+    // On the map the session carries its cost, numbers only
+    const { buildMapLevel } = await import('../src/graph/map-levels.js');
+    const mark = buildMapLevel(state, 'sessions').nodes.find((n) => n.id === `session:${session.id}`);
+    assert.equal(mark.metadata.cost.costBytes, cost.costBytes);
+    assert.ok(!JSON.stringify(state.promptCosts).includes('CSV'), 'no conversation text in the costs');
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

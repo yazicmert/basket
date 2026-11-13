@@ -450,10 +450,15 @@ export function buildMapLevel(state, levelId = 'root') {
         label: s.title || s.externalSessionId || 'Session',
         summary: summarize(files),
         drillId: `session:${s.id}`,
-        extra: { session: s }
+        extra: { session: s, cost: state.promptCosts?.sessions?.[s.id] || null }
       });
     });
-    children.sort((a, b) => b.metadata.summary.artifactCount - a.metadata.summary.artifactCount);
+    // The sessions that cost the most come first
+    children.sort(
+      (a, b) =>
+        (b.metadata.cost?.costBytes || 0) - (a.metadata.cost?.costBytes || 0) ||
+        b.metadata.summary.artifactCount - a.metadata.summary.artifactCount
+    );
     const shown = children.slice(0, LEVEL_MAX_SESSIONS);
     return finish({
       id: 'sessions',
@@ -524,7 +529,7 @@ export function buildMapLevel(state, levelId = 'root') {
   } else if (isScopeTop && scoped.bucket) {
     center = summaryNode({ id: thisId, nodeType: NodeType.FOLDER, label: scoped.bucket.label, summary: summarize(inLevel), extra: { path: level.prefix, bucket: scoped.bucket } });
   } else if (isScopeTop && scoped.session) {
-    center = summaryNode({ id: thisId, nodeType: NodeType.SESSION, label: scoped.session.title || 'Session', summary: summarize(inLevel), extra: { session: scoped.session, path: level.prefix } });
+    center = summaryNode({ id: thisId, nodeType: NodeType.SESSION, label: scoped.session.title || 'Session', summary: summarize(inLevel), extra: { session: scoped.session, path: level.prefix, cost: state.promptCosts?.sessions?.[scoped.session.id] || null } });
   } else {
     center = summaryNode({ id: thisId, nodeType: NodeType.FOLDER, label: level.prefix.slice(level.prefix.lastIndexOf('/') + 1) || '/', summary: summarize(inLevel), extra: { path: level.prefix } });
   }

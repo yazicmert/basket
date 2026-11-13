@@ -1765,7 +1765,8 @@ function initGraphCanvas() {
           NODE_TYPE_LABELS[hit.nodeType] || sentenceCase(hit.nodeType),
           hit.nodeType === 'ARTIFACT' ? RISK_LABELS[hit.riskCategory] : null,
           hit.sizeBytes ? formatBytes(hit.sizeBytes) : null,
-          hit.metadata?.session?.endedAt ? `last active ${formatDate(hit.metadata.session.endedAt)}` : null
+          hit.metadata?.session?.endedAt ? `last active ${formatDate(hit.metadata.session.endedAt)}` : null,
+          hit.metadata?.cost ? `cost at least ${formatBytes(hit.metadata.cost.costBytes)}` : null
         ].filter(Boolean);
         const firstPrompt = hit.metadata?.firstPrompt;
         tooltip.innerHTML = `
@@ -1917,6 +1918,26 @@ function summarizeScan() {
   };
 }
 
+// How much of the listed files can be traced to a session, and so to the prompt that started it
+function traceTotalsHtml(costs) {
+  if (!costs || !costs.totals || (uiState.activeState?.graph?.stats?.sessionCount || 0) === 0) return '';
+  const t = costs.totals;
+  const row = (label, part) =>
+    part.count > 0
+      ? `<div class="kv-item"><span class="kv-key">${escapeHtml(label)}</span><span class="kv-val">${pluralize(part.count, 'file')} · ${formatBytes(part.bytes)}</span></div>`
+      : '';
+  return `
+    <div class="inspector-section">
+      <div class="inspector-section-title">Traced to a prompt</div>
+      <div class="kv-list">
+        ${row('From a session', t.traced)}
+        ${row('The app as a whole', t.appWide)}
+        ${row('Your project files', t.projects)}
+      </div>
+      <div class="inspector-note">Open Sessions on the map: each is named by the prompt that started it and shows what it cost. Caches, updates and plug-ins belong to the app as a whole, not to one prompt.</div>
+    </div>`;
+}
+
 // Lines for what was measured but not listed, so the parts add up to the total
 function measuredRows(scan) {
   const rows = [];
@@ -2004,6 +2025,7 @@ function renderGlobalInspectorSummary() {
     </div>`
         : ''
     }
+    ${traceTotalsHtml(uiState.activeState.promptCosts)}
     <div class="inspector-section">
       <div class="inspector-section-title">By cleanup risk</div>
       <div class="kv-list">${riskRows}</div>
@@ -2035,6 +2057,48 @@ function renderGlobalInspectorSummary() {
       openPermissionsModal();
     });
   }
+}
+
+const COST_PART_LABELS = {
+  output: ['Written into your projects', 'The work the session delivered. Never offered as a leftover.'],
+  scratch: ['Written elsewhere', 'Files a tool call of the session created outside your projects: screenshots, tests, temporary scripts.'],
+  kept: ['Kept by the app for it', 'Files the application stores for the session: tool results, subagent files, todo lists, debug logs.'],
+  record: ['Its own record', 'The conversation record. It links the prompt to every file here, so it is never offered with the leftovers.']
+};
+
+/* What one session (named by the prompt that started it) left behind, and what it cost
+   beyond the work it delivered. These are lower bounds: files made by commands it ran,
+   such as installs and builds, are not named in its record. */
+function sessionCostHtml(meta) {
+  const cost = meta.cost;
+  if (!meta.session || !cost) return '';
+  const rows = ['output', 'scratch', 'kept', 'record']
+    .map((part) => {
+      const p = cost.parts[part];
+      const [label, hint] = COST_PART_LABELS[part];
+      const value =
+        part === 'output' && p.count === 0 && cost.recordedOperations === 0
+          ? 'Not recorded'
+          : `${pluralize(p.count, 'file')} · ${formatBytes(p.bytes)}`;
+      return `<div class="kv-item" title="${escapeHtml(hint)}"><span class="kv-key">${escapeHtml(label)}</span><span class="kv-val">${value}</span></div>`;
+    })
+    .join('');
+  const truncated = uiState.activeState?.scan?.truncated;
+  const action = cost.possiblyRunning
+    ? `<div class="inspector-note">This session changed in the last hour or has no date, so it may still be running. Its files are not offered for removal.</div>`
+    : `<button id="select-session-leftovers-btn" class="secondary-btn" type="button">Select What It Left Behind</button>
+       <div class="inspector-note">Selects files written elsewhere and kept by the app for this session only. Its record, your project files and files shared with other sessions stay. Every file is reviewed before it moves.</div>`;
+  return `
+    <div class="inspector-section">
+      <div class="inspector-section-title">What this prompt cost</div>
+      <div class="cost-headline">
+        <span class="cost-value">${formatBytes(cost.costBytes)}</span>
+        <span class="cost-meta">at least ${pluralize(cost.costCount, 'file')} beyond its output${cost.shared > 0 ? ` · ${cost.shared} shared with other sessions` : ''}</span>
+      </div>
+      <div class="kv-list">${rows}</div>
+      <div class="inspector-note">At least: files made by commands it ran (installs, builds) are not named in its record.${truncated ? ' This scan reached the file limit, so files past it are not counted here.' : ''}</div>
+      ${action}
+    </div>`;
 }
 
 // What a kind is made of, by file type, largest first
@@ -2229,6 +2293,7 @@ function renderNodeInspector(node, trace) {
       }
     </div>
 
+    ${sessionCostHtml(meta)}
     <div id="inspector-prompt-section"></div>
 
     ${breakdownHtml(meta.breakdown)}
@@ -2255,6 +2320,22 @@ function renderNodeInspector(node, trace) {
   `;
 
   loadNodePrompts(node);
+
+  const leftoversBtn = document.getElementById('select-session-leftovers-btn');
+  if (leftoversBtn) {
+    leftoversBtn.addEventListener('click', async () => {
+      try {
+        const count = await selectByDescription({ kind: 'session-leftovers', sessionId: meta.session.id });
+        showToast(
+          count > 0
+            ? `Selected ${pluralize(count, 'file')} this session left behind. Review them before moving.`
+            : 'Nothing this session left behind can be offered for removal.'
+        );
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
+      }
+    });
+  }
 
   const folderBtn = document.getElementById('select-level-files-btn');
   if (folderBtn) {

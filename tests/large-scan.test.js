@@ -127,7 +127,7 @@ test('the UI receives summaries, selects files by description, and app-container
     // Only summaries travel to the UI
     assert.deepEqual(
       Object.keys(state).sort(),
-      ['application', 'graph', 'isDemoEnvironment', 'scan', 'workspaces']
+      ['application', 'graph', 'isDemoEnvironment', 'promptCosts', 'scan', 'workspaces']
     );
     assert.equal(state.graph.stats.artifactCount, 2);
     for (const grouping of ['byGroup', 'byFolder']) {

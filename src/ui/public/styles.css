@@ -1444,3 +1444,20 @@ button.crumb:hover {
   margin-left: 8px;
   font-size: 12px;
 }
+
+/* What a session cost */
+.cost-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 2px 0 8px;
+}
+.cost-value {
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cost-meta {
+  font-size: 12px;
+  color: var(--ink-3);
+}

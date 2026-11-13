@@ -12,6 +12,7 @@ import { CleanupEngine } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
 import { normalizeScanScope } from './platform/permissions.js';
 import { readSessionFirstPrompt, promptExcerpt } from './provenance/session-prompt.js';
+import { computePromptCosts } from './graph/prompt-costs.js';
 
 // Upper bound on files in one scan. The map and the UI stay responsive well beyond this
 // because they work from summaries; the bound keeps memory and scan time predictable.
@@ -299,6 +300,9 @@ export class ArtifactAtlasService {
       isDemoEnvironment: this.activeState.isDemoEnvironment
     };
 
+    // What each session left behind (numbers only)
+    this.activeState.promptCosts = computePromptCosts(this.activeState);
+
     return this.activeState;
   }
 
@@ -510,6 +514,7 @@ export class ArtifactAtlasService {
     if (!this.activeState.artifacts) {
       return;
     }
+    this.activeState.promptCosts = computePromptCosts(this.activeState);
     const activeArtifacts = this.activeState.artifacts.filter((a) => !a.quarantined);
     const classificationResult = this.classificationEngine.classifyArtifacts({
       artifacts: activeArtifacts,

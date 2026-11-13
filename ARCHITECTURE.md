@@ -166,6 +166,12 @@ The portable core runs unchanged on Windows; three things differ.
 
 The Windows shell is `packaging/windows/Launcher.cs`: it starts the bundled Node.js backend on a loopback port, shows the interface in Microsoft Edge or Chrome app mode with a separate profile, and stops the backend when that window closes. A second start reuses the running backend. `scripts/package-windows.ps1` downloads the official Node.js runtime, checks it against its published SHA-256, compiles the launcher with the C# compiler that ships with Windows, and writes `ArtifactAtlas-Windows.zip` with its own SHA-256.
 
+## What a prompt cost
+
+`src/graph/prompt-costs.js` runs after every scan and every cleanup. For each session it sums the files linked to it, split by how the link is known and where the file is: `output` (a tool call names it and it is in a project folder), `scratch` (a tool call names it outside every project folder), `kept` (the application keeps it for the session: the session ID is in its path, or it was derived from a file the session wrote) and `record` (the transcript and subagent transcripts). Everything but `output` is the session's cost. Totals split all listed files into traced to a session, the application as a whole, and the user's project files, counting each physical file once.
+
+The figures are lower bounds: files made by commands a session ran are not named in its record. The result holds numbers only, never conversation text. `sessionLeftoverIds` offers a finished session's `scratch` and `kept` files that belong to it alone and are not protected; the record, the output and anything of a session active in the last hour are never offered.
+
 ## Scan scope
 
 What a scan counts beyond the application's own folders is the user's choice, stored with the permissions (`scanScope` in `settings.json`) and recorded on each scan (`scan.scope`):
