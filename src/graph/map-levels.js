@@ -210,6 +210,33 @@ function fileNode(art) {
   };
 }
 
+/**
+ * Files anywhere in the scan whose name or path contains the query, optionally narrowed by
+ * cleanup risk and origin. The map shows one level at a time, so search runs over every
+ * listed file, not only the marks on screen. Largest first.
+ */
+export function searchFiles(state, { query = '', risk = 'ALL', origin = 'ALL', limit = 60 } = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  const matches = (state.artifacts || []).filter(
+    (a) =>
+      !a.quarantined &&
+      (!q || a.name.toLowerCase().includes(q) || a.canonicalPath.toLowerCase().includes(q)) &&
+      (risk === 'ALL' || a.cleanupClassification === risk) &&
+      (origin === 'ALL' || a.provenanceConfidence === origin)
+  );
+  const seen = new Set();
+  let bytes = 0;
+  for (const a of matches) {
+    const key = a.physicalInodeKey || a.canonicalPath;
+    if (!seen.has(key)) {
+      seen.add(key);
+      bytes += a.sizeBytes || 0;
+    }
+  }
+  const top = [...matches].sort((a, b) => (b.sizeBytes || 0) - (a.sizeBytes || 0)).slice(0, limit);
+  return { total: matches.length, bytes, results: top.map(fileNode), ids: matches.map((a) => a.id) };
+}
+
 function summaryNode({ id, nodeType, label, summary, drillId = null, artifactType = null, extra = {} }) {
   return {
     id,

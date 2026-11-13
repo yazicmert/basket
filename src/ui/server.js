@@ -18,7 +18,7 @@ import { findKnownAppProfile, listKnownApplicationsWithData } from '../discovery
 import { listStartMenuApplications } from '../discovery/windows-apps.js';
 import { KNOWN_APP_PREFIX } from '../discovery/application-discovery.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
-import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
+import { buildMapLevel, levelArtifactIds, searchFiles } from '../graph/map-levels.js';
 import { sessionLeftoverIds } from '../graph/prompt-costs.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
 import {
@@ -451,6 +451,10 @@ export function createAtlasServer(options = {}) {
     if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
       return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
     }
+    if (body.kind === 'search') {
+      if (!String(body.query || '').trim() && (body.risk || 'ALL') === 'ALL' && (body.origin || 'ALL') === 'ALL') return [];
+      return searchFiles(state, body).ids;
+    }
     if (body.kind === 'cell' && TREEMAP_GROUPINGS.includes(body.groupBy)) {
       const cell = (state.graph?.treemap?.[body.groupBy] || []).find((c) => c.id === body.cellId);
       if (!cell) return [];
@@ -864,6 +868,17 @@ export function createAtlasServer(options = {}) {
           artifactIds,
           summary: summarizeSelection(activeService().activeState, artifactIds)
         });
+      }
+
+      // Search over every listed file of the scan, not only the marks of the open level
+      if (url.pathname === '/api/search' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const { total, bytes, results } = searchFiles(activeService().activeState, {
+          query: body.query,
+          risk: body.risk,
+          origin: body.origin
+        });
+        return sendJson(res, 200, { ok: true, total, bytes, results });
       }
 
       if (url.pathname === '/api/map/level' && req.method === 'POST') {

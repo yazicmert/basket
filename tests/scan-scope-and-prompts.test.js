@@ -453,3 +453,29 @@ test('C2. Files of a session that may still be running are never moved, however 
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('F1. Search looks through every listed file, with the risk and origin filters', async () => {
+  const env = makeHome();
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    const { searchFiles } = await import('../src/graph/map-levels.js');
+    const byName = searchFiles(state, { query: 'IMPORTER.JS' });
+    assert.deepEqual(byName.results.map((n) => n.label), ['importer.js']);
+    assert.equal(byName.results[0].nodeType, 'ARTIFACT');
+    const byPath = searchFiles(state, { query: `${path.sep}src${path.sep}` });
+    assert.ok(byPath.total >= 2);
+    const verified = searchFiles(state, { origin: 'VERIFIED' });
+    assert.ok(verified.ids.every((id) => state.artifacts.find((a) => a.id === id).provenanceConfidence === 'VERIFIED'));
+    const protectedOnly = searchFiles(state, { risk: 'PROTECTED', query: '.js' });
+    assert.ok(protectedOnly.total > 0 && protectedOnly.results.every((n) => n.riskCategory === 'PROTECTED'));
+    const limited = searchFiles(state, { query: '', limit: 2 });
+    assert.equal(limited.results.length, 2);
+    assert.equal(limited.total, state.artifacts.length);
+    assert.ok(limited.results[0].sizeBytes >= limited.results[1].sizeBytes, 'largest first');
+    assert.equal(searchFiles(state, { query: 'no-such-file-anywhere' }).total, 0);
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

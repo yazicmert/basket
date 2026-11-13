@@ -1461,3 +1461,61 @@ button.crumb:hover {
   font-size: 12px;
   color: var(--ink-3);
 }
+
+/* Search over the whole scan */
+.search-results {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+.search-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.search-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 6px 0 10px;
+}
+.search-row {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  padding: 7px 2px;
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.search-row:hover,
+.search-row:focus-visible {
+  background: var(--surface-sunken);
+}
+.search-row-name {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-row-size {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.search-row-path {
+  grid-column: 2 / 4;
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

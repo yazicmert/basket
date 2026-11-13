@@ -1026,6 +1026,7 @@ function transitionToExplorerView() {
     `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(scanTotalBytes(state.scan))}`;
 
   renderScanNoticesBanner(state);
+  runScanSearch();
   loadMapLevel('root');
   renderGlobalInspectorSummary();
   renderTreemapView();
@@ -1058,6 +1059,9 @@ function renderScanNoticesBanner(state) {
   }
   if (state.application && state.scan.discoveredArtifactCount === 0) {
     notices.push(`No data folders were found for ${state.application.name}.`);
+  }
+  if (state.scan.status === 'CANCELLED') {
+    notices.push('You cancelled this scan. It shows only what was read before that; totals are partial. Scan again for the full picture.');
   }
   if (state.scan.truncated) {
     const over = state.scan.overflow || { fileCount: 0, physicalBytes: 0 };
@@ -2357,6 +2361,79 @@ function renderNodeInspector(node, trace) {
    EXPLORER CONTROLS, TREEMAP VIEW & QUARANTINE VAULT (Sections 6 & 9)
    ========================================================================= */
 
+/* Search and the risk and origin filters look through every file of the scan. The marks on
+   the open level are dimmed as before; the matches are listed in the details panel. */
+let scanSearchTimer = null;
+function scheduleScanSearch() {
+  clearTimeout(scanSearchTimer);
+  scanSearchTimer = setTimeout(runScanSearch, 250);
+}
+
+function scanSearchActive() {
+  return Boolean(uiState.searchQuery) || uiState.filterRisk !== 'ALL' || uiState.filterConfidence !== 'ALL';
+}
+
+async function runScanSearch() {
+  const box = document.getElementById('search-results');
+  if (!box) return;
+  if (!scanSearchActive() || !uiState.activeState) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+  const description = { query: uiState.searchQuery, risk: uiState.filterRisk, origin: uiState.filterConfidence };
+  let res;
+  try {
+    res = await apiRequest('/api/search', 'POST', description);
+  } catch (err) {
+    showToast(`Could not search: ${err.message}`);
+    return;
+  }
+  // A newer search may have started meanwhile
+  if (description.query !== uiState.searchQuery || description.risk !== uiState.filterRisk || description.origin !== uiState.filterConfidence) return;
+  box.classList.remove('hidden');
+  const rows = res.results
+    .map(
+      (n, i) => `
+      <button type="button" class="search-row" data-index="${i}">
+        <span class="legend-dot ${RISK_DOT_CLASS[n.riskCategory] || ''}"></span>
+        <span class="search-row-name">${escapeHtml(n.label)}</span>
+        <span class="search-row-size">${formatBytes(n.sizeBytes)}</span>
+        <span class="search-row-path mono">${escapeHtml(shortPath(n.metadata.canonicalPath))}</span>
+      </button>`
+    )
+    .join('');
+  box.innerHTML = `
+    <div class="inspector-section">
+      <div class="search-head">
+        <div class="inspector-section-title">${res.total === 0 ? 'No files match' : `${pluralize(res.total, 'file')} match · ${formatBytes(res.bytes)}`}</div>
+        <button type="button" class="link-btn" id="search-clear-btn">Clear</button>
+      </div>
+      ${res.total > res.results.length ? `<div class="inspector-note">Showing the ${res.results.length} largest. Narrow the search or the filters to see others.</div>` : ''}
+      <div class="search-list">${rows}</div>
+      ${res.total > 0 ? `<button id="search-select-all-btn" class="secondary-btn" type="button">Select All ${pluralize(res.total, 'File')}</button>` : ''}
+    </div>`;
+  box.querySelectorAll('.search-row').forEach((row) => {
+    row.addEventListener('click', () => selectNodeInGraph(res.results[Number(row.dataset.index)]));
+  });
+  document.getElementById('search-clear-btn').addEventListener('click', () => {
+    uiState.searchQuery = '';
+    uiState.filterRisk = 'ALL';
+    uiState.filterConfidence = 'ALL';
+    document.getElementById('graph-search-input').value = '';
+    document.getElementById('filter-risk').value = 'ALL';
+    document.getElementById('filter-confidence').value = 'ALL';
+    runScanSearch();
+  });
+  const selectAll = document.getElementById('search-select-all-btn');
+  if (selectAll) {
+    selectAll.addEventListener('click', async () => {
+      const count = await selectByDescription({ kind: 'search', ...description });
+      showToast(`Selected ${pluralize(count, 'file')}. Every file is reviewed before it moves.`);
+    });
+  }
+}
+
 function bindExplorerControls() {
   const switchTab = (tab) => {
     uiState.activeTab = tab;
@@ -2379,14 +2456,17 @@ function bindExplorerControls() {
 
   document.getElementById('graph-search-input').addEventListener('input', (e) => {
     uiState.searchQuery = e.target.value.trim();
+    scheduleScanSearch();
   });
 
   document.getElementById('filter-confidence').addEventListener('change', (e) => {
     uiState.filterConfidence = e.target.value;
+    scheduleScanSearch();
   });
 
   document.getElementById('filter-risk').addEventListener('change', (e) => {
     uiState.filterRisk = e.target.value;
+    scheduleScanSearch();
   });
 
   document.getElementById('toggle-focus-mode-btn').addEventListener('click', (e) => {
