@@ -55,7 +55,14 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     });
     const scanData = await scanRes.json();
     assert.equal(scanData.ok, true);
-    assert.ok(scanData.state.graph.nodes.length > 10);
+    assert.equal(scanData.state.graph.nodes.length, 0, 'the map is fetched level by level');
+    const rootRes = await fetch(`${baseUrl}/api/map/level`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
+      body: JSON.stringify({ levelId: 'root' })
+    });
+    const rootLevel = (await rootRes.json()).level;
+    assert.ok(rootLevel.nodes.length >= 4 && rootLevel.nodes.length <= 60);
 
     // 5. Verify /api/graph/trace on a low-risk artifact
     // The file list stays on the server; the UI asks for ids by description

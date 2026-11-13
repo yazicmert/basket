@@ -33,6 +33,8 @@
           <h2 class="dropzone-headline">Drop an app to see what it left behind.</h2>
           <p class="dropzone-subtext">
             Artifact Atlas finds the app's caches, logs, models and session files, shows where each one came from, and lets you remove them safely. The app itself is never opened.
+          
+            <br />Drag an app from the Applications folder in Finder. Apps cannot be dragged out of the Dock; pick one from the list below instead.
           </p>
         </div>
 
@@ -110,6 +112,7 @@
       <div class="explorer-split-pane">
         <div class="center-canvas-container">
           <div id="panel-graph" class="stage-panel">
+            <nav id="map-breadcrumb" class="map-breadcrumb" aria-label="Map level"></nav>
             <canvas id="knowledge-graph-canvas"></canvas>
 
             <aside class="graph-legend" aria-label="Legend">

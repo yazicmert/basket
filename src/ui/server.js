@@ -11,6 +11,7 @@ import { execFile } from 'node:child_process';
 import { describePermissions, resolveOpenTarget } from '../platform/permissions.js';
 import { findKnownAppProfile } from '../discovery/app-footprint.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
+import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -266,14 +267,12 @@ export function createAtlasServer(options = {}) {
           treemap[key] = treemap[key].map(({ artifactIds, ...cell }) => cell);
         }
       }
+      // The map is fetched level by level (/api/map/level), so the overview graph stays here
       graph = {
         ...graph,
+        nodes: [],
+        edges: [],
         treemap,
-        nodes: graph.nodes.map((node) => {
-          if (node.nodeType !== 'ARTIFACT_GROUP' || !node.metadata) return node;
-          const { artifactIds, ...metadata } = node.metadata;
-          return { ...node, metadata: { ...metadata, artifactCount: (artifactIds || []).length } };
-        })
       };
     }
     return {
@@ -301,6 +300,12 @@ export function createAtlasServer(options = {}) {
     const live = (state.artifacts || []).filter((a) => !a.quarantined);
     if (body.kind === 'safe') {
       return live.filter((a) => a.cleanupClassification === 'LOW').map((a) => a.id);
+    }
+    if (body.kind === 'level') {
+      const ids = levelArtifactIds(state, body.levelId);
+      if (!ids) return [];
+      const liveIds = new Set(live.map((a) => a.id));
+      return ids.filter((id) => liveIds.has(id));
     }
     if (body.kind === 'cell' && TREEMAP_GROUPINGS.includes(body.groupBy)) {
       const cell = (state.graph?.treemap?.[body.groupBy] || []).find((c) => c.id === body.cellId);
@@ -654,6 +659,15 @@ export function createAtlasServer(options = {}) {
           artifactIds,
           summary: summarizeSelection(activeService().activeState, artifactIds)
         });
+      }
+
+      if (url.pathname === '/api/map/level' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const level = buildMapLevel(activeService().activeState, body.levelId || 'root');
+        if (!level) {
+          return sendJson(res, 404, { ok: false, error: 'UNKNOWN_MAP_LEVEL' });
+        }
+        return sendJson(res, 200, { ok: true, level });
       }
 
       if (url.pathname === '/api/selection/summary' && req.method === 'POST') {

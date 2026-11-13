@@ -39,7 +39,8 @@ export class Scanner {
     onProgress = null,
     followInBoundarySymlinks = false,
     artificialDelayMs = 0,
-    projectRoots = []
+    projectRoots = [],
+    extraFiles = []
   }) {
     // Inside project folders, dependency and version-control folders are not listed file by
     // file: they can hold hundreds of thousands of files that no cleanup should touch one at
@@ -309,6 +310,29 @@ export class Scanner {
         continue;
       }
       await walkDirectory(root);
+    }
+
+    // Single files named by session tool calls, each checked against itself as its root so
+    // nothing beside it is reachable.
+    for (const filePath of extraFiles) {
+      if (signal?.aborted) {
+        scanRecord.status = ScanStatus.CANCELLED;
+        break;
+      }
+      if (rawEntries.length >= this.maxFiles) {
+        markTruncated();
+        break;
+      }
+      const resolved = this.platformServices.resolveRealPathSafe(filePath);
+      const check = this.platformServices.inspectEntry(resolved, [resolved]);
+      if (check.allowed && !check.isSymlink && check.lstat.isFile()) {
+        currentPath = path.dirname(resolved);
+        indexFile(resolved, path.basename(resolved), check);
+        if (rawEntries.length % 200 === 0) {
+          emitProgress();
+          await new Promise((r) => setImmediate(r));
+        }
+      }
     }
 
     if (scanRecord.status !== ScanStatus.CANCELLED) {

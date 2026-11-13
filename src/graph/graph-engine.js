@@ -183,7 +183,7 @@ export function buildFolderRollups(artifacts, { maxFolders = MAX_FOLDER_ROLLUPS 
 
 // A folder is shown as safe only when every file in it is safe. A mixed folder is "review
 // first", unless most of its files are high risk or protected.
-function summarizeRisk(risks) {
+export function summarizeRisk(risks) {
   const present = Object.keys(risks).filter((k) => risks[k] > 0);
   if (present.length === 1) return present[0];
   const total = present.reduce((sum, k) => sum + risks[k], 0);
@@ -199,6 +199,19 @@ function countBy(items, keyOf) {
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
+}
+
+function physicalTotals(artifacts) {
+  const seen = new Set();
+  let bytes = 0;
+  for (const art of artifacts) {
+    const key = art.physicalInodeKey || art.canonicalPath;
+    if (!seen.has(key)) {
+      seen.add(key);
+      bytes += art.sizeBytes || 0;
+    }
+  }
+  return { count: artifacts.length, bytes };
 }
 
 function largestOf(artifacts) {
@@ -511,6 +524,11 @@ export class GraphEngine {
         shownOperationCount: shownOperations.length,
         riskCounts: countBy(activeArtifacts, (a) => a.cleanupClassification),
         largestArtifact: largestOf(activeArtifacts),
+        // The application's own folders versus files inside project folders
+        scopeTotals: {
+          appData: physicalTotals(activeArtifacts.filter((a) => !a.workspaceId)),
+          projects: physicalTotals(activeArtifacts.filter((a) => a.workspaceId))
+        },
         verifiedArtifactCount: activeArtifacts.filter(
           (a) => a.provenanceConfidence === ProvenanceConfidence.VERIFIED
         ).length,
