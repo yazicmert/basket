@@ -191,6 +191,9 @@ export class ArtifactAtlasService {
     }
 
     const workspaces = Array.from(workspacesByPath.values());
+    // A session that ran in the home folder (or above it) names no project: files there are
+    // the application's, not the user's project. Only real project folders count as projects.
+    const projectWorkspaces = workspaces.filter((ws) => this.isWalkableProjectFolder(ws.canonicalPath));
     // Recorded files are authorized one by one, so cleanup can reach them and nothing next to them
     const authorizedRoots = Array.from(new Set([...candidateRoots, ...recordedFiles]));
     const walkRoots = Array.from(new Set(candidateRoots));
@@ -200,7 +203,7 @@ export class ArtifactAtlasService {
       applicationId: application ? application.id : null,
       authorizedRoots: walkRoots,
       extraFiles: Array.from(recordedFiles),
-      projectRoots: workspaces.map((ws) => ws.canonicalPath),
+      projectRoots: projectWorkspaces.map((ws) => ws.canonicalPath),
       bulkDirectoryMode: scope.dependencyFolders ? 'measure' : 'skip',
       signal,
       artificialDelayMs,
@@ -232,7 +235,7 @@ export class ArtifactAtlasService {
       rawEntries,
       scanId: scan.id,
       applicationId: application ? application.id : null,
-      workspaces
+      workspaces: projectWorkspaces
     });
 
     // Resolve provenance links (VERIFIED, INFERRED, UNKNOWN) & multi-session sharing

@@ -962,7 +962,9 @@ async function executeScan({ bundlePath, workspacePath }) {
             scanViz.visit(prog.currentPath, prog.discoveredArtifactCount);
           }
           document.getElementById('scan-metric-roots').textContent = String(prog.scannedLocationsCount);
-          document.getElementById('scan-metric-count').textContent = String(prog.discoveredArtifactCount);
+          document.getElementById('scan-metric-count').textContent = String(
+            (prog.discoveredArtifactCount || 0) + (prog.measuredFileCount || 0)
+          );
           document.getElementById('scan-metric-bytes').textContent = formatBytes(
             (prog.totalPhysicalBytes || 0) + (prog.measuredPhysicalBytes || 0)
           );
@@ -989,8 +991,9 @@ async function executeScan({ bundlePath, workspacePath }) {
 
     document.getElementById('scan-metric-roots').textContent =
       String(res.state.scan.scannedLocationsCount);
-    document.getElementById('scan-metric-count').textContent =
-      String(res.state.scan.discoveredArtifactCount);
+    document.getElementById('scan-metric-count').textContent = String(
+      res.state.scan.discoveredArtifactCount + (res.state.scan.measuredFileCount || 0)
+    );
     document.getElementById('scan-metric-bytes').textContent =
       formatBytes(scanTotalBytes(res.state.scan));
 
@@ -1896,7 +1899,7 @@ function summarizeScan() {
       { key: 'LOW', count: countByRisk.LOW, bytes: tm.reclaimablePhysicalBytes || 0 },
       { key: 'REVIEW', count: countByRisk.REVIEW, bytes: tm.reviewPhysicalBytes || 0 },
       { key: 'HIGH', count: countByRisk.HIGH, bytes: tm.highRiskPhysicalBytes || 0 },
-      { key: 'PROTECTED', count: countByRisk.PROTECTED, bytes: null }
+      { key: 'PROTECTED', count: countByRisk.PROTECTED, bytes: tm.protectedOrUncertainPhysicalBytes ?? null }
     ],
     origins: [
       { key: 'VERIFIED', label: 'Recorded by a session', count: g.stats.verifiedArtifactCount },
@@ -2359,7 +2362,7 @@ function renderTreemapView() {
     <div class="size-totals">
       <div class="size-total">
         <span class="metric-value">${formatBytes(tm.totalPhysicalBytes)}</span>
-        <span class="metric-label">Total</span>
+        <span class="metric-label">${uiState.activeState?.scan?.measuredPhysicalBytes > 0 ? `Listed files (plus ${formatBytes(uiState.activeState.scan.measuredPhysicalBytes)} measured)` : 'Total'}</span>
       </div>
       <div class="size-total">
         <span class="metric-value">${formatBytes(tm.reclaimablePhysicalBytes)}</span>

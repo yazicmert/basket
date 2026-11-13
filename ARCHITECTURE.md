@@ -171,4 +171,9 @@ The Windows shell is `packaging/windows/Launcher.cs`: it starts the bundled Node
 What a scan counts beyond the application's own folders is the user's choice, stored with the permissions (`scanScope` in `settings.json`) and recorded on each scan (`scan.scope`):
 
 - `projectFolders` off (default): inside the project folders named by session transcripts, only files named by tool calls are read. On: those folders are walked in full, except the home folder, a folder containing it, a drive root or a protected path (reported in `scan.scope.projectFoldersLeftOut`).
-- `dependencyFolders` off (default): `node_modules`, `.git` and similar folders inside project folders are skipped and reported.
+- `dependencyFolders` off (default): `node_modules`, `.git` and similar folders inside project folders are not read; they are reported as skipped. On: each is measured as a whole (`scan.bulkFolders`: file count and size), never listed as artifacts, never selectable and never cleaned up. The map shows them under one mark that opens by project.
+- Only real project folders are projects. A session that ran in the home folder or above it names no project, so files there keep their own classification and are counted as the application's.
+
+Past the file limit (`DEFAULT_MAX_FILES`), files are measured into `scan.overflow` but not listed, so the total stays complete. Listed bytes (`scan.totalPhysicalBytes`) and measured bytes (`scan.measuredPhysicalBytes`) are kept apart, and a hardlinked file is counted once across both. Measuring keeps nothing per file except the inode of files with more than one link.
+
+Files in a project folder that no other classification rule matches are user content: protected without a recorded origin, kept for review otherwise.

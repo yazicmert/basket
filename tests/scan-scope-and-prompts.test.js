@@ -135,6 +135,14 @@ test('S2. Scan scope: the home folder and folders above it are never walked as a
     const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
     assert.deepEqual(state.scan.scope.projectFoldersLeftOut, [env.home]);
     assert.ok(!state.artifacts.some((a) => a.name === 'private-notes.txt'));
+    // Nothing under the home folder becomes a project file, and the application's own
+    // folders are listed as its own, not as project content
+    // (the subagent's transcript still names the real project, which stays a project)
+    const inProjects = state.artifacts.filter((a) => a.workspaceId);
+    assert.ok(inProjects.length > 0);
+    assert.ok(inProjects.every((a) => a.canonicalPath.startsWith(env.project + path.sep)));
+    assert.ok(state.artifacts.filter((a) => a.canonicalPath.includes(`${path.sep}.claude${path.sep}`)).every((a) => !a.workspaceId));
+    assert.equal(state.graph.stats.scopeTotals.projects.count, inProjects.length);
   } finally {
     service.sqliteStore.close();
     fs.rmSync(env.root, { recursive: true, force: true });

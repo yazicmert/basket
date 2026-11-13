@@ -187,8 +187,8 @@ export class Scanner {
       // though the listing is not
       if (rawEntries.length >= this.maxFiles) {
         markTruncated();
+        // A folder is walked once, so a file past the limit is met once; nothing is kept per file
         if ((lstat.mode & 0o400) !== 0) {
-          indexedFilePaths.add(check.canonicalPath);
           measureFile(lstat, scanRecord.overflow);
         }
         return;
