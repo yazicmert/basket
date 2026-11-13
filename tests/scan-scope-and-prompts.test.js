@@ -423,3 +423,33 @@ test('C1. What a prompt cost: output, scratch, files kept for it and its record,
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('C2. Files of a session that may still be running are never moved, however they are selected', async () => {
+  const env = makeHome();
+  const scratch = path.join(env.home, 'scratch', 'probe.png');
+  fs.mkdirSync(path.dirname(scratch), { recursive: true });
+  fs.writeFileSync(scratch, 'x'.repeat(500));
+  const base = { sessionId: 'sess-one', cwd: env.project, timestamp: '2026-11-01T10:00:00.000Z' };
+  fs.appendFileSync(env.transcript, JSON.stringify({ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Write', input: { file_path: scratch } }] } }) + '\n');
+  // The transcript was just written: the session may still be running
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', quarantineRoot: path.join(env.root, 'vault') });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const probe = state.artifacts.find((a) => a.name === 'probe.png');
+    assert.equal(state.promptCosts.sessions[state.sessions[0].id].possiblyRunning, true);
+    const review = service.prepareCleanupReview([probe.id]);
+    assert.equal(review.eligibleItems.length, 0);
+    assert.deepEqual(review.blockedItems.map((b) => b.code), ['SESSION_MAY_BE_RUNNING']);
+    assert.equal(review.totalBlockedCount, 1);
+    const result = service.executeQuarantine({ artifactIds: [probe.id], confirmationToken: review.confirmationToken });
+    assert.equal((result.quarantinedEntries || []).length, 0);
+    assert.ok(fs.existsSync(scratch), 'the file is still where it was');
+  } catch (err) {
+    // A refused confirmation is also a refusal to move
+    if (!/EXPLICIT_CONFIRMATION_REQUIRED/.test(err.message)) throw err;
+    assert.ok(fs.existsSync(scratch));
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
