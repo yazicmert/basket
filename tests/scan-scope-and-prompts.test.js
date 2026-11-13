@@ -366,8 +366,15 @@ test('C1. What a prompt cost: output, scratch, files kept for it and its record,
   const kept = path.join(path.dirname(env.transcript), 'sess-one', 'tool-results', 'result.txt');
   fs.mkdirSync(path.dirname(kept), { recursive: true });
   fs.writeFileSync(kept, 'r'.repeat(700));
+  // A file it only read, and an existing file outside any project that it edited
+  const readOnly = path.join(env.home, 'notes', 'plan.md');
+  fs.mkdirSync(path.dirname(readOnly), { recursive: true });
+  fs.writeFileSync(readOnly, 'my own notes');
+  const dotfile = path.join(env.home, '.zshrc');
+  fs.writeFileSync(dotfile, 'export X=1');
   const base = { sessionId: 'sess-one', cwd: env.project, timestamp: '2026-11-01T10:00:00.000Z' };
-  fs.appendFileSync(env.transcript, JSON.stringify({ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Write', input: { file_path: scratch } }] } }) + '\n');
+  const call = (name, file) => JSON.stringify({ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name, input: { file_path: file } }] } });
+  fs.appendFileSync(env.transcript, [call('Write', scratch), call('Read', readOnly), call('Read', env.transcript.replace('sess-one.jsonl', 'nope')), call('Edit', dotfile)].join('\n') + '\n');
   // Nothing has changed for a day: the session is finished
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
   for (const f of [env.transcript, kept, path.join(path.dirname(env.transcript), 'sess-one', 'subagents', 'agent-1.jsonl')]) fs.utimesSync(f, dayAgo, dayAgo);
@@ -377,10 +384,12 @@ test('C1. What a prompt cost: output, scratch, files kept for it and its record,
     const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
     const session = state.sessions[0];
     const cost = state.promptCosts.sessions[session.id];
+    // Reading a file does not make it the session's (AGENTS.md rule 3); its own notes are not listed
+    assert.ok(!state.artifacts.some((a) => a.name === 'plan.md'), 'a file the session only read is not part of the scan');
     assert.deepEqual(
       Object.fromEntries(Object.entries(cost.parts).map(([k, v]) => [k, v.count])),
-      { output: 1, scratch: 1, kept: 1, record: 2 },
-      'importer.js; the screenshot; the tool result; the transcript and the subagent transcript'
+      { output: 2, scratch: 1, kept: 1, record: 2 },
+      'importer.js and the edited .zshrc; the screenshot; the tool result; the transcript and the subagent transcript'
     );
     assert.equal(cost.parts.scratch.bytes, 2000);
     assert.equal(cost.costCount, 4);
@@ -397,7 +406,7 @@ test('C1. What a prompt cost: output, scratch, files kept for it and its record,
     const { sessionLeftoverIds, computePromptCosts } = await import('../src/graph/prompt-costs.js');
     const names = sessionLeftoverIds(state, session.id, state.promptCosts).map((id) => state.artifacts.find((a) => a.id === id).name).sort();
     assert.ok(names.includes('screenshot.png') && names.includes('result.txt'), names.join(', '));
-    assert.ok(!names.includes('importer.js') && !names.includes('sess-one.jsonl') && !names.includes('agent-1.jsonl'), names.join(', '));
+    assert.ok(!['importer.js', 'sess-one.jsonl', 'agent-1.jsonl', '.zshrc', 'plan.md'].some((n) => names.includes(n)), names.join(', '));
 
     // A session that changed in the last hour may still be running: nothing is offered
     const running = computePromptCosts(state, { now: Date.parse(cost.lastActiveAt) + 60 * 1000 });

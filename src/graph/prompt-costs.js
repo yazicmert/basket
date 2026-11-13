@@ -6,8 +6,9 @@ import { ArtifactType, RiskCategory } from '../models/entities.js';
  * A session is named on the map by the prompt that started it. Its files are split by how
  * the link is known and where the file is:
  *
- *   output   a tool call of the session names the file, and it is in a project folder
- *   scratch  a tool call names the file, and it is outside every project folder
+ *   output   a tool call of the session wrote the file in a project folder, or changed a
+ *            file that already existed elsewhere (the work it delivered)
+ *   scratch  a tool call of the session created the file outside every project folder
  *            (screenshots, test files, temporary scripts)
  *   kept     the application keeps the file for the session (its ID is in the path:
  *            tool results, subagent records, todo lists, debug logs) or it was derived
@@ -24,11 +25,21 @@ export const COST_PARTS = ['output', 'scratch', 'kept', 'record'];
 /** A session counts as possibly running when its record changed this recently. */
 export const ACTIVE_SESSION_WINDOW_MS = 60 * 60 * 1000;
 
-function partOf(art) {
+/** Whether a session's tool call created the file (rather than changed an existing one). */
+function createdBySession(art, opTypeById) {
+  return (art.operationIds || []).some((id) => opTypeById.get(id) === 'WRITE');
+}
+
+// Only write-type tool calls give a file operationIds (see WRITE_OPERATION_TYPES)
+function partOf(art, opTypeById) {
   if (art.artifactType === ArtifactType.SESSION_HISTORY && !art.workspaceId) return 'record';
-  if ((art.operationIds || []).length > 0) return art.workspaceId ? 'output' : 'scratch';
+  if ((art.operationIds || []).length > 0) {
+    return !art.workspaceId && createdBySession(art, opTypeById) ? 'scratch' : 'output';
+  }
   return 'kept';
 }
+
+const operationTypes = (state) => new Map((state.operations || []).map((op) => [op.id, op.operationType]));
 
 const emptyPart = () => ({ count: 0, bytes: 0 });
 
@@ -42,6 +53,7 @@ export function computePromptCosts(state, { now = Date.now() } = {}) {
   const live = (state.artifacts || []).filter((a) => !a.quarantined);
   const sessions = state.sessions || [];
   const known = new Set(sessions.map((s) => s.id));
+  const opTypeById = operationTypes(state);
   const perSession = {};
   for (const s of sessions) {
     perSession[s.id] = {
@@ -70,7 +82,7 @@ export function computePromptCosts(state, { now = Date.now() } = {}) {
     totals.all.count += 1;
     totals.all.bytes += bytes;
 
-    const part = partOf(art);
+    const part = partOf(art, opTypeById);
     for (const sid of sids) {
       const entry = perSession[sid];
       entry.parts[part].count += 1;
@@ -97,21 +109,34 @@ export function computePromptCosts(state, { now = Date.now() } = {}) {
 
 /**
  * Files that "remove this session's leftovers" may offer: linked to this session only, not
- * the work it delivered into a project, not a session record (removing it would drop the
- * prompt and every link of the session), and not protected. Nothing is offered for a
- * session that may still be running. The cleanup review still checks every file.
+ * in a project folder, not its output (files it changed that existed before), not a session
+ * record (removing it would drop the prompt and every link of the session), and not
+ * protected. A file it created must not be older than the session. Nothing is offered for
+ * a session that may still be running. The cleanup review still checks every file.
  */
 export function sessionLeftoverIds(state, sessionId, costs) {
   const entry = costs.sessions[sessionId];
   if (!entry || entry.possiblyRunning) return [];
+  const session = (state.sessions || []).find((s) => s.id === sessionId);
+  const startedAt = Date.parse(session?.startedAt || '');
+  const opTypeById = operationTypes(state);
   return (state.artifacts || [])
-    .filter(
-      (art) =>
-        !art.quarantined &&
-        (art.sessionIds || []).length === 1 &&
-        art.sessionIds[0] === sessionId &&
-        art.cleanupClassification !== RiskCategory.PROTECTED &&
-        ['scratch', 'kept'].includes(partOf(art))
-    )
+    .filter((art) => {
+      if (
+        art.quarantined ||
+        art.workspaceId ||
+        (art.sessionIds || []).length !== 1 ||
+        art.sessionIds[0] !== sessionId ||
+        art.cleanupClassification === RiskCategory.PROTECTED
+      ) {
+        return false;
+      }
+      const part = partOf(art, opTypeById);
+      if (part === 'kept') return true;
+      if (part !== 'scratch') return false;
+      // Narrowing only: a file born well before the session started was not made by it
+      const born = Date.parse(art.createdAt || '');
+      return !(Number.isFinite(born) && Number.isFinite(startedAt) && born < startedAt - 60 * 1000);
+    })
     .map((art) => art.id);
 }

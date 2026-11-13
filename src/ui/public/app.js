@@ -2060,8 +2060,8 @@ function renderGlobalInspectorSummary() {
 }
 
 const COST_PART_LABELS = {
-  output: ['Written into your projects', 'The work the session delivered. Never offered as a leftover.'],
-  scratch: ['Written elsewhere', 'Files a tool call of the session created outside your projects: screenshots, tests, temporary scripts.'],
+  output: ['Its output', 'Files it wrote into your projects, and existing files it changed. The work it delivered; never offered as a leftover.'],
+  scratch: ['Created elsewhere', 'Files a tool call of the session created outside your projects: screenshots, tests, temporary scripts.'],
   kept: ['Kept by the app for it', 'Files the application stores for the session: tool results, subagent files, todo lists, debug logs.'],
   record: ['Its own record', 'The conversation record. It links the prompt to every file here, so it is never offered with the leftovers.']
 };
@@ -2087,7 +2087,7 @@ function sessionCostHtml(meta) {
   const action = cost.possiblyRunning
     ? `<div class="inspector-note">This session changed in the last hour or has no date, so it may still be running. Its files are not offered for removal.</div>`
     : `<button id="select-session-leftovers-btn" class="secondary-btn" type="button">Select What It Left Behind</button>
-       <div class="inspector-note">Selects files written elsewhere and kept by the app for this session only. Its record, your project files and files shared with other sessions stay. Every file is reviewed before it moves.</div>`;
+       <div class="inspector-note">Selects files it created outside your projects and files the app keeps for this session only. Its record, your project files and files shared with other sessions stay. Every file is reviewed before it moves.</div>`;
   return `
     <div class="inspector-section">
       <div class="inspector-section-title">What this prompt cost</div>

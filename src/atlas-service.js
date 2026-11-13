@@ -10,6 +10,7 @@ import { ClassificationEngine } from './classification/classification-engine.js'
 import { GraphEngine } from './graph/graph-engine.js';
 import { CleanupEngine } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
+import { WRITE_OPERATION_TYPES } from './models/entities.js';
 import { normalizeScanScope } from './platform/permissions.js';
 import { readSessionFirstPrompt, promptExcerpt } from './provenance/session-prompt.js';
 import { computePromptCosts } from './graph/prompt-costs.js';
@@ -163,7 +164,14 @@ export class ArtifactAtlasService {
     const recordedFiles = new Set();
     for (const op of parsedRecords.operations) {
       const target = op.targetPath;
-      if (typeof target !== 'string' || !path.isAbsolute(target) || recordedFiles.size >= MAX_RECORDED_FILES) {
+      // Only files a session wrote are read in project folders; a file it only read is the
+      // user's own and is not part of the application's footprint
+      if (
+        typeof target !== 'string' ||
+        !path.isAbsolute(target) ||
+        !WRITE_OPERATION_TYPES.has(op.operationType) ||
+        recordedFiles.size >= MAX_RECORDED_FILES
+      ) {
         continue;
       }
       const resolved = path.resolve(target);

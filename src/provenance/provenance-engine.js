@@ -5,7 +5,8 @@ import {
   ProvenanceConfidence,
   createEvidenceModel,
   createProvenanceEdgeModel,
-  stableId
+  stableId,
+  WRITE_OPERATION_TYPES
 } from '../models/entities.js';
 
 export class ProvenanceEngine {
@@ -29,7 +30,8 @@ export class ProvenanceEngine {
     // Index operations by canonical targetPath
     const opsByTargetPath = new Map();
     for (const op of operations) {
-      if (!op.targetPath) {
+      // Only tool calls that write a file link it to a session; reading it does not
+      if (!op.targetPath || !WRITE_OPERATION_TYPES.has(op.operationType)) {
         continue;
       }
       const list = opsByTargetPath.get(op.targetPath) || [];

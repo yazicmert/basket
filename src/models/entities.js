@@ -40,6 +40,12 @@ export const ProvenanceConfidence = Object.freeze({
 });
 
 /**
+ * Tool calls that write a file. Only these make a file's origin VERIFIED: a session that
+ * read, listed or searched a file did not produce it (AGENTS.md rule 3).
+ */
+export const WRITE_OPERATION_TYPES = Object.freeze(new Set(['WRITE', 'EDIT', 'PATCH']));
+
+/**
  * Rule-based Artifact Classification Types (Section 8)
  */
 export const ArtifactType = Object.freeze({
