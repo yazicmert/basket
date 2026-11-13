@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dependency and Git folders — Artifact Atlas</title>
+<meta name="description" content="Whether an Artifact Atlas scan lists node_modules, .git, virtual environments and similar folders inside project folders." />
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png" />
+<link rel="stylesheet" href="../../style.css?v=7" />
+</head>
+<body class="doc">
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="../../">
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+        <line x1="5" y1="14" x2="10" y2="5" /><line x1="5" y1="14" x2="15.5" y2="12" stroke-dasharray="2.2 1.8" />
+        <circle cx="5" cy="14" r="3" fill="currentColor" /><circle cx="10" cy="5" r="2" fill="var(--surface)" /><circle cx="15.5" cy="12" r="2" fill="var(--surface)" />
+      </svg>
+      Artifact Atlas
+    </a>
+    <nav class="topnav" aria-label="Site">
+      <a class="optional" href="../../#install">Install</a>
+      <a href="../../permissions/" aria-current="page">Permissions</a>
+      <a href="https://github.com/yazicmert/basket">GitHub</a>
+    </nav>
+  </div>
+</div>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Dependency and Git folders</nav>
+  <h1 class="page-title">Dependency and Git folders</h1>
+  <p><span class="tag req">Optional</span><span class="tag">Asked inside Artifact Atlas</span></p>
+
+  <h2>What it is</h2>
+  <p>A choice about what a scan counts, made inside Artifact Atlas. It is asked before the first scan of a real application and can be changed at any time in the <strong>Permissions</strong> window. It is off until you turn it on.</p>
+  <h2>Which folders</h2>
+  <p>Inside project folders, these are skipped by default: <code>node_modules</code>, <code>bower_components</code>, <code>.pnpm-store</code>, <code>.git</code>, <code>.hg</code>, <code>.svn</code>, <code>.venv</code>, <code>venv</code>, <code>Pods</code> and <code>.gradle</code>. Folders that belong to the application itself are always scanned in full.</p>
+  <h2>Why they are left out by default</h2>
+  <ul>
+    <li>They can hold hundreds of thousands of files, which makes a scan slow and can reach the limit of 300,000 files per scan. A scan that stops at the limit is marked as partial.</li>
+    <li>Nothing in them should be removed one file at a time. Dependencies are reinstalled by your package manager; Git data is your history.</li>
+  </ul>
+  <p>When they are left out, the scan tells you how many such folders it skipped.</p>
+  <h2>When to include them</h2>
+  <p>Include them when you want the total to match what the project folders occupy on disk. It has an effect only where a project folder is walked: with <a href="../project-folders/">whole project folders</a> included, or for a folder you scan yourself.</p>
+  <h2>What never happens</h2>
+  <ul>
+    <li>Git data is always protected and is never offered for cleanup.</li>
+    <li>Listing a dependency folder does not mark its files safe to remove.</li>
+  </ul>
+  <h2>How to change it</h2>
+  <ol>
+    <li>Open <strong>Permissions</strong> in the top bar.</li>
+    <li>Under <em>What a scan counts</em>, click <strong>Include</strong> or <strong>Leave Out</strong> on <em>Dependency and Git folders</em>.</li>
+    <li>Scan the application again.</li>
+  </ol>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <span>Artifact Atlas · MIT licensed</span>
+    <nav aria-label="Project">
+      <a href="../../">Home</a>
+      <a href="../../permissions/">All permissions</a>
+      <a href="https://github.com/yazicmert/basket">Source on GitHub</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

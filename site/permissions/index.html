@@ -8,7 +8,7 @@
 <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
-<link rel="stylesheet" href="../style.css?v=5" />
+<link rel="stylesheet" href="../style.css?v=7" />
 </head>
 <body class="doc">
 <div class="topbar">
@@ -30,11 +30,12 @@
 <main>
   <nav class="crumbs"><a href="../">Artifact Atlas</a> / Permissions</nav>
   <h1 class="page-title">Permissions</h1>
-  <p class="lead">Artifact Atlas reads nothing from your disk until you allow it. These are the four permissions involved, each with its own page.</p>
+  <p class="lead">Artifact Atlas reads nothing from your disk until you allow it. The first scan of a real application asks for what it needs, and everything can be changed later in the <strong>Permissions</strong> window. Each permission has its own page.</p>
+  <h2>Access</h2>
   <ul class="perm-list">
     <li><a class="card" href="home-folder-scan/"><h3>Scan my home folder</h3>
       <p><span class="tag req">Required for real scans</span><span class="tag">Asked inside Artifact Atlas</span></p>
-      <p>The in-app consent that lets Artifact Atlas scan the data folders of the applications on your Mac.</p></a></li>
+      <p>The in-app consent that lets Artifact Atlas scan the data folders of the applications on your Mac or PC.</p></a></li>
     <li><a class="card" href="full-disk-access/"><h3>Full Disk Access</h3>
       <p><span class="tag req">Recommended</span><span class="tag">macOS privacy setting</span></p>
       <p>Why Artifact Atlas recommends macOS Full Disk Access and how to grant or remove it.</p></a></li>
@@ -44,6 +45,16 @@
     <li><a class="card" href="files-and-folders/"><h3>Desktop, Documents and Downloads</h3>
       <p><span class="tag req">Asked by macOS when needed</span><span class="tag">macOS privacy prompt</span></p>
       <p>The macOS prompts for Desktop, Documents and Downloads, and when Artifact Atlas triggers them.</p></a></li>
+  </ul>
+  <p class="note">Full Disk Access and the two macOS prompts exist only on macOS. On Windows the home folder consent is the only access permission.</p>
+  <h2>What a scan counts</h2>
+  <ul class="perm-list">
+    <li><a class="card" href="project-folders/"><h3>Whole project folders</h3>
+      <p><span class="tag req">Optional</span><span class="tag">Asked inside Artifact Atlas</span></p>
+      <p>Whether a scan counts every file in the project folders a session worked in, or only the files its tool calls named.</p></a></li>
+    <li><a class="card" href="dependency-folders/"><h3>Dependency and Git folders</h3>
+      <p><span class="tag req">Optional</span><span class="tag">Asked inside Artifact Atlas</span></p>
+      <p>Whether node_modules, .git, virtual environments and similar folders inside project folders are listed too.</p></a></li>
   </ul>
   <h2>What Artifact Atlas does not ask for</h2>
   <ul>

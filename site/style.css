@@ -2096,3 +2096,18 @@ button.demo-crumb:hover {
     padding-top: 28px;
   }
 }
+
+/* Install: one block per system */
+h3.platform {
+  margin: 28px 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+h3.platform:first-child {
+  margin-top: 0;
+}
+h3.platform span {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--ink-3);
+}

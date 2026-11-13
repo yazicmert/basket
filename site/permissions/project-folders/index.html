@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Whole project folders — Artifact Atlas</title>
+<meta name="description" content="Whether an Artifact Atlas scan counts every file in the project folders an AI session worked in, or only the files its tool calls named." />
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png" />
+<link rel="stylesheet" href="../../style.css?v=7" />
+</head>
+<body class="doc">
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="../../">
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+        <line x1="5" y1="14" x2="10" y2="5" /><line x1="5" y1="14" x2="15.5" y2="12" stroke-dasharray="2.2 1.8" />
+        <circle cx="5" cy="14" r="3" fill="currentColor" /><circle cx="10" cy="5" r="2" fill="var(--surface)" /><circle cx="15.5" cy="12" r="2" fill="var(--surface)" />
+      </svg>
+      Artifact Atlas
+    </a>
+    <nav class="topnav" aria-label="Site">
+      <a class="optional" href="../../#install">Install</a>
+      <a href="../../permissions/" aria-current="page">Permissions</a>
+      <a href="https://github.com/yazicmert/basket">GitHub</a>
+    </nav>
+  </div>
+</div>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Permissions</a> / Whole project folders</nav>
+  <h1 class="page-title">Whole project folders</h1>
+  <p><span class="tag req">Optional</span><span class="tag">Asked inside Artifact Atlas</span></p>
+
+  <h2>What it is</h2>
+  <p>A choice about what a scan counts, made inside Artifact Atlas. It is asked before the first scan of a real application and can be changed at any time in the <strong>Permissions</strong> window. It is off until you turn it on.</p>
+  <h2>Why it exists</h2>
+  <p>Claude Code, Cursor and Codex work inside your project folders. A session's record says which folder it ran in and which files its tool calls wrote. There are two honest ways to count that folder:</p>
+  <ul>
+    <li><strong>Left out (default):</strong> only the files a session's tool calls named are counted in a project folder. The total is what the app and its sessions demonstrably produced.</li>
+    <li><strong>Included:</strong> every file in those project folders is counted. The total is much larger, and most of it is your own work: source code, assets, build output.</li>
+  </ul>
+  <p>This is the most common reason two scans of the same application show very different totals. A scan that included whole project folders can easily be twice the size of one that did not. The details panel says which way the current scan was counted, and shows the app's own folders and project folders as separate lines.</p>
+  <h2>What is read</h2>
+  <p>With this on: names, sizes and timestamps of every file in the project folders that the application's sessions name. File contents are not read. Dependency and Git folders stay out unless you also include <a href="../dependency-folders/">dependency and Git folders</a>.</p>
+  <h2>What never happens</h2>
+  <ul>
+    <li>Your home folder itself, a folder that contains it, or a whole drive is never walked as a project, even when a session ran there. Such folders are reported as left out.</li>
+    <li>Counting a file does not make it removable. Source code, Git data and files without a recorded origin are never marked safe to remove.</li>
+    <li>Credential folders and system folders stay excluded.</li>
+  </ul>
+  <h2>How to change it</h2>
+  <ol>
+    <li>Open <strong>Permissions</strong> in the top bar.</li>
+    <li>Under <em>What a scan counts</em>, click <strong>Include</strong> or <strong>Leave Out</strong> on <em>Whole project folders</em>.</li>
+    <li>Scan the application again. The change applies to the next scan.</li>
+  </ol>
+  <h2>A single folder instead</h2>
+  <p>To look at one project without changing this setting, use <strong>Scan a project folder</strong> on the start screen. A folder you pick yourself is always counted in full.</p>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <span>Artifact Atlas · MIT licensed</span>
+    <nav aria-label="Project">
+      <a href="../../">Home</a>
+      <a href="../../permissions/">All permissions</a>
+      <a href="https://github.com/yazicmert/basket">Source on GitHub</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

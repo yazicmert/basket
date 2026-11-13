@@ -286,7 +286,7 @@ test('L6. Permissions: status model, allowlisted open targets, and per-permissio
   const home = createTempHome();
   try {
     const linux = describePermissions({ platform: 'linux', homeDir: home.dir });
-    assert.deepEqual(linux.map((p) => p.id), ['home-folder-scan', 'full-disk-access', 'app-data', 'files-and-folders']);
+    assert.deepEqual(linux.map((p) => p.id), ['home-folder-scan', 'full-disk-access', 'app-data', 'files-and-folders', 'project-folders', 'dependency-folders']);
     assert.equal(linux[0].status, PermissionStatus.NOT_GRANTED);
     assert.equal(linux[1].status, PermissionStatus.NOT_APPLICABLE);
 
