@@ -33,12 +33,20 @@ function makeHome() {
   const transcripts = path.join(home, '.claude', 'projects', 'importer');
   fs.mkdirSync(transcripts, { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{}');
+  // A subagent's transcript carries the parent's session ID and sorts before the main one
+  const subagents = path.join(transcripts, 'sess-one', 'subagents');
+  fs.mkdirSync(subagents, { recursive: true });
+  fs.writeFileSync(
+    path.join(subagents, 'agent-1.jsonl'),
+    JSON.stringify({ sessionId: 'sess-one', isSidechain: true, type: 'user', cwd: project, timestamp: '2026-11-01T10:05:00.000Z', message: { role: 'user', content: 'Subagent task text' } }) + '\n'
+  );
   const transcript = path.join(transcripts, 'sess-one.jsonl');
   const base = { sessionId: 'sess-one', cwd: project, timestamp: '2026-11-01T10:00:00.000Z' };
   fs.writeFileSync(
     transcript,
     [
       JSON.stringify({ ...base, type: 'user', isMeta: true, message: { role: 'user', content: 'Caveat: meta text' } }),
+      JSON.stringify({ ...base, type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation.' } }),
       JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: `<command-name>/init</command-name>` } }),
       JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: [{ type: 'text', text: PROMPT }] } }),
       JSON.stringify({
@@ -77,9 +85,29 @@ test('S1. Scan scope: project folders are counted in full only when the user inc
       bundlePath: env.bundle,
       scanScope: { projectFolders: true, dependencyFolders: true }
     });
-    assert.ok(inProject(everything).includes(path.join('node_modules', 'left-pad', 'index.js')));
-    assert.ok(inProject(everything).includes(path.join('.git', 'HEAD')));
+    // Dependency and Git folders are measured as a whole, never listed file by file
+    assert.ok(!inProject(everything).some((rel) => rel.startsWith('node_modules') || rel.startsWith('.git')));
     assert.equal(everything.scan.skippedBulkDirectories.length, 0);
+    const measured = Object.fromEntries(everything.scan.bulkFolders.map((f) => [f.name, f]));
+    assert.deepEqual(Object.keys(measured).sort(), ['.git', 'node_modules']);
+    assert.equal(measured.node_modules.fileCount, 1);
+    assert.equal(measured.node_modules.physicalBytes, 9000);
+    assert.equal(measured.node_modules.projectRoot, env.project);
+    assert.equal(everything.scan.measuredPhysicalBytes, 9000 + measured['.git'].physicalBytes);
+    // The listed total is unchanged by the measured folders
+    assert.equal(everything.scan.totalPhysicalBytes, whole.scan.totalPhysicalBytes);
+    // On the map they are one mark that opens by project; nothing in them can be selected
+    const { buildMapLevel, levelArtifactIds } = await import('../src/graph/map-levels.js');
+    const root = buildMapLevel(everything, 'root');
+    const mark = root.nodes.find((n) => n.id === 'measured');
+    assert.equal(mark.metadata.summary.bytes, everything.scan.measuredPhysicalBytes);
+    const byProject = buildMapLevel(everything, 'measured');
+    const project = byProject.nodes.find((n) => n.drillId === `measured:${env.project}`);
+    const inside = buildMapLevel(everything, project.drillId);
+    assert.deepEqual(inside.nodes.slice(1).map((n) => n.label).sort(), ['.git', 'node_modules']);
+    assert.ok(inside.nodes.every((n) => n.metadata.measuredOnly && n.nodeType !== 'ARTIFACT'));
+    for (const id of ['measured', project.drillId]) assert.deepEqual(levelArtifactIds(everything, id), []);
+    assert.equal(buildMapLevel(everything, 'measured:/nowhere'), null);
     // Nothing in a project folder becomes safe to remove because it was counted
     for (const art of everything.artifacts.filter((a) => a.workspaceId)) {
       assert.notEqual(art.cleanupClassification, 'LOW', art.canonicalPath);
@@ -107,6 +135,14 @@ test('S2. Scan scope: the home folder and folders above it are never walked as a
     const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
     assert.deepEqual(state.scan.scope.projectFoldersLeftOut, [env.home]);
     assert.ok(!state.artifacts.some((a) => a.name === 'private-notes.txt'));
+    // Nothing under the home folder becomes a project file, and the application's own
+    // folders are listed as its own, not as project content
+    // (the subagent's transcript still names the real project, which stays a project)
+    const inProjects = state.artifacts.filter((a) => a.workspaceId);
+    assert.ok(inProjects.length > 0);
+    assert.ok(inProjects.every((a) => a.canonicalPath.startsWith(env.project + path.sep)));
+    assert.ok(state.artifacts.filter((a) => a.canonicalPath.includes(`${path.sep}.claude${path.sep}`)).every((a) => !a.workspaceId));
+    assert.equal(state.graph.stats.scopeTotals.projects.count, inProjects.length);
   } finally {
     service.sqliteStore.close();
     fs.rmSync(env.root, { recursive: true, force: true });
@@ -208,7 +244,19 @@ test('P2. First prompt: shown for a session, its tool calls and its files, and s
   const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', dbPath });
   try {
     const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    assert.equal(state.sessions.length, 1, 'the subagent transcript belongs to its session');
     const session = state.sessions[0];
+    assert.equal(session.sourcePath, env.transcript, "the session's record is its main transcript");
+
+    // Session marks on the map carry the prompt; the made-up title is replaced by it
+    const { buildMapLevel } = await import('../src/graph/map-levels.js');
+    const sessionsLevel = service.decorateLevelWithPrompts(buildMapLevel(state, 'sessions'));
+    const mark = sessionsLevel.nodes.find((n) => n.id === `session:${session.id}`);
+    assert.equal(mark.metadata.firstPrompt, PROMPT);
+    assert.ok(PROMPT.startsWith(mark.label.replace(/…$/, '')), mark.label);
+    const opened = service.decorateLevelWithPrompts(buildMapLevel(state, `session:${session.id}`));
+    assert.equal(opened.nodes[0].metadata.firstPrompt, PROMPT);
+    assert.match(session.title, /^Claude Session /, 'the session itself is not changed');
     const file = state.artifacts.find((a) => a.name === 'importer.js');
     const untraced = state.artifacts.find((a) => a.name === 'settings.json');
     assert.deepEqual(untraced.sessionIds, []);
@@ -237,6 +285,141 @@ test('P2. First prompt: shown for a session, its tool calls and its files, and s
     db.close();
   } finally {
     try { service.sqliteStore.close(); } catch { /* already closed */ }
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S5. Files a session recorded are kept when a scan reaches the file limit', async () => {
+  const env = makeHome();
+  for (let i = 0; i < 40; i++) fs.writeFileSync(path.join(env.project, 'src', `bulk-${i}.txt`), 'b');
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', maxFiles: 5 });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    assert.equal(state.scan.truncated, true);
+    const recorded = state.artifacts.find((a) => a.name === 'importer.js');
+    assert.ok(recorded, 'the recorded file is in the scan');
+    assert.equal(recorded.provenanceConfidence, 'VERIFIED');
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S6. Past the file limit files are measured, so the total is complete although the listing is not', async () => {
+  const env = makeHome();
+  for (let i = 0; i < 40; i++) fs.writeFileSync(path.join(env.project, 'src', `bulk-${i}.txt`), 'b'.repeat(100));
+  // A file hardlinked into a measured folder is counted once
+  fs.linkSync(path.join(env.project, 'src', 'untouched.js'), path.join(env.project, 'node_modules', 'left-pad', 'linked.js'));
+  const full = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  const capped = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', maxFiles: 8 });
+  try {
+    const scope = { projectFolders: true, dependencyFolders: true };
+    const a = await full.scanAndAnalyze({ bundlePath: env.bundle, scanScope: scope });
+    const b = await capped.scanAndAnalyze({ bundlePath: env.bundle, scanScope: scope });
+    const totalOf = (s) => s.scan.totalPhysicalBytes + s.scan.measuredPhysicalBytes;
+    assert.equal(a.scan.truncated, false);
+    assert.equal(b.scan.truncated, true);
+    assert.equal(b.artifacts.length, 8);
+    assert.ok(b.scan.overflow.fileCount > 0);
+    assert.equal(totalOf(b), totalOf(a), 'listed plus measured is the same total with or without the limit');
+    // Every byte is counted once: listed files, measured folders and the overflow add up
+    const files = a.scan.discoveredArtifactCount + a.scan.measuredFileCount;
+    assert.equal(b.scan.discoveredArtifactCount + b.scan.measuredFileCount, files);
+  } finally {
+    full.sqliteStore.close();
+    capped.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S7. Project files no session recorded are your own work: protected, and shown apart from other unknown files', async () => {
+  const env = makeHome();
+  fs.writeFileSync(path.join(env.project, 'photo.png'), 'p'.repeat(3000));
+  fs.writeFileSync(path.join(env.project, 'data.parquet'), 'q'.repeat(500));
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    const byName = Object.fromEntries(state.artifacts.map((a) => [a.name, a]));
+    assert.equal(byName['photo.png'].artifactType, 'USER_CONTENT');
+    assert.equal(byName['photo.png'].cleanupClassification, 'PROTECTED');
+    assert.equal(byName['photo.png'].provenanceConfidence, 'UNKNOWN', 'the origin itself is not changed');
+    const stats = state.graph.stats;
+    assert.equal(stats.unknownInProjectsCount, state.artifacts.filter((a) => a.workspaceId && a.provenanceConfidence === 'UNKNOWN').length);
+    assert.ok(stats.unknownInProjectsCount >= 2);
+
+    const { typeBreakdown } = await import('../src/graph/map-levels.js');
+    const breakdown = typeBreakdown([byName['photo.png'], byName['data.parquet'], byName['untouched.js']], 2);
+    assert.deepEqual(breakdown.types.map((t) => t.type), ['.js', '.png'], 'largest first: untouched.js is 5,000 bytes');
+    assert.equal(breakdown.otherTypes, 1);
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('C1. What a prompt cost: output, scratch, files kept for it and its record, adding up to the scan', async () => {
+  const env = makeHome();
+  // A scratch file a tool call wrote outside any project, and a tool result kept for the session
+  const scratch = path.join(env.home, 'scratch', 'screenshot.png');
+  fs.mkdirSync(path.dirname(scratch), { recursive: true });
+  fs.writeFileSync(scratch, 's'.repeat(2000));
+  const kept = path.join(path.dirname(env.transcript), 'sess-one', 'tool-results', 'result.txt');
+  fs.mkdirSync(path.dirname(kept), { recursive: true });
+  fs.writeFileSync(kept, 'r'.repeat(700));
+  // A file it only read, and an existing file outside any project that it edited
+  const readOnly = path.join(env.home, 'notes', 'plan.md');
+  fs.mkdirSync(path.dirname(readOnly), { recursive: true });
+  fs.writeFileSync(readOnly, 'my own notes');
+  const dotfile = path.join(env.home, '.zshrc');
+  fs.writeFileSync(dotfile, 'export X=1');
+  const base = { sessionId: 'sess-one', cwd: env.project, timestamp: '2026-11-01T10:00:00.000Z' };
+  const call = (name, file) => JSON.stringify({ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name, input: { file_path: file } }] } });
+  fs.appendFileSync(env.transcript, [call('Write', scratch), call('Read', readOnly), call('Read', env.transcript.replace('sess-one.jsonl', 'nope')), call('Edit', dotfile)].join('\n') + '\n');
+  // Nothing has changed for a day: the session is finished
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+  for (const f of [env.transcript, kept, path.join(path.dirname(env.transcript), 'sess-one', 'subagents', 'agent-1.jsonl')]) fs.utimesSync(f, dayAgo, dayAgo);
+
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const session = state.sessions[0];
+    const cost = state.promptCosts.sessions[session.id];
+    // Reading a file does not make it the session's (AGENTS.md rule 3); its own notes are not listed
+    assert.ok(!state.artifacts.some((a) => a.name === 'plan.md'), 'a file the session only read is not part of the scan');
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(cost.parts).map(([k, v]) => [k, v.count])),
+      { output: 2, scratch: 1, kept: 1, record: 2 },
+      'importer.js and the edited .zshrc; the screenshot; the tool result; the transcript and the subagent transcript'
+    );
+    assert.equal(cost.parts.scratch.bytes, 2000);
+    assert.equal(cost.costCount, 4);
+    assert.equal(cost.costBytes, cost.parts.scratch.bytes + cost.parts.kept.bytes + cost.parts.record.bytes);
+    assert.equal(cost.possiblyRunning, false);
+
+    // Traced, app-wide and project parts add up to every listed file
+    const t = state.promptCosts.totals;
+    assert.equal(t.traced.count + t.appWide.count + t.projects.count, state.artifacts.length);
+    assert.equal(t.all.bytes, state.scan.totalPhysicalBytes);
+    assert.equal(t.traced.bytes + t.appWide.bytes + t.projects.bytes, t.all.bytes);
+
+    // The leftovers offered: the screenshot and the files kept for it, never the output or the record
+    const { sessionLeftoverIds, computePromptCosts } = await import('../src/graph/prompt-costs.js');
+    const names = sessionLeftoverIds(state, session.id, state.promptCosts).map((id) => state.artifacts.find((a) => a.id === id).name).sort();
+    assert.ok(names.includes('screenshot.png') && names.includes('result.txt'), names.join(', '));
+    assert.ok(!['importer.js', 'sess-one.jsonl', 'agent-1.jsonl', '.zshrc', 'plan.md'].some((n) => names.includes(n)), names.join(', '));
+
+    // A session that changed in the last hour may still be running: nothing is offered
+    const running = computePromptCosts(state, { now: Date.parse(cost.lastActiveAt) + 60 * 1000 });
+    assert.equal(running.sessions[session.id].possiblyRunning, true);
+    assert.deepEqual(sessionLeftoverIds(state, session.id, running), []);
+
+    // On the map the session carries its cost, numbers only
+    const { buildMapLevel } = await import('../src/graph/map-levels.js');
+    const mark = buildMapLevel(state, 'sessions').nodes.find((n) => n.id === `session:${session.id}`);
+    assert.equal(mark.metadata.cost.costBytes, cost.costBytes);
+    assert.ok(!JSON.stringify(state.promptCosts).includes('CSV'), 'no conversation text in the costs');
+  } finally {
+    service.sqliteStore.close();
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });

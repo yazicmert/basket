@@ -40,6 +40,12 @@ export const ProvenanceConfidence = Object.freeze({
 });
 
 /**
+ * Tool calls that write a file. Only these make a file's origin VERIFIED: a session that
+ * read, listed or searched a file did not produce it (AGENTS.md rule 3).
+ */
+export const WRITE_OPERATION_TYPES = Object.freeze(new Set(['WRITE', 'EDIT', 'PATCH']));
+
+/**
  * Rule-based Artifact Classification Types (Section 8)
  */
 export const ArtifactType = Object.freeze({
@@ -294,6 +300,12 @@ export function createScanModel(fields) {
     permissionLimitations: Array.isArray(fields.permissionLimitations) ? fields.permissionLimitations : [],
     skippedSymlinks: Array.isArray(fields.skippedSymlinks) ? fields.skippedSymlinks : [],
     skippedBulkDirectories: Array.isArray(fields.skippedBulkDirectories) ? fields.skippedBulkDirectories : [],
+    // Dependency and Git folders measured as a whole (never listed file by file), and the
+    // files past the file limit, which are measured but not listed
+    bulkFolders: Array.isArray(fields.bulkFolders) ? fields.bulkFolders : [],
+    overflow: fields.overflow || { fileCount: 0, physicalBytes: 0 },
+    measuredFileCount: Number(fields.measuredFileCount || 0),
+    measuredPhysicalBytes: Number(fields.measuredPhysicalBytes || 0),
     truncated: Boolean(fields.truncated),
     maxFilesLimit: fields.maxFilesLimit ? Number(fields.maxFilesLimit) : null,
     startedAt: fields.startedAt || new Date().toISOString(),

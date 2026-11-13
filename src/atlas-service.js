@@ -10,8 +10,10 @@ import { ClassificationEngine } from './classification/classification-engine.js'
 import { GraphEngine } from './graph/graph-engine.js';
 import { CleanupEngine } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
+import { WRITE_OPERATION_TYPES } from './models/entities.js';
 import { normalizeScanScope } from './platform/permissions.js';
-import { readSessionFirstPrompt } from './provenance/session-prompt.js';
+import { readSessionFirstPrompt, promptExcerpt } from './provenance/session-prompt.js';
+import { computePromptCosts } from './graph/prompt-costs.js';
 
 // Upper bound on files in one scan. The map and the UI stay responsive well beyond this
 // because they work from summaries; the bound keeps memory and scan time predictable.
@@ -19,6 +21,9 @@ export const DEFAULT_MAX_FILES = 300000;
 
 /** Upper bound on files named by session tool calls that are read inside project folders. */
 export const MAX_RECORDED_FILES = 50000;
+
+/** Titles the adapters make up from a session ID when the record names none. */
+const GENERATED_SESSION_TITLE = /^(Claude Session|Codex Rollout|Cursor Composer|Session) \S+$/;
 
 export class ArtifactAtlasService {
   constructor(options = {}) {
@@ -159,7 +164,14 @@ export class ArtifactAtlasService {
     const recordedFiles = new Set();
     for (const op of parsedRecords.operations) {
       const target = op.targetPath;
-      if (typeof target !== 'string' || !path.isAbsolute(target) || recordedFiles.size >= MAX_RECORDED_FILES) {
+      // Only files a session wrote are read in project folders; a file it only read is the
+      // user's own and is not part of the application's footprint
+      if (
+        typeof target !== 'string' ||
+        !path.isAbsolute(target) ||
+        !WRITE_OPERATION_TYPES.has(op.operationType) ||
+        recordedFiles.size >= MAX_RECORDED_FILES
+      ) {
         continue;
       }
       const resolved = path.resolve(target);
@@ -188,6 +200,9 @@ export class ArtifactAtlasService {
     }
 
     const workspaces = Array.from(workspacesByPath.values());
+    // A session that ran in the home folder (or above it) names no project: files there are
+    // the application's, not the user's project. Only real project folders count as projects.
+    const projectWorkspaces = workspaces.filter((ws) => this.isWalkableProjectFolder(ws.canonicalPath));
     // Recorded files are authorized one by one, so cleanup can reach them and nothing next to them
     const authorizedRoots = Array.from(new Set([...candidateRoots, ...recordedFiles]));
     const walkRoots = Array.from(new Set(candidateRoots));
@@ -197,8 +212,8 @@ export class ArtifactAtlasService {
       applicationId: application ? application.id : null,
       authorizedRoots: walkRoots,
       extraFiles: Array.from(recordedFiles),
-      projectRoots: workspaces.map((ws) => ws.canonicalPath),
-      skipBulkDirectories: !scope.dependencyFolders,
+      projectRoots: projectWorkspaces.map((ws) => ws.canonicalPath),
+      bulkDirectoryMode: scope.dependencyFolders ? 'measure' : 'skip',
       signal,
       artificialDelayMs,
       onProgress: (prog) => {
@@ -229,7 +244,7 @@ export class ArtifactAtlasService {
       rawEntries,
       scanId: scan.id,
       applicationId: application ? application.id : null,
-      workspaces
+      workspaces: projectWorkspaces
     });
 
     // Resolve provenance links (VERIFIED, INFERRED, UNKNOWN) & multi-session sharing
@@ -292,6 +307,9 @@ export class ArtifactAtlasService {
       authorizedRoots,
       isDemoEnvironment: this.activeState.isDemoEnvironment
     };
+
+    // What each session left behind (numbers only)
+    this.activeState.promptCosts = computePromptCosts(this.activeState);
 
     return this.activeState;
   }
@@ -377,6 +395,53 @@ export class ArtifactAtlasService {
   }
 
   /**
+   * First prompt of a session, read from its transcript now. Only a transcript inside the
+   * folders this scan covered is read. Nothing is stored.
+   */
+  readPromptOf(session) {
+    const roots = this.activeState.authorizedRoots || [];
+    const inScope =
+      session && session.sourcePath && this.platformServices.isWithinAuthorizedRoots(session.sourcePath, roots);
+    return inScope ? readSessionFirstPrompt(session) : { available: false, reason: 'NOT_RECORDED_FOR_THIS_APP' };
+  }
+
+  /**
+   * Adds each session's first prompt to the session marks of a map level, for display. The
+   * level is built fresh for every request; the prompt is put on that copy only, never on
+   * the session, the scan state or the index. A session whose title was made up from its ID
+   * is labelled by its prompt instead.
+   */
+  decorateLevelWithPrompts(level) {
+    if (!level || !Array.isArray(level.nodes)) {
+      return level;
+    }
+    const byId = new Map((this.activeState.sessions || []).map((s) => [s.id, s]));
+    const labels = new Map();
+    for (const node of level.nodes) {
+      const session = node.metadata && node.metadata.session ? byId.get(node.metadata.session.id) : null;
+      if (!session) {
+        continue;
+      }
+      const prompt = this.readPromptOf(session);
+      if (!prompt.available) {
+        continue;
+      }
+      node.metadata = { ...node.metadata, firstPrompt: promptExcerpt(prompt.text, 200) };
+      if (GENERATED_SESSION_TITLE.test(node.label || '')) {
+        // About as long as the made-up title it replaces, so a full ring of sessions stays readable
+        node.label = promptExcerpt(prompt.text, 24);
+        labels.set(session.id, node.label);
+      }
+    }
+    // The breadcrumb names an opened session the same way its mark does
+    level.breadcrumb = (level.breadcrumb || []).map((crumb) => {
+      const sessionId = /^session:(.+)$/.exec(crumb.id || '')?.[1];
+      return sessionId && labels.has(sessionId) ? { ...crumb, title: labels.get(sessionId) } : crumb;
+    });
+    return level;
+  }
+
+  /**
    * First prompt of each session behind a node. Read from the transcripts now, for display;
    * nothing is stored. A transcript is only read from inside the folders this scan covered.
    */
@@ -384,16 +449,12 @@ export class ArtifactAtlasService {
     const sessions = this.sessionsForNode(nodeId).sort((a, b) =>
       String(a.startedAt || '').localeCompare(String(b.startedAt || ''))
     );
-    const roots = this.activeState.authorizedRoots || [];
     const prompts = sessions.slice(0, limit).map((session) => {
-      const inScope =
-        session.sourcePath && this.platformServices.isWithinAuthorizedRoots(session.sourcePath, roots);
-      const prompt = inScope
-        ? readSessionFirstPrompt(session)
-        : { available: false, reason: 'NOT_RECORDED_FOR_THIS_APP' };
+      const prompt = this.readPromptOf(session);
       return {
         sessionId: session.id,
-        title: session.title,
+        // A title made up from the session ID says nothing; the window shows "Session" instead
+        title: GENERATED_SESSION_TITLE.test(session.title || '') ? null : session.title,
         startedAt: session.startedAt,
         ...prompt
       };
@@ -461,6 +522,7 @@ export class ArtifactAtlasService {
     if (!this.activeState.artifacts) {
       return;
     }
+    this.activeState.promptCosts = computePromptCosts(this.activeState);
     const activeArtifacts = this.activeState.artifacts.filter((a) => !a.quarantined);
     const classificationResult = this.classificationEngine.classifyArtifacts({
       artifacts: activeArtifacts,

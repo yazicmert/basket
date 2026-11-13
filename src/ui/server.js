@@ -19,6 +19,7 @@ import { listStartMenuApplications } from '../discovery/windows-apps.js';
 import { KNOWN_APP_PREFIX } from '../discovery/application-discovery.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
 import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
+import { sessionLeftoverIds } from '../graph/prompt-costs.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
 import {
   findRunningAppBundle,
@@ -422,11 +423,15 @@ export function createAtlasServer(options = {}) {
             skippedSymlinks: (state.scan.skippedSymlinks || []).slice(0, 50),
             skippedBulkDirectories: (state.scan.skippedBulkDirectories || []).slice(0, 50),
             skippedBulkDirectoryCount: (state.scan.skippedBulkDirectories || []).length,
+            // The map lists measured folders by project; the panel needs totals only
+            bulkFolders: undefined,
+            bulkFolderCount: (state.scan.bulkFolders || []).length,
             permissionLimitations: (state.scan.permissionLimitations || []).slice(0, 200)
           }
         : state.scan,
       graph,
-      isDemoEnvironment: state.isDemoEnvironment
+      isDemoEnvironment: state.isDemoEnvironment,
+      promptCosts: state.promptCosts || null
     };
   };
 
@@ -441,6 +446,10 @@ export function createAtlasServer(options = {}) {
       if (!ids) return [];
       const liveIds = new Set(live.map((a) => a.id));
       return ids.filter((id) => liveIds.has(id));
+    }
+    // The files a finished session left behind outside your projects (see prompt-costs.js)
+    if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
+      return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
     }
     if (body.kind === 'cell' && TREEMAP_GROUPINGS.includes(body.groupBy)) {
       const cell = (state.graph?.treemap?.[body.groupBy] || []).find((c) => c.id === body.cellId);
@@ -859,7 +868,10 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/map/level' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const level = buildMapLevel(activeService().activeState, body.levelId || 'root');
+        // Session marks carry their first prompt, read now for this response only
+        const level = activeService().decorateLevelWithPrompts(
+          buildMapLevel(activeService().activeState, body.levelId || 'root')
+        );
         if (!level) {
           return sendJson(res, 404, { ok: false, error: 'UNKNOWN_MAP_LEVEL' });
         }

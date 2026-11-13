@@ -962,8 +962,12 @@ async function executeScan({ bundlePath, workspacePath }) {
             scanViz.visit(prog.currentPath, prog.discoveredArtifactCount);
           }
           document.getElementById('scan-metric-roots').textContent = String(prog.scannedLocationsCount);
-          document.getElementById('scan-metric-count').textContent = String(prog.discoveredArtifactCount);
-          document.getElementById('scan-metric-bytes').textContent = formatBytes(prog.totalPhysicalBytes);
+          document.getElementById('scan-metric-count').textContent = String(
+            (prog.discoveredArtifactCount || 0) + (prog.measuredFileCount || 0)
+          );
+          document.getElementById('scan-metric-bytes').textContent = formatBytes(
+            (prog.totalPhysicalBytes || 0) + (prog.measuredPhysicalBytes || 0)
+          );
         }
       } catch {
         // Progress is best-effort; the scan request itself reports failures
@@ -987,10 +991,11 @@ async function executeScan({ bundlePath, workspacePath }) {
 
     document.getElementById('scan-metric-roots').textContent =
       String(res.state.scan.scannedLocationsCount);
-    document.getElementById('scan-metric-count').textContent =
-      String(res.state.scan.discoveredArtifactCount);
+    document.getElementById('scan-metric-count').textContent = String(
+      res.state.scan.discoveredArtifactCount + (res.state.scan.measuredFileCount || 0)
+    );
     document.getElementById('scan-metric-bytes').textContent =
-      formatBytes(res.state.scan.totalPhysicalBytes);
+      formatBytes(scanTotalBytes(res.state.scan));
 
     transitionToExplorerView();
   } catch (err) {
@@ -1018,7 +1023,7 @@ function transitionToExplorerView() {
   fillAppIcon(document.getElementById('active-app-icon'), appBundle);
   loadGraphAppIcon(appBundle);
   document.getElementById('active-app-meta').textContent =
-    `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(state.scan.totalPhysicalBytes)}`;
+    `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(scanTotalBytes(state.scan))}`;
 
   renderScanNoticesBanner(state);
   loadMapLevel('root');
@@ -1027,6 +1032,13 @@ function transitionToExplorerView() {
   renderQuarantineVaultView();
   updateContextualToolbar();
   updateQuarantineCountPill();
+}
+
+// A path with the home folder written as ~, for notices
+function shortPath(filePath) {
+  const home = uiState.bootstrap?.homeDir || '';
+  const value = String(filePath || '');
+  return home && value.startsWith(home) ? `~${value.slice(home.length)}` : value;
 }
 
 function renderScanNoticesBanner(state) {
@@ -1039,16 +1051,25 @@ function renderScanNoticesBanner(state) {
     );
   }
   if (state.application && (state.application.unreadableContainers || []).length > 0) {
+    const folders = state.application.unreadableContainers;
     notices.push(
-      `${pluralize(state.application.unreadableContainers.length, 'folder')} could not be read, so some files may be missing. ${isWindows() ? 'Check Permissions and scan again.' : 'Allow Full Disk Access under Permissions and scan again.'}`
+      `${folders.length === 1 ? `${shortPath(folders[0])} could not be read` : `${folders.length} folders could not be read (${folders.slice(0, 2).map(shortPath).join(', ')}${folders.length > 2 ? ', …' : ''})`}, so some files may be missing. ${isWindows() ? 'Check Permissions and scan again.' : 'Allow Full Disk Access under Permissions and scan again.'}`
     );
   }
   if (state.application && state.scan.discoveredArtifactCount === 0) {
     notices.push(`No data folders were found for ${state.application.name}.`);
   }
   if (state.scan.truncated) {
+    const over = state.scan.overflow || { fileCount: 0, physicalBytes: 0 };
     notices.push(
-      `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
+      over.fileCount > 0
+        ? `The first ${state.scan.maxFilesLimit.toLocaleString()} files are listed. ${pluralize(over.fileCount, 'more file')} (${formatBytes(over.physicalBytes)}) were measured and are in the total, but are not on the map or offered for cleanup.`
+        : `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
+    );
+  }
+  if (state.scan.bulkFolderCount > 0) {
+    notices.push(
+      `${pluralize(state.scan.bulkFolderCount, 'dependency or Git folder')} ${state.scan.bulkFolderCount === 1 ? 'was' : 'were'} measured as a whole (Dependencies & Git on the map). They are never cleaned up from here.`
     );
   }
   if (state.scan.skippedBulkDirectoryCount > 0) {
@@ -1058,7 +1079,7 @@ function renderScanNoticesBanner(state) {
   }
   if (state.scan.permissionLimitations.length > 0) {
     notices.push(
-      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped, so the total is smaller than what is on disk. See Permissions.`
+      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped (first: ${shortPath(state.scan.permissionLimitations[0].path)}), so the total is smaller than what is on disk.`
     );
   }
 
@@ -1067,6 +1088,20 @@ function renderScanNoticesBanner(state) {
   } else {
     banner.classList.remove('hidden');
     banner.textContent = notices.join(' ');
+    // Anything that could not be read can usually be fixed under Permissions
+    const unreadable =
+      (state.application?.unreadableContainers || []).length > 0 || state.scan.permissionLimitations.length > 0;
+    if (unreadable && uiState.bootstrap?.canSwitchMode !== false) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'link-btn banner-action';
+      btn.textContent = 'Open Permissions';
+      btn.addEventListener('click', () => {
+        uiState.pendingScan = null;
+        openPermissionsModal();
+      });
+      banner.appendChild(btn);
+    }
   }
 }
 
@@ -1729,11 +1764,15 @@ function initGraphCanvas() {
         const tooltipMeta = [
           NODE_TYPE_LABELS[hit.nodeType] || sentenceCase(hit.nodeType),
           hit.nodeType === 'ARTIFACT' ? RISK_LABELS[hit.riskCategory] : null,
-          hit.sizeBytes ? formatBytes(hit.sizeBytes) : null
+          hit.sizeBytes ? formatBytes(hit.sizeBytes) : null,
+          hit.metadata?.session?.endedAt ? `last active ${formatDate(hit.metadata.session.endedAt)}` : null,
+          hit.metadata?.cost ? `cost at least ${formatBytes(hit.metadata.cost.costBytes)}` : null
         ].filter(Boolean);
+        const firstPrompt = hit.metadata?.firstPrompt;
         tooltip.innerHTML = `
           <div>${escapeHtml(hit.label)}</div>
           <div class="tooltip-meta">${escapeHtml(tooltipMeta.join(' · '))}</div>
+          ${firstPrompt && firstPrompt !== hit.label ? `<div class="tooltip-prompt">${escapeHtml(firstPrompt)}</div>` : ''}
         `;
       } else {
         tooltip.classList.add('hidden');
@@ -1800,6 +1839,15 @@ async function selectNodeInGraph(node, multiSelect = false) {
     uiState.selectedArtifactIds.clear();
   }
 
+  // Marks that stand for many files (kinds, folders, measured folders) have no trace of
+  // their own; their details are already on the mark
+  if (node.metadata?.summary && node.nodeType !== 'ARTIFACT') {
+    uiState.activeTrace = null;
+    renderNodeInspector(node, null);
+    updateContextualToolbar();
+    return;
+  }
+
   try {
     const res = await apiRequest('/api/graph/trace', 'POST', { nodeId: node.id });
     uiState.activeTrace = res.trace;
@@ -1827,6 +1875,12 @@ function clearNodeSelection() {
 
 // Totals for the finished scan. Sizes are physical (hardlinked data counted once) and come
 // from the server; counts are taken from the files on the map.
+/* Everything the scan found: listed files plus folders and files that were measured as a
+   whole (dependency and Git folders, and files past the file limit). */
+function scanTotalBytes(scan) {
+  return (scan?.totalPhysicalBytes || 0) + (scan?.measuredPhysicalBytes || 0);
+}
+
 function summarizeScan() {
   const g = uiState.activeState?.graph;
   if (!g) return null;
@@ -1838,22 +1892,64 @@ function summarizeScan() {
     : null;
   return {
     fileCount: g.stats.artifactCount,
+    // The risk bar covers listed files; measured folders have no risk of their own
     totalBytes: uiState.activeState.scan?.totalPhysicalBytes || 0,
+    allBytes: scanTotalBytes(uiState.activeState.scan),
+    measuredFileCount: uiState.activeState.scan?.measuredFileCount || 0,
     risks: [
       { key: 'LOW', count: countByRisk.LOW, bytes: tm.reclaimablePhysicalBytes || 0 },
       { key: 'REVIEW', count: countByRisk.REVIEW, bytes: tm.reviewPhysicalBytes || 0 },
       { key: 'HIGH', count: countByRisk.HIGH, bytes: tm.highRiskPhysicalBytes || 0 },
-      { key: 'PROTECTED', count: countByRisk.PROTECTED, bytes: null }
+      { key: 'PROTECTED', count: countByRisk.PROTECTED, bytes: tm.protectedOrUncertainPhysicalBytes ?? null }
     ],
     origins: [
       { key: 'VERIFIED', label: 'Recorded by a session', count: g.stats.verifiedArtifactCount },
       { key: 'INFERRED', label: 'Likely from this app', count: g.stats.inferredArtifactCount },
-      { key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }
+      ...(g.stats.unknownInProjectsCount > 0
+        ? [
+            { key: 'UNKNOWN', label: 'Unknown, in your project folders', count: g.stats.unknownInProjectsCount },
+            { key: 'UNKNOWN', label: 'Unknown, elsewhere', count: g.stats.unknownArtifactCount - g.stats.unknownInProjectsCount }
+          ].filter((o) => o.count > 0)
+        : [{ key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }])
     ],
     kinds: [...(tm.byGroup || [])].sort((x, y) => y.bytes - x.bytes),
     sessionCount: g.stats.sessionCount || 0,
     largest
   };
+}
+
+// How much of the listed files can be traced to a session, and so to the prompt that started it
+function traceTotalsHtml(costs) {
+  if (!costs || !costs.totals || (uiState.activeState?.graph?.stats?.sessionCount || 0) === 0) return '';
+  const t = costs.totals;
+  const row = (label, part) =>
+    part.count > 0
+      ? `<div class="kv-item"><span class="kv-key">${escapeHtml(label)}</span><span class="kv-val">${pluralize(part.count, 'file')} · ${formatBytes(part.bytes)}</span></div>`
+      : '';
+  return `
+    <div class="inspector-section">
+      <div class="inspector-section-title">Traced to a prompt</div>
+      <div class="kv-list">
+        ${row('From a session', t.traced)}
+        ${row('The app as a whole', t.appWide)}
+        ${row('Your project files', t.projects)}
+      </div>
+      <div class="inspector-note">Open Sessions on the map: each is named by the prompt that started it and shows what it cost. Caches, updates and plug-ins belong to the app as a whole, not to one prompt.</div>
+    </div>`;
+}
+
+// Lines for what was measured but not listed, so the parts add up to the total
+function measuredRows(scan) {
+  const rows = [];
+  const bulkBytes = (scan?.measuredPhysicalBytes || 0) - (scan?.overflow?.physicalBytes || 0);
+  const bulkFiles = (scan?.measuredFileCount || 0) - (scan?.overflow?.fileCount || 0);
+  if (scan?.bulkFolderCount > 0) {
+    rows.push(`<div class="kv-item"><span class="kv-key">Dependency and Git folders, measured</span><span class="kv-val">${pluralize(bulkFiles, 'file')} · ${formatBytes(bulkBytes)}</span></div>`);
+  }
+  if (scan?.overflow?.fileCount > 0) {
+    rows.push(`<div class="kv-item"><span class="kv-key">Past the file limit, measured</span><span class="kv-val">${pluralize(scan.overflow.fileCount, 'file')} · ${formatBytes(scan.overflow.physicalBytes)}</span></div>`);
+  }
+  return rows.join('');
 }
 
 // One sentence on what the scan counted inside project folders
@@ -1907,8 +2003,8 @@ function renderGlobalInspectorSummary() {
     <div class="inspector-section">
       <div class="inspector-section-title">This scan</div>
       <div class="scan-total">
-        <span class="scan-total-value">${formatBytes(sum.totalBytes)}</span>
-        <span class="scan-total-meta">${pluralize(sum.fileCount, 'file')} · ${pluralize(sum.sessionCount, 'session')}</span>
+        <span class="scan-total-value">${formatBytes(sum.allBytes)}</span>
+        <span class="scan-total-meta">${pluralize(sum.fileCount, 'file')}${sum.measuredFileCount > 0 ? ` listed, ${sum.measuredFileCount.toLocaleString()} measured` : ''} · ${pluralize(sum.sessionCount, 'session')}</span>
       </div>
       <div class="scan-share-bar" role="img" aria-label="Share of disk space by cleanup risk">
         <span class="dot-safe" style="width:${share(sum.risks[0].bytes)}%"></span>
@@ -1923,11 +2019,13 @@ function renderGlobalInspectorSummary() {
       <div class="kv-list">
         <div class="kv-item"><span class="kv-key">${escapeHtml(uiState.activeState.application?.name || 'App')}'s own folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.appData.count, 'file')} · ${formatBytes(g.stats.scopeTotals.appData.bytes)}</span></div>
         <div class="kv-item"><span class="kv-key">In project folders</span><span class="kv-val">${pluralize(g.stats.scopeTotals.projects.count, 'file')} · ${formatBytes(g.stats.scopeTotals.projects.bytes)}</span></div>
+        ${measuredRows(uiState.activeState.scan)}
       </div>
       <div class="inspector-note">${escapeHtml(scopeNote(uiState.activeState.scan))} <button id="scope-open-permissions-btn" class="link-btn" type="button">Change under Permissions</button></div>
     </div>`
         : ''
     }
+    ${traceTotalsHtml(uiState.activeState.promptCosts)}
     <div class="inspector-section">
       <div class="inspector-section-title">By cleanup risk</div>
       <div class="kv-list">${riskRows}</div>
@@ -1959,6 +2057,64 @@ function renderGlobalInspectorSummary() {
       openPermissionsModal();
     });
   }
+}
+
+const COST_PART_LABELS = {
+  output: ['Its output', 'Files it wrote into your projects, and existing files it changed. The work it delivered; never offered as a leftover.'],
+  scratch: ['Created elsewhere', 'Files a tool call of the session created outside your projects: screenshots, tests, temporary scripts.'],
+  kept: ['Kept by the app for it', 'Files the application stores for the session: tool results, subagent files, todo lists, debug logs.'],
+  record: ['Its own record', 'The conversation record. It links the prompt to every file here, so it is never offered with the leftovers.']
+};
+
+/* What one session (named by the prompt that started it) left behind, and what it cost
+   beyond the work it delivered. These are lower bounds: files made by commands it ran,
+   such as installs and builds, are not named in its record. */
+function sessionCostHtml(meta) {
+  const cost = meta.cost;
+  if (!meta.session || !cost) return '';
+  const rows = ['output', 'scratch', 'kept', 'record']
+    .map((part) => {
+      const p = cost.parts[part];
+      const [label, hint] = COST_PART_LABELS[part];
+      const value =
+        part === 'output' && p.count === 0 && cost.recordedOperations === 0
+          ? 'Not recorded'
+          : `${pluralize(p.count, 'file')} · ${formatBytes(p.bytes)}`;
+      return `<div class="kv-item" title="${escapeHtml(hint)}"><span class="kv-key">${escapeHtml(label)}</span><span class="kv-val">${value}</span></div>`;
+    })
+    .join('');
+  const truncated = uiState.activeState?.scan?.truncated;
+  const action = cost.possiblyRunning
+    ? `<div class="inspector-note">This session changed in the last hour or has no date, so it may still be running. Its files are not offered for removal.</div>`
+    : `<button id="select-session-leftovers-btn" class="secondary-btn" type="button">Select What It Left Behind</button>
+       <div class="inspector-note">Selects files it created outside your projects and files the app keeps for this session only. Its record, your project files and files shared with other sessions stay. Every file is reviewed before it moves.</div>`;
+  return `
+    <div class="inspector-section">
+      <div class="inspector-section-title">What this prompt cost</div>
+      <div class="cost-headline">
+        <span class="cost-value">${formatBytes(cost.costBytes)}</span>
+        <span class="cost-meta">at least ${pluralize(cost.costCount, 'file')} beyond its output${cost.shared > 0 ? ` · ${cost.shared} shared with other sessions` : ''}</span>
+      </div>
+      <div class="kv-list">${rows}</div>
+      <div class="inspector-note">At least: files made by commands it ran (installs, builds) are not named in its record.${truncated ? ' This scan reached the file limit, so files past it are not counted here.' : ''}</div>
+      ${action}
+    </div>`;
+}
+
+// What a kind is made of, by file type, largest first
+function breakdownHtml(breakdown) {
+  if (!breakdown || !Array.isArray(breakdown.types) || breakdown.types.length === 0) return '';
+  const rows = breakdown.types
+    .map(
+      (t) => `<div class="kv-item"><span class="kv-key mono">${escapeHtml(t.type)}</span><span class="kv-val">${pluralize(t.count, 'file')} · ${formatBytes(t.bytes)}</span></div>`
+    )
+    .join('');
+  return `
+    <div class="inspector-section">
+      <div class="inspector-section-title">Largest file types</div>
+      <div class="kv-list">${rows}</div>
+      ${breakdown.otherTypes > 0 ? `<div class="inspector-note">And ${pluralize(breakdown.otherTypes, 'other type')}. Open the kind on the map to see its folders.</div>` : ''}
+    </div>`;
 }
 
 const PROMPT_UNAVAILABLE_REASONS = {
@@ -2128,15 +2284,19 @@ function renderNodeInspector(node, trace) {
         }
       </div>
       ${
-        meta.summary && node.nodeType !== 'AI_APPLICATION'
+        meta.measuredOnly
+          ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
+          : meta.summary && node.nodeType !== 'AI_APPLICATION'
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
              <button id="select-level-files-btn" class="secondary-btn" type="button">Select These ${pluralize(meta.summary.artifactCount, 'File')}</button>`
           : ''
       }
     </div>
 
+    ${sessionCostHtml(meta)}
     <div id="inspector-prompt-section"></div>
 
+    ${breakdownHtml(meta.breakdown)}
     ${cleanupSectionHtml}
     ${sharedHtml}
 
@@ -2160,6 +2320,22 @@ function renderNodeInspector(node, trace) {
   `;
 
   loadNodePrompts(node);
+
+  const leftoversBtn = document.getElementById('select-session-leftovers-btn');
+  if (leftoversBtn) {
+    leftoversBtn.addEventListener('click', async () => {
+      try {
+        const count = await selectByDescription({ kind: 'session-leftovers', sessionId: meta.session.id });
+        showToast(
+          count > 0
+            ? `Selected ${pluralize(count, 'file')} this session left behind. Review them before moving.`
+            : 'Nothing this session left behind can be offered for removal.'
+        );
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
+      }
+    });
+  }
 
   const folderBtn = document.getElementById('select-level-files-btn');
   if (folderBtn) {
@@ -2267,7 +2443,7 @@ function renderTreemapView() {
     <div class="size-totals">
       <div class="size-total">
         <span class="metric-value">${formatBytes(tm.totalPhysicalBytes)}</span>
-        <span class="metric-label">Total</span>
+        <span class="metric-label">${uiState.activeState?.scan?.measuredPhysicalBytes > 0 ? `Listed files (plus ${formatBytes(uiState.activeState.scan.measuredPhysicalBytes)} measured)` : 'Total'}</span>
       </div>
       <div class="size-total">
         <span class="metric-value">${formatBytes(tm.reclaimablePhysicalBytes)}</span>

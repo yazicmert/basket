@@ -41,7 +41,9 @@ export class Scanner {
     artificialDelayMs = 0,
     projectRoots = [],
     extraFiles = [],
-    skipBulkDirectories = true
+    // 'skip': dependency and Git folders inside project folders are left out.
+    // 'measure': they are measured as a whole (file count and size), never listed.
+    bulkDirectoryMode = 'skip'
   }) {
     // Inside project folders, dependency and version-control folders are not listed file by
     // file: they can hold hundreds of thousands of files that no cleanup should touch one at
@@ -67,6 +69,10 @@ export class Scanner {
 
     const rawEntries = [];
     const seenInodes = new Map(); // physicalInodeKey -> first canonicalPath
+    // Inodes of measured files with more than one link, so a hardlinked file is counted once
+    // across listed and measured files. Single-link files cannot be seen twice.
+    const measuredInodes = new Set();
+    let entriesSinceYield = 0;
     const visitedDirectories = new Set();
     const indexedFilePaths = new Set();
     let currentPath = null;
@@ -85,6 +91,8 @@ export class Scanner {
           deduplicatedHardlinkCount: scanRecord.deduplicatedHardlinkCount,
           permissionLimitationsCount: scanRecord.permissionLimitations.length,
           skippedSymlinksCount: scanRecord.skippedSymlinks.length,
+          measuredFileCount: scanRecord.measuredFileCount,
+          measuredPhysicalBytes: scanRecord.measuredPhysicalBytes,
           truncated: scanRecord.truncated
         });
       }
@@ -97,9 +105,92 @@ export class Scanner {
       scanRecord.maxFilesLimit = this.maxFiles;
     };
 
+    /** Counts a file's size without listing it. Returns the bytes added. */
+    const measureFile = (lstat, into) => {
+      into.fileCount += 1;
+      scanRecord.measuredFileCount += 1;
+      if (Number(lstat.nlink || 1) > 1) {
+        const key = `${lstat.dev}:${lstat.ino}`;
+        if (seenInodes.has(key) || measuredInodes.has(key)) {
+          return 0;
+        }
+        measuredInodes.add(key);
+      }
+      into.physicalBytes += lstat.size;
+      scanRecord.measuredPhysicalBytes += lstat.size;
+      return lstat.size;
+    };
+
+    const yieldNow = async () => {
+      emitProgress();
+      await new Promise((r) => setImmediate(r));
+    };
+
+    /**
+     * Measures a dependency or Git folder as a whole: every file is counted and sized, none is
+     * listed, so the folder adds to the total without using the file limit and can never be
+     * selected for cleanup. Symlinks are not followed.
+     */
+    const measureFolder = async (folderPath, projectRoot) => {
+      const entry = {
+        path: folderPath,
+        name: path.basename(folderPath),
+        projectRoot,
+        fileCount: 0,
+        physicalBytes: 0,
+        unreadableCount: 0
+      };
+      currentPath = folderPath;
+      const stack = [folderPath];
+      while (stack.length > 0) {
+        if (signal?.aborted) {
+          scanRecord.status = ScanStatus.CANCELLED;
+          break;
+        }
+        const dir = stack.pop();
+        let children;
+        try {
+          children = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          entry.unreadableCount += 1;
+          continue;
+        }
+        for (const child of children) {
+          if (child.isSymbolicLink()) continue;
+          const childPath = path.join(dir, child.name);
+          if (child.isDirectory()) {
+            stack.push(childPath);
+          } else if (child.isFile()) {
+            const st = fs.lstatSync(childPath, { throwIfNoEntry: false });
+            if (st && st.isFile()) measureFile(st, entry);
+          }
+          if (++entriesSinceYield >= 2000) {
+            entriesSinceYield = 0;
+            await yieldNow();
+          }
+        }
+      }
+      scanRecord.bulkFolders.push(entry);
+    };
+
+    const projectRootOf = (dirPath) =>
+      normalizedProjectRoots
+        .filter((root) => dirPath === root || dirPath.startsWith(root + path.sep))
+        .sort((a, b) => b.length - a.length)[0] || null;
+
     const indexFile = (filePath, fileName, check) => {
       const lstat = check.lstat;
       if (indexedFilePaths.has(check.canonicalPath)) {
+        return;
+      }
+      // Past the file limit a file is still measured, so the total stays complete even
+      // though the listing is not
+      if (rawEntries.length >= this.maxFiles) {
+        markTruncated();
+        // A folder is walked once, so a file past the limit is met once; nothing is kept per file
+        if ((lstat.mode & 0o400) !== 0) {
+          measureFile(lstat, scanRecord.overflow);
+        }
         return;
       }
       // Also check read permission on the file if mode lacks owner read bit
@@ -115,7 +206,7 @@ export class Scanner {
       indexedFilePaths.add(check.canonicalPath);
 
       const inodeKey = check.physicalInodeKey;
-      const isDuplicatePhysicalInode = seenInodes.has(inodeKey);
+      const isDuplicatePhysicalInode = seenInodes.has(inodeKey) || measuredInodes.has(inodeKey);
       if (!isDuplicatePhysicalInode) {
         seenInodes.set(inodeKey, check.canonicalPath);
         scanRecord.totalPhysicalBytes += lstat.size;
@@ -136,7 +227,7 @@ export class Scanner {
         physicalInodeKey: inodeKey,
         hardlinkCount: Math.max(check.hardlinkCount, isDuplicatePhysicalInode ? 2 : 1),
         isDuplicatePhysicalInode,
-        primaryInodePath: seenInodes.get(inodeKey),
+        primaryInodePath: seenInodes.get(inodeKey) || check.canonicalPath,
         mode: lstat.mode,
         createdAt: lstat.birthtime ? lstat.birthtime.toISOString() : lstat.ctime.toISOString(),
         modifiedAt: lstat.mtime.toISOString(),
@@ -147,11 +238,6 @@ export class Scanner {
     const walkDirectory = async (dirPath) => {
       if (signal?.aborted) {
         scanRecord.status = ScanStatus.CANCELLED;
-        return;
-      }
-
-      if (rawEntries.length >= this.maxFiles) {
-        markTruncated();
         return;
       }
 
@@ -224,11 +310,6 @@ export class Scanner {
           return;
         }
 
-        if (rawEntries.length >= this.maxFiles) {
-          markTruncated();
-          return;
-        }
-
         if (artificialDelayMs > 0) {
           await new Promise((r) => setTimeout(r, artificialDelayMs));
           if (signal?.aborted) {
@@ -274,16 +355,20 @@ export class Scanner {
           if (dirent.name.endsWith('.app')) {
             continue;
           }
-          if (skipBulkDirectories && PROJECT_BULK_DIRECTORIES.has(dirent.name) && isInsideProject(dirRealPath)) {
-            scanRecord.skippedBulkDirectories.push(childPath);
+          if (PROJECT_BULK_DIRECTORIES.has(dirent.name) && isInsideProject(dirRealPath)) {
+            if (bulkDirectoryMode === 'measure') {
+              await measureFolder(childPath, projectRootOf(dirRealPath));
+            } else {
+              scanRecord.skippedBulkDirectories.push(childPath);
+            }
             continue;
           }
           await walkDirectory(childPath);
         } else if (lstat.isFile()) {
           indexFile(childPath, dirent.name, childCheck);
-          if (scanRecord.discoveredArtifactCount % 25 === 0) {
-            emitProgress();
-            await new Promise((r) => setImmediate(r));
+          if (++entriesSinceYield >= 25) {
+            entriesSinceYield = 0;
+            await yieldNow();
           }
         }
       }
@@ -291,30 +376,9 @@ export class Scanner {
       emitProgress();
     };
 
-    for (const root of normalizedRoots) {
-      if (signal?.aborted) {
-        scanRecord.status = ScanStatus.CANCELLED;
-        break;
-      }
-      if (!fs.existsSync(root)) {
-        continue;
-      }
-      // A root may be a single file (e.g. a preferences .plist attributed to the application)
-      const rootCheck = this.platformServices.inspectEntry(root, normalizedRoots);
-      if (rootCheck.allowed && !rootCheck.isSymlink && rootCheck.lstat.isFile()) {
-        if (rawEntries.length >= this.maxFiles) {
-          markTruncated();
-        } else {
-          currentPath = root;
-          indexFile(root, path.basename(root), rootCheck);
-        }
-        continue;
-      }
-      await walkDirectory(root);
-    }
-
     // Single files named by session tool calls, each checked against itself as its root so
-    // nothing beside it is reachable.
+    // nothing beside it is reachable. They are read before any folder is walked: they are the
+    // files whose origin is recorded, so a scan that reaches the file limit must not lose them.
     for (const filePath of extraFiles) {
       if (signal?.aborted) {
         scanRecord.status = ScanStatus.CANCELLED;
@@ -334,6 +398,24 @@ export class Scanner {
           await new Promise((r) => setImmediate(r));
         }
       }
+    }
+
+    for (const root of normalizedRoots) {
+      if (signal?.aborted) {
+        scanRecord.status = ScanStatus.CANCELLED;
+        break;
+      }
+      if (!fs.existsSync(root)) {
+        continue;
+      }
+      // A root may be a single file (e.g. a preferences .plist attributed to the application)
+      const rootCheck = this.platformServices.inspectEntry(root, normalizedRoots);
+      if (rootCheck.allowed && !rootCheck.isSymlink && rootCheck.lstat.isFile()) {
+        currentPath = root;
+        indexFile(root, path.basename(root), rootCheck);
+        continue;
+      }
+      await walkDirectory(root);
     }
 
     if (scanRecord.status !== ScanStatus.CANCELLED) {

@@ -131,7 +131,7 @@ flowchart TD
 - Includes numbered forward migrations in `schema_migrations`:
   - `001_initial_schema`: `applications`, `workspaces`, `sessions`, `operations`, `scans`, `artifacts`, `artifact_groups`, `provenance_edges`, `evidence`.
   - `002_quarantine_and_audit`: `cleanup_recommendations`, `quarantine_entries`, `audit_events`.
-- Stores zero raw conversation prompt/response text. The first prompt of a session is read on demand for display (`src/provenance/session-prompt.js`) and is never written here.
+- Stores zero raw conversation prompt/response text. The first prompt of a session is read on demand for display, when an item is selected and when a map level with session marks is served (`src/provenance/session-prompt.js`), and is never written here.
 
 ### 3.11 `DesktopUI` (`src/ui/` & `Sources/ArtifactAtlasApp/`)
 - Minimal empty workspace dropzone → live scan progress drawer → interactive Obsidian-inspired Knowledge Graph & Space Treemap → right-hand Provenance & Evidence Inspector → bottom contextual action bar (`Inspect`, `Reveal in Finder`, `Select Related`, `Delete / Move to Quarantine`) → Confirmation Modal & Quarantine Vault manager.
@@ -166,9 +166,20 @@ The portable core runs unchanged on Windows; three things differ.
 
 The Windows shell is `packaging/windows/Launcher.cs`: it starts the bundled Node.js backend on a loopback port, shows the interface in Microsoft Edge or Chrome app mode with a separate profile, and stops the backend when that window closes. A second start reuses the running backend. `scripts/package-windows.ps1` downloads the official Node.js runtime, checks it against its published SHA-256, compiles the launcher with the C# compiler that ships with Windows, and writes `ArtifactAtlas-Windows.zip` with its own SHA-256.
 
+## What a prompt cost
+
+`src/graph/prompt-costs.js` runs after every scan and every cleanup. For each session it sums the files linked to it, split by how the link is known and where the file is: `output` (a tool call names it and it is in a project folder), `scratch` (a tool call names it outside every project folder), `kept` (the application keeps it for the session: the session ID is in its path, or it was derived from a file the session wrote) and `record` (the transcript and subagent transcripts). Everything but `output` is the session's cost. Totals split all listed files into traced to a session, the application as a whole, and the user's project files, counting each physical file once.
+
+The figures are lower bounds: files made by commands a session ran are not named in its record. The result holds numbers only, never conversation text. `sessionLeftoverIds` offers a finished session's `scratch` and `kept` files that belong to it alone and are not protected; the record, the output and anything of a session active in the last hour are never offered.
+
 ## Scan scope
 
 What a scan counts beyond the application's own folders is the user's choice, stored with the permissions (`scanScope` in `settings.json`) and recorded on each scan (`scan.scope`):
 
 - `projectFolders` off (default): inside the project folders named by session transcripts, only files named by tool calls are read. On: those folders are walked in full, except the home folder, a folder containing it, a drive root or a protected path (reported in `scan.scope.projectFoldersLeftOut`).
-- `dependencyFolders` off (default): `node_modules`, `.git` and similar folders inside project folders are skipped and reported.
+- `dependencyFolders` off (default): `node_modules`, `.git` and similar folders inside project folders are not read; they are reported as skipped. On: each is measured as a whole (`scan.bulkFolders`: file count and size), never listed as artifacts, never selectable and never cleaned up. The map shows them under one mark that opens by project.
+- Only real project folders are projects. A session that ran in the home folder or above it names no project, so files there keep their own classification and are counted as the application's.
+
+Past the file limit (`DEFAULT_MAX_FILES`), files are measured into `scan.overflow` but not listed, so the total stays complete. Listed bytes (`scan.totalPhysicalBytes`) and measured bytes (`scan.measuredPhysicalBytes`) are kept apart, and a hardlinked file is counted once across both. Measuring keeps nothing per file except the inode of files with more than one link.
+
+Files in a project folder that no other classification rule matches are user content: protected without a recorded origin, kept for review otherwise.
