@@ -341,7 +341,7 @@ export function createAtlasServer(options = {}) {
   const installedBundles = () => {
     const bundles = [];
     const seen = new Set();
-    const add = (name, bundlePath, description, bundleId = null) => {
+    const add = (name, bundlePath, description, bundleId = null, dataOnly = null) => {
       if (seen.has(bundlePath)) {
         return;
       }
@@ -355,7 +355,10 @@ export function createAtlasServer(options = {}) {
         description,
         isDemoFixture: false,
         isKnownAIApp: Boolean(profile && profile.ai),
-        profileId: profile ? profile.id : null
+        profileId: profile ? profile.id : null,
+        // Not an installed app: only a data folder of a known one was found (shown as evidence)
+        dataOnly: Boolean(dataOnly),
+        evidencePath: dataOnly ? dataOnly.location : null
       });
     };
 
@@ -395,7 +398,7 @@ export function createAtlasServer(options = {}) {
     const listedProfiles = new Set(bundles.map((b) => b.profileId).filter(Boolean));
     for (const known of listKnownApplicationsWithData({ platformServices: activeService().platformServices })) {
       if (!listedProfiles.has(known.profileId)) {
-        add(known.name, `${KNOWN_APP_PREFIX}${known.profileId}`, 'Found by the data it left');
+        add(known.name, `${KNOWN_APP_PREFIX}${known.profileId}`, 'Not installed; data found', null, known);
       }
     }
 

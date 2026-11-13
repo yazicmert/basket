@@ -1530,3 +1530,8 @@ button.crumb:hover {
   font-size: 12px;
   color: var(--ink-2);
 }
+
+.bundle-dock-subcaption {
+  display: block;
+  padding: 14px 0 6px;
+}

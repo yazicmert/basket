@@ -545,3 +545,29 @@ test('Q1. A quarantined file keeps the session it came from after a new scan (ID
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('A2. Known apps that are not installed are listed apart, with the folder found, and only when it holds data', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-dataonly-')));
+  const home = path.join(root, 'home');
+  const apps = path.join(root, 'Applications');
+  fs.mkdirSync(path.join(home, '.trae'), { recursive: true }); // empty: not data left behind
+  fs.writeFileSync(path.join(home, '.trae', '.DS_Store'), 'x');
+  fs.mkdirSync(path.join(home, '.kiro', 'settings'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.kiro', 'settings', 'mcp.json'), '{}');
+  fs.mkdirSync(apps, { recursive: true });
+  const atlas = createAtlasServer({ dataDir: path.join(root, 'data'), liveHomeDir: home, platform: 'darwin', applicationDirs: [apps] });
+  try {
+    await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+    const api = async (route, body) =>
+      (await fetch(`http://127.0.0.1:${atlas.server.address().port}${route}`, { method: body ? 'POST' : 'GET', headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+    await api('/api/permissions/home-folder-scan', { granted: true });
+    const boot = await api('/api/bootstrap');
+    assert.deepEqual(boot.availableBundles.map((b) => b.name), ['Kiro'], 'an empty .trae folder is not listed');
+    const kiro = boot.availableBundles[0];
+    assert.equal(kiro.dataOnly, true);
+    assert.equal(kiro.evidencePath, path.join(home, '.kiro'));
+  } finally {
+    await atlas.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
