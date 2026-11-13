@@ -1031,6 +1031,13 @@ function transitionToExplorerView() {
   updateQuarantineCountPill();
 }
 
+// A path with the home folder written as ~, for notices
+function shortPath(filePath) {
+  const home = uiState.bootstrap?.homeDir || '';
+  const value = String(filePath || '');
+  return home && value.startsWith(home) ? `~${value.slice(home.length)}` : value;
+}
+
 function renderScanNoticesBanner(state) {
   const banner = document.getElementById('scan-notices-banner');
   const notices = [];
@@ -1041,8 +1048,9 @@ function renderScanNoticesBanner(state) {
     );
   }
   if (state.application && (state.application.unreadableContainers || []).length > 0) {
+    const folders = state.application.unreadableContainers;
     notices.push(
-      `${pluralize(state.application.unreadableContainers.length, 'folder')} could not be read, so some files may be missing. ${isWindows() ? 'Check Permissions and scan again.' : 'Allow Full Disk Access under Permissions and scan again.'}`
+      `${folders.length === 1 ? `${shortPath(folders[0])} could not be read` : `${folders.length} folders could not be read (${folders.slice(0, 2).map(shortPath).join(', ')}${folders.length > 2 ? ', …' : ''})`}, so some files may be missing. ${isWindows() ? 'Check Permissions and scan again.' : 'Allow Full Disk Access under Permissions and scan again.'}`
     );
   }
   if (state.application && state.scan.discoveredArtifactCount === 0) {
@@ -1068,7 +1076,7 @@ function renderScanNoticesBanner(state) {
   }
   if (state.scan.permissionLimitations.length > 0) {
     notices.push(
-      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped, so the total is smaller than what is on disk. See Permissions.`
+      `${pluralize(state.scan.permissionLimitations.length, 'item')} could not be read and ${state.scan.permissionLimitations.length === 1 ? 'was' : 'were'} skipped (first: ${shortPath(state.scan.permissionLimitations[0].path)}), so the total is smaller than what is on disk.`
     );
   }
 
@@ -1077,6 +1085,20 @@ function renderScanNoticesBanner(state) {
   } else {
     banner.classList.remove('hidden');
     banner.textContent = notices.join(' ');
+    // Anything that could not be read can usually be fixed under Permissions
+    const unreadable =
+      (state.application?.unreadableContainers || []).length > 0 || state.scan.permissionLimitations.length > 0;
+    if (unreadable && uiState.bootstrap?.canSwitchMode !== false) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'link-btn banner-action';
+      btn.textContent = 'Open Permissions';
+      btn.addEventListener('click', () => {
+        uiState.pendingScan = null;
+        openPermissionsModal();
+      });
+      banner.appendChild(btn);
+    }
   }
 }
 
