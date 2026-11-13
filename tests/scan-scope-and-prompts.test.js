@@ -1,0 +1,242 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { ArtifactAtlasService } from '../src/atlas-service.js';
+import { createAtlasServer } from '../src/ui/server.js';
+import { readSessionFirstPrompt, userTextOfRecord, MAX_PROMPT_CHARS } from '../src/provenance/session-prompt.js';
+import { describePermissions, PermissionStatus } from '../src/platform/permissions.js';
+
+const PROMPT = 'Build the importer and keep the old CSV path working.';
+
+/** A home folder with one Claude session that wrote one file in a project with more in it. */
+function makeHome() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-scope-')));
+  const home = path.join(root, 'home');
+  const project = path.join(home, 'Projects', 'importer');
+  const bundle = path.join(root, 'Applications', 'Claude.app');
+  fs.mkdirSync(path.join(bundle, 'Contents'), { recursive: true });
+  fs.writeFileSync(
+    path.join(bundle, 'Contents', 'Info.plist'),
+    '<plist><dict><key>CFBundleName</key><string>Claude</string><key>CFBundleIdentifier</key><string>com.anthropic.claudefordesktop</string></dict></plist>'
+  );
+  fs.mkdirSync(path.join(project, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(project, 'node_modules', 'left-pad'), { recursive: true });
+  fs.mkdirSync(path.join(project, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'src', 'importer.js'), 'x'.repeat(1000));
+  fs.writeFileSync(path.join(project, 'src', 'untouched.js'), 'y'.repeat(5000));
+  fs.writeFileSync(path.join(project, 'node_modules', 'left-pad', 'index.js'), 'z'.repeat(9000));
+  fs.writeFileSync(path.join(project, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+
+  const transcripts = path.join(home, '.claude', 'projects', 'importer');
+  fs.mkdirSync(transcripts, { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{}');
+  const transcript = path.join(transcripts, 'sess-one.jsonl');
+  const base = { sessionId: 'sess-one', cwd: project, timestamp: '2026-11-01T10:00:00.000Z' };
+  fs.writeFileSync(
+    transcript,
+    [
+      JSON.stringify({ ...base, type: 'user', isMeta: true, message: { role: 'user', content: 'Caveat: meta text' } }),
+      JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: `<command-name>/init</command-name>` } }),
+      JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: [{ type: 'text', text: PROMPT }] } }),
+      JSON.stringify({
+        ...base,
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', name: 'Write', input: { file_path: path.join(project, 'src', 'importer.js') } }]
+        }
+      }),
+      JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: 'A later prompt that must not be shown.' } })
+    ].join('\n') + '\n'
+  );
+  return { root, home, project, bundle, transcript };
+}
+
+function names(state) {
+  return state.artifacts.map((a) => path.relative(state.workspaces[0].canonicalPath, a.canonicalPath));
+}
+
+test('S1. Scan scope: project folders are counted in full only when the user includes them', async () => {
+  const env = makeHome();
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const recordedOnly = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const inProject = (state) => names(state).filter((rel) => !rel.startsWith('..'));
+    assert.deepEqual(inProject(recordedOnly), [path.join('src', 'importer.js')]);
+    assert.equal(recordedOnly.scan.scope.projectFolders, false);
+
+    const whole = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    assert.deepEqual(inProject(whole).sort(), [path.join('src', 'importer.js'), path.join('src', 'untouched.js')]);
+    assert.ok(whole.scan.totalPhysicalBytes > recordedOnly.scan.totalPhysicalBytes);
+    assert.equal(whole.scan.skippedBulkDirectories.length, 2);
+
+    const everything = await service.scanAndAnalyze({
+      bundlePath: env.bundle,
+      scanScope: { projectFolders: true, dependencyFolders: true }
+    });
+    assert.ok(inProject(everything).includes(path.join('node_modules', 'left-pad', 'index.js')));
+    assert.ok(inProject(everything).includes(path.join('.git', 'HEAD')));
+    assert.equal(everything.scan.skippedBulkDirectories.length, 0);
+    // Nothing in a project folder becomes safe to remove because it was counted
+    for (const art of everything.artifacts.filter((a) => a.workspaceId)) {
+      assert.notEqual(art.cleanupClassification, 'LOW', art.canonicalPath);
+    }
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S2. Scan scope: the home folder and folders above it are never walked as a project', async () => {
+  const env = makeHome();
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    assert.equal(service.isWalkableProjectFolder(env.home), false);
+    assert.equal(service.isWalkableProjectFolder(path.dirname(env.home)), false);
+    assert.equal(service.isWalkableProjectFolder(path.parse(env.home).root), false);
+    assert.equal(service.isWalkableProjectFolder(path.join(env.home, '.ssh')), false);
+    assert.equal(service.isWalkableProjectFolder(env.project), true);
+
+    // A session that ran in the home folder itself
+    const transcript = fs.readFileSync(env.transcript, 'utf8').replaceAll(JSON.stringify(env.project), JSON.stringify(env.home));
+    fs.writeFileSync(env.transcript, transcript);
+    fs.writeFileSync(path.join(env.home, 'private-notes.txt'), 'not part of any app');
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    assert.deepEqual(state.scan.scope.projectFoldersLeftOut, [env.home]);
+    assert.ok(!state.artifacts.some((a) => a.name === 'private-notes.txt'));
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S3. Scan scope is a stored permission, asked once and changeable', async () => {
+  const env = makeHome();
+  const dataDir = path.join(env.root, 'data');
+  const start = () => createAtlasServer({ dataDir, liveHomeDir: env.home, platform: 'darwin', applicationDirs: [path.dirname(env.bundle)] });
+  let atlas = start();
+  const listen = (a) => new Promise((resolve) => a.server.listen(0, '127.0.0.1', resolve));
+  const api = async (a, route, body) => {
+    const res = await fetch(`http://127.0.0.1:${a.server.address().port}${route}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'X-Atlas-Token': a.sessionToken, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return { status: res.status, data: await res.json() };
+  };
+  try {
+    await listen(atlas);
+    const first = await api(atlas, '/api/permissions');
+    assert.equal(first.data.scanPermissionsReviewed, false);
+    const scopePerms = first.data.permissions.filter((p) => p.kind === 'SCAN_SCOPE');
+    assert.deepEqual(scopePerms.map((p) => p.id), ['project-folders', 'dependency-folders']);
+    assert.ok(scopePerms.every((p) => p.status === PermissionStatus.NOT_GRANTED));
+
+    assert.equal((await api(atlas, '/api/permissions/scan-scope', { id: 'nope', granted: true })).status, 400);
+    await api(atlas, '/api/permissions/home-folder-scan', { granted: true });
+    const smaller = await api(atlas, '/api/scan/start', { bundlePath: env.bundle });
+    const changed = await api(atlas, '/api/permissions/scan-scope', { id: 'project-folders', granted: true });
+    assert.equal(changed.data.scanScope.projectFolders, true);
+    await api(atlas, '/api/permissions/reviewed', {});
+    const larger = await api(atlas, '/api/scan/start', { bundlePath: env.bundle });
+    assert.ok(larger.data.state.scan.totalPhysicalBytes > smaller.data.state.scan.totalPhysicalBytes);
+    assert.equal(larger.data.state.scan.scope.projectFolders, true);
+
+    // The answers survive a restart
+    await atlas.shutdown();
+    atlas = start();
+    await listen(atlas);
+    const again = await api(atlas, '/api/permissions');
+    assert.equal(again.data.scanPermissionsReviewed, true);
+    assert.equal(again.data.scanScope.projectFolders, true);
+    assert.equal(again.data.scanScope.dependencyFolders, false);
+  } finally {
+    await atlas.shutdown();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S4. Windows has no macOS privacy permissions', () => {
+  const perms = describePermissions({ platform: 'win32', homeDir: os.tmpdir(), homeScanConsentAt: 'x' });
+  const byId = Object.fromEntries(perms.map((p) => [p.id, p]));
+  assert.equal(byId['home-folder-scan'].status, PermissionStatus.GRANTED);
+  assert.match(byId['home-folder-scan'].summary, /AppData/);
+  for (const id of ['full-disk-access', 'app-data', 'files-and-folders']) {
+    assert.equal(byId[id].status, PermissionStatus.NOT_APPLICABLE);
+  }
+});
+
+test('P1. First prompt: read from the transcript, wrappers and later prompts left out', () => {
+  const env = makeHome();
+  try {
+    const found = readSessionFirstPrompt({ externalSessionId: 'sess-one', sourcePath: env.transcript });
+    assert.deepEqual(found, { available: true, text: PROMPT, truncated: false });
+
+    // Another session's records in the same file are not this session's prompt
+    const other = readSessionFirstPrompt({ externalSessionId: 'sess-two', sourcePath: env.transcript });
+    assert.equal(other.available, false);
+    assert.equal(other.reason, 'NO_PROMPT_IN_TRANSCRIPT');
+
+    const long = path.join(env.root, 'long.jsonl');
+    fs.writeFileSync(long, JSON.stringify({ type: 'user', message: { role: 'user', content: 'p'.repeat(MAX_PROMPT_CHARS + 50) } }) + '\n{"cut":');
+    const cut = readSessionFirstPrompt({ externalSessionId: 'long', sourcePath: long });
+    assert.equal(cut.text.length, MAX_PROMPT_CHARS);
+    assert.equal(cut.truncated, true);
+
+    assert.equal(readSessionFirstPrompt({ sourcePath: path.join(env.root, 'state.vscdb') }).reason, 'NOT_RECORDED_FOR_THIS_APP');
+    assert.equal(readSessionFirstPrompt({ sourcePath: path.join(env.root, 'gone.jsonl') }).reason, 'TRANSCRIPT_NOT_FOUND');
+
+    // Record shapes
+    assert.equal(userTextOfRecord({ type: 'assistant', message: { role: 'assistant', content: 'no' } }), '');
+    assert.equal(userTextOfRecord({ message: { role: 'user', content: [{ type: 'tool_result', content: 'no' }] } }), '');
+    assert.equal(
+      userTextOfRecord({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>cwd</environment_context>' }] } }),
+      ''
+    );
+    assert.equal(userTextOfRecord({ type: 'event_msg', payload: { type: 'user_message', message: 'fix it' } }), 'fix it');
+  } finally {
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('P2. First prompt: shown for a session, its tool calls and its files, and stored nowhere', async () => {
+  const env = makeHome();
+  const dbPath = path.join(env.root, 'index.sqlite');
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', dbPath });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const session = state.sessions[0];
+    const file = state.artifacts.find((a) => a.name === 'importer.js');
+    const untraced = state.artifacts.find((a) => a.name === 'settings.json');
+    assert.deepEqual(untraced.sessionIds, []);
+    for (const nodeId of [session.id, `session:${session.id}`, `dir:session:${session.id}::src`, state.operations[0].id, file.id]) {
+      const res = service.describeNodePrompts(nodeId);
+      assert.equal(res.sessionCount, 1, nodeId);
+      assert.equal(res.prompts[0].text, PROMPT, nodeId);
+    }
+    assert.deepEqual(service.describeNodePrompts(untraced.id), { prompts: [], sessionCount: 0 });
+    assert.deepEqual(service.describeNodePrompts('no-such-node'), { prompts: [], sessionCount: 0 });
+
+    // A transcript outside the scanned folders is not read
+    session.sourcePath = path.join(env.root, 'elsewhere.jsonl');
+    fs.copyFileSync(env.transcript, session.sourcePath);
+    assert.equal(service.describeNodePrompts(session.id).prompts[0].available, false);
+
+    // Neither the scan state nor the index holds any prompt text
+    assert.ok(!JSON.stringify(state).includes('keep the old CSV path'));
+    service.sqliteStore.close();
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    for (const { name } of tables) {
+      const rows = db.prepare(`SELECT * FROM "${name}"`).all();
+      assert.ok(!JSON.stringify(rows).includes('keep the old CSV path'), `prompt text found in table ${name}`);
+    }
+    db.close();
+  } finally {
+    try { service.sqliteStore.close(); } catch { /* already closed */ }
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

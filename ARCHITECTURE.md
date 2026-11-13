@@ -131,7 +131,7 @@ flowchart TD
 - Includes numbered forward migrations in `schema_migrations`:
   - `001_initial_schema`: `applications`, `workspaces`, `sessions`, `operations`, `scans`, `artifacts`, `artifact_groups`, `provenance_edges`, `evidence`.
   - `002_quarantine_and_audit`: `cleanup_recommendations`, `quarantine_entries`, `audit_events`.
-- Stores zero raw conversation prompt/response text.
+- Stores zero raw conversation prompt/response text. The first prompt of a session is read on demand for display (`src/provenance/session-prompt.js`) and is never written here.
 
 ### 3.11 `DesktopUI` (`src/ui/` & `Sources/ArtifactAtlasApp/`)
 - Minimal empty workspace dropzone → live scan progress drawer → interactive Obsidian-inspired Knowledge Graph & Space Treemap → right-hand Provenance & Evidence Inspector → bottom contextual action bar (`Inspect`, `Reveal in Finder`, `Select Related`, `Delete / Move to Quarantine`) → Confirmation Modal & Quarantine Vault manager.
@@ -155,3 +155,20 @@ Section 7.2 defines interfaces (`src/monitoring/live-monitor-interface.js` and `
 - `SessionAppendSignal` (tailing active `.jsonl` transcripts)
 - `GitWorktreeSignal`
 - Explicitly accounts for the limitation that raw OS filesystem notifications (`FSEvents`) often coalesce paths without attributing the responsible PID or AI conversation ID unless paired with verified tool-invocation ledgers.
+
+## Windows
+
+The portable core runs unchanged on Windows; three things differ.
+
+- **Layout.** `PlatformServices.platform` names the layout of the home folder being read. With `win32`, application data is looked for in `AppData\Roaming`, `AppData\Local` and `AppData\LocalLow` (matched by application name) instead of `~/Library`; hidden home folders such as `.claude` are the same on both systems. Windows system folders and credential stores are protected paths.
+- **Applications.** There is no bundle to read. The picker lists Start Menu shortcuts by name (`src/discovery/windows-apps.js`); a shortcut, a program file or an installation folder identifies an application, and only the target path stored in the shortcut is parsed. Known applications that left data but have nothing to list (command-line tools) are offered by that data on every system (`atlas-known:<id>`).
+- **Paths.** Path-context rules and folder grouping are written for `/`-separated paths. `src/platform/path-keys.js` turns a Windows path into that shape for matching only (`C:\Users\me` becomes `/C:/Users/me`), so one set of rules serves every system and files on several drives share a root.
+
+The Windows shell is `packaging/windows/Launcher.cs`: it starts the bundled Node.js backend on a loopback port, shows the interface in Microsoft Edge or Chrome app mode with a separate profile, and stops the backend when that window closes. A second start reuses the running backend. `scripts/package-windows.ps1` downloads the official Node.js runtime, checks it against its published SHA-256, compiles the launcher with the C# compiler that ships with Windows, and writes `ArtifactAtlas-Windows.zip` with its own SHA-256.
+
+## Scan scope
+
+What a scan counts beyond the application's own folders is the user's choice, stored with the permissions (`scanScope` in `settings.json`) and recorded on each scan (`scan.scope`):
+
+- `projectFolders` off (default): inside the project folders named by session transcripts, only files named by tool calls are read. On: those folders are walked in full, except the home folder, a folder containing it, a drive root or a protected path (reported in `scan.scope.projectFoldersLeftOut`).
+- `dependencyFolders` off (default): `node_modules`, `.git` and similar folders inside project folders are skipped and reported.

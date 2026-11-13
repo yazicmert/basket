@@ -1,3 +1,4 @@
+import { toPathKey, fromPathKey } from '../platform/path-keys.js';
 import {
   NodeType,
   EdgeType,
@@ -94,9 +95,10 @@ export function fileTypeOf(art) {
 const RING = 250;
 
 const dirOf = (a) => {
-  if (a.parentDir) return a.parentDir;
-  const cut = a.canonicalPath.lastIndexOf('/');
-  return cut <= 0 ? '/' : a.canonicalPath.slice(0, cut);
+  if (a.parentDir) return toPathKey(a.parentDir);
+  const key = toPathKey(a.canonicalPath);
+  const cut = key.lastIndexOf('/');
+  return cut <= 0 ? '/' : key.slice(0, cut);
 };
 const parentOf = (dir) => {
   const cut = dir.lastIndexOf('/');
@@ -219,7 +221,8 @@ function summaryNode({ id, nodeType, label, summary, drillId = null, artifactTyp
     artifactType,
     radius: radiusForBytes(summary.bytes),
     drillId,
-    metadata: { summary, ...extra }
+    // Folder keys are '/'-separated; the details panel shows the real path
+    metadata: { summary, ...extra, ...(extra.path ? { path: fromPathKey(extra.path) } : {}) }
   };
 }
 
@@ -478,7 +481,7 @@ export function buildMapLevel(state, levelId = 'root') {
       center,
       children: shown,
       note: ofType.length > shown.length ? `Showing the ${shown.length} largest of ${ofType.length.toLocaleString('en-US')} ${label.toLowerCase()}.` : null,
-      path: parsed.dir
+      path: fromPathKey(parsed.dir)
     });
   }
 
@@ -588,7 +591,7 @@ export function buildMapLevel(state, levelId = 'root') {
     center,
     children: [...shownFolders, ...bundleNodes, ...shownFiles],
     note: notes.join(' ') || null,
-    path: level.prefix
+    path: fromPathKey(level.prefix)
   });
 }
 

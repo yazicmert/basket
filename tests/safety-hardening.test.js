@@ -13,7 +13,26 @@ import {
   RestoreConflictStrategy,
   ScanStatus
 } from '../src/models/entities.js';
-import { ArtifactAtlasService } from '../src/atlas-service.js';
+import { ArtifactAtlasService as AtlasService } from '../src/atlas-service.js';
+
+// Windows cannot delete a folder while a database in it is open, so every service a test
+// creates is closed before its sandbox is removed.
+const openServices = [];
+class ArtifactAtlasService extends AtlasService {
+  constructor(options) {
+    super(options);
+    openServices.push(this);
+  }
+}
+function closeOpenServices() {
+  for (const service of openServices.splice(0)) {
+    try {
+      service.sqliteStore.close();
+    } catch {
+      // Already closed by the test
+    }
+  }
+}
 import { ClassificationEngine } from '../src/classification/classification-engine.js';
 import { PlatformServices } from '../src/platform/platform-services.js';
 import { createAtlasServer, isLoopbackHostHeader } from '../src/ui/server.js';
@@ -24,6 +43,7 @@ function createTempSandbox(prefix = 'artifact-atlas-safety-') {
   return {
     dir,
     cleanup() {
+      closeOpenServices();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   };
@@ -32,7 +52,7 @@ function createTempSandbox(prefix = 'artifact-atlas-safety-') {
 async function createScannedDemoService(sandboxDir) {
   const demo = createDeterministicDemoEnvironment(sandboxDir);
   const service = new ArtifactAtlasService({
-    homeDir: demo.homeDir,
+    homeDir: demo.homeDir, platform: 'darwin',
     dbPath: path.join(sandboxDir, 'atlas.sqlite'),
     quarantineRoot: path.join(sandboxDir, 'quarantine-vault')
   });
@@ -415,7 +435,7 @@ test('S7. Scans that hit the file limit are flagged as truncated instead of look
   const sandbox = createTempSandbox();
   try {
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
-    const limited = new ArtifactAtlasService({ homeDir: demo.homeDir, maxFiles: 3 });
+    const limited = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin', maxFiles: 3 });
     const partial = await limited.scanAndAnalyze({ bundlePath: demo.appBundles.claude.bundlePath });
     assert.equal(partial.scan.status, ScanStatus.COMPLETED);
     assert.equal(partial.scan.truncated, true);
@@ -428,7 +448,7 @@ test('S7. Scans that hit the file limit are flagged as truncated instead of look
     assert.equal(row.max_files_limit, 3);
     limited.sqliteStore.close();
 
-    const full = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const full = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
     const complete = await full.scanAndAnalyze({ bundlePath: demo.appBundles.claude.bundlePath });
     assert.equal(complete.scan.truncated, false);
     assert.ok(complete.artifacts.length > 3);

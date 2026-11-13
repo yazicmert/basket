@@ -1,4 +1,4 @@
-name: macOS Build, Test & Package DMG
+name: Build, Test & Package (macOS DMG, Windows ZIP)
 
 on:
   push:
@@ -39,14 +39,11 @@ jobs:
       - name: Run Portable Core & Loopback Security Tests
         run: npm test
 
-  # Experimental: shows how far the portable core is from running on Windows, which is not a
-  # supported platform yet. It runs only when this workflow is started by hand, so pushes and
-  # pull requests are not marked as failing by a platform that is known not to pass.
-  portable-core-windows:
-    name: Portable Core Tests (Windows, experimental)
-    if: github.event_name == 'workflow_dispatch'
+  build-and-package-windows:
+    name: Test, Build & Verify ArtifactAtlas for Windows (.zip)
     runs-on: windows-latest
-    continue-on-error: true
+    env:
+      APP_VERSION: "0.6.0"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -56,15 +53,33 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Run Portable Core Tests
+      - name: Run Portable Core & Loopback Security Tests
         run: npm test
+
+      - name: Build ArtifactAtlas.exe, Bundle the Runtime, ZIP & SHA-256
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+
+      - name: Verify the ZIP (Extract, End-to-End Check, Launcher Smoke Test)
+        shell: pwsh
+        run: ./scripts/verify-windows-bundle.ps1
+
+      - name: Upload ArtifactAtlas-Windows.zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtifactAtlas-Windows-zip
+          path: |
+            dist/ArtifactAtlas-Windows.zip
+            dist/SHA256SUMS-Windows.txt
+          if-no-files-found: error
+          retention-days: 30
 
   build-and-package-macos:
     name: Build & Verify ArtifactAtlas.app (.dmg & .zip)
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
-      APP_VERSION: "0.5.0"
+      APP_VERSION: "0.6.0"
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Checkout Repository

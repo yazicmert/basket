@@ -56,7 +56,7 @@ test('1. Application identification: parses supported and unsupported macOS .app
   const sandbox = createTempSandbox();
   try {
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
-    const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
 
     const claudeApp = service.identifyApplication(demo.appBundles.claude.bundlePath);
     assert.equal(claudeApp.name, 'Claude Code');
@@ -65,7 +65,7 @@ test('1. Application identification: parses supported and unsupported macOS .app
     assert.equal(claudeApp.adapterId, 'claude-code');
     assert.equal(claudeApp.isSupportedAIApp, true);
     assert.equal(claudeApp.recognitionStatus, 'VERIFIED_AI_ADAPTER');
-    assert.ok(claudeApp.executablePath.endsWith('Contents/MacOS/Claude'));
+    assert.ok(claudeApp.executablePath.endsWith(path.join('Contents', 'MacOS', 'Claude')));
     assert.ok(claudeApp.knownDataDirectories.length >= 3);
 
     // Unsupported .app bundle falls back gracefully to Generic macOS Adapter
@@ -84,7 +84,7 @@ test('2 & 3 & 4 & 5. Filesystem scanning, symlink boundaries, duplicate physical
   const sandbox = createTempSandbox();
   try {
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
-    const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
 
     const state = await service.scanAndAnalyze({
       bundlePath: demo.appBundles.claude.bundlePath,
@@ -136,7 +136,7 @@ test('6 & 7 & 8 & 9 & 10. Session parsing, Graph construction, Multi-parent prov
   const sandbox = createTempSandbox();
   try {
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
-    const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
 
     const state = await service.scanAndAnalyze({
       bundlePath: demo.appBundles.claude.bundlePath,
@@ -222,7 +222,7 @@ test('6b. Cursor and Codex CLI adapters parse workspaceStorage composer ledgers 
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
 
     // Test Cursor Adapter
-    const cursorService = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const cursorService = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
     const cursorState = await cursorService.scanAndAnalyze({
       bundlePath: demo.appBundles.cursor.bundlePath
     });
@@ -231,7 +231,7 @@ test('6b. Cursor and Codex CLI adapters parse workspaceStorage composer ledgers 
     assert.ok(cursorState.operations.length >= 2);
 
     // Test Codex CLI Adapter
-    const codexService = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const codexService = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
     const codexState = await codexService.scanAndAnalyze({
       bundlePath: demo.appBundles.codex.bundlePath
     });
@@ -251,7 +251,7 @@ test('11. Risk classification: distinguishes all 10 artifact types and never rel
   const sandbox = createTempSandbox();
   try {
     const demo = createDeterministicDemoEnvironment(sandbox.dir);
-    const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
     const state = await service.scanAndAnalyze({
       bundlePath: demo.appBundles.claude.bundlePath,
       additionalWorkspacePaths: [demo.workspaceDir]
@@ -323,8 +323,8 @@ test('11. Risk classification: distinguishes all 10 artifact types and never rel
     assert.equal(envFile.cleanupClassification, RiskCategory.PROTECTED);
 
     // Git data inside a project is never listed for cleanup: the folder is skipped and reported
-    assert.equal(state.artifacts.some((a) => a.canonicalPath.includes('/.git/')), false);
-    assert.ok(state.scan.skippedBulkDirectories.some((dir) => dir.endsWith('/.git')));
+    assert.equal(state.artifacts.some((a) => a.canonicalPath.includes(`${path.sep}.git${path.sep}`)), false);
+    assert.ok(state.scan.skippedBulkDirectories.some((dir) => dir.endsWith(`${path.sep}.git`)));
     // If a .git file is ever classified (outside a known project), it is still protected
     const strayGitFile = service.classificationEngine.classifySingleArtifact({
       ...sourceCode,
@@ -347,7 +347,7 @@ test('12 & 13 & 14. Quarantine, Manifest persistence, Restore with conflict stra
     const dbPath = path.join(sandbox.dir, 'atlas.sqlite');
     const quarantineRoot = path.join(sandbox.dir, 'quarantine-vault');
     const service = new ArtifactAtlasService({
-      homeDir: demo.homeDir,
+      homeDir: demo.homeDir, platform: 'darwin',
       dbPath,
       quarantineRoot
     });
@@ -441,7 +441,7 @@ test('15 & 17. Scan cancellation and permission failure resilience', async () =>
     const unreadableFile = path.join(demo.workspaceDir, 'locked-secret.bin');
     fs.writeFileSync(unreadableFile, 'LOCKED_CONTENT', { mode: 0o000 });
 
-    const service = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
     const state = await service.scanAndAnalyze({
       bundlePath: demo.appBundles.claude.bundlePath,
       additionalWorkspacePaths: [demo.workspaceDir]
@@ -456,7 +456,7 @@ test('15 & 17. Scan cancellation and permission failure resilience', async () =>
     }
 
     // Test scan cancellation mid-flight
-    const cancelService = new ArtifactAtlasService({ homeDir: demo.homeDir });
+    const cancelService = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin' });
     const scanPromise = cancelService.scanAndAnalyze({
       bundlePath: demo.appBundles.claude.bundlePath,
       artificialDelayMs: 15,

@@ -40,7 +40,8 @@ export class Scanner {
     followInBoundarySymlinks = false,
     artificialDelayMs = 0,
     projectRoots = [],
-    extraFiles = []
+    extraFiles = [],
+    skipBulkDirectories = true
   }) {
     // Inside project folders, dependency and version-control folders are not listed file by
     // file: they can hold hundreds of thousands of files that no cleanup should touch one at
@@ -273,7 +274,7 @@ export class Scanner {
           if (dirent.name.endsWith('.app')) {
             continue;
           }
-          if (PROJECT_BULK_DIRECTORIES.has(dirent.name) && isInsideProject(dirRealPath)) {
+          if (skipBulkDirectories && PROJECT_BULK_DIRECTORIES.has(dirent.name) && isInsideProject(dirRealPath)) {
             scanRecord.skippedBulkDirectories.push(childPath);
             continue;
           }

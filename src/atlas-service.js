@@ -10,6 +10,8 @@ import { ClassificationEngine } from './classification/classification-engine.js'
 import { GraphEngine } from './graph/graph-engine.js';
 import { CleanupEngine } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
+import { normalizeScanScope } from './platform/permissions.js';
+import { readSessionFirstPrompt } from './provenance/session-prompt.js';
 
 // Upper bound on files in one scan. The map and the UI stay responsive well beyond this
 // because they work from summaries; the bound keeps memory and scan time predictable.
@@ -70,7 +72,7 @@ export class ArtifactAtlasService {
    * Step 1: Identify a dropped or selected macOS .app bundle without executing it.
    */
   identifyApplication(bundlePath) {
-    const app = this.applicationDiscovery.identifyAppBundle(bundlePath);
+    const app = this.applicationDiscovery.identifyApplication(bundlePath);
     this.activeState.application = app;
     return app;
   }
@@ -93,8 +95,10 @@ export class ArtifactAtlasService {
     bundlePath = null,
     additionalWorkspacePaths = [],
     onProgress = null,
-    artificialDelayMs = 0
+    artificialDelayMs = 0,
+    scanScope = null
   }) {
+    const scope = normalizeScanScope(scanScope);
     if (this.currentScanAbortController) {
       this.currentScanAbortController.abort();
     }
@@ -135,13 +139,22 @@ export class ArtifactAtlasService {
         })
       : { workspaces: [], sessions: [], operations: [], malformedRecords: [] };
 
-    // Project folders named in session transcripts are not scanned in full: they hold the
-    // user's own work, and counting all of it as the application's footprint would be wrong.
-    // Only the files a session's tool calls name are read there. A folder the user picks
-    // explicitly (additionalWorkspacePaths) is still scanned in full.
+    // Project folders named in session transcripts hold the user's own work. By default only
+    // the files a session's tool calls name are read there. With the "whole project folders"
+    // scan permission they are walked in full; that is the user's choice, made before the scan.
+    // A folder the user picks explicitly (additionalWorkspacePaths) is always scanned in full.
     const workspacesByPath = new Map();
+    const projectFoldersLeftOut = [];
     for (const ws of parsedRecords.workspaces) {
       workspacesByPath.set(ws.canonicalPath, ws);
+      if (!scope.projectFolders || !fs.existsSync(ws.canonicalPath)) {
+        continue;
+      }
+      if (this.isWalkableProjectFolder(ws.canonicalPath)) {
+        candidateRoots.push(ws.canonicalPath);
+      } else {
+        projectFoldersLeftOut.push(ws.canonicalPath);
+      }
     }
     const recordedFiles = new Set();
     for (const op of parsedRecords.operations) {
@@ -185,6 +198,7 @@ export class ArtifactAtlasService {
       authorizedRoots: walkRoots,
       extraFiles: Array.from(recordedFiles),
       projectRoots: workspaces.map((ws) => ws.canonicalPath),
+      skipBulkDirectories: !scope.dependencyFolders,
       signal,
       artificialDelayMs,
       onProgress: (prog) => {
@@ -194,6 +208,13 @@ export class ArtifactAtlasService {
         }
       }
     });
+
+    // What this scan was allowed to read, so the result can say what it left out
+    scan.scope = {
+      ...scope,
+      projectFolderCount: parsedRecords.workspaces.length,
+      projectFoldersLeftOut
+    };
 
     // The walk is done. The remaining steps run without touching the disk tree; report the
     // phase and yield so the progress endpoint can answer between them.
@@ -275,6 +296,22 @@ export class ArtifactAtlasService {
     return this.activeState;
   }
 
+  /**
+   * A project folder may be walked in full only when it is a real project location: never the
+   * home folder, a folder that contains it, a drive or filesystem root, or a protected path.
+   */
+  isWalkableProjectFolder(folderPath) {
+    const resolved = path.resolve(folderPath);
+    const home = this.platformServices.homeDir;
+    if (this.platformServices.isProtectedSystemPath(resolved)) {
+      return false;
+    }
+    if (path.parse(resolved).root === resolved) {
+      return false;
+    }
+    return !(home === resolved || home.startsWith(resolved + path.sep));
+  }
+
   cancelActiveScan() {
     if (this.currentScanAbortController) {
       this.currentScanAbortController.abort();
@@ -311,6 +348,57 @@ export class ArtifactAtlasService {
       unknownOriginNodeId: this.activeState.unknownOriginNodeId
     });
     return this.graphEngine.traceProvenancePaths(graph, art.id);
+  }
+
+  /**
+   * The sessions a map node belongs to: a session itself, anything inside a session's levels,
+   * a tool call, or a file (every session linked to it).
+   */
+  sessionsForNode(nodeId) {
+    const state = this.activeState;
+    const id = String(nodeId || '');
+    const byId = new Map((state.sessions || []).map((s) => [s.id, s]));
+    const scoped = /(?:^|:)session:([^:]+)/.exec(id);
+    if (scoped && byId.has(scoped[1])) {
+      return [byId.get(scoped[1])];
+    }
+    if (byId.has(id)) {
+      return [byId.get(id)];
+    }
+    const op = (state.operations || []).find((o) => o.id === id);
+    if (op) {
+      return byId.has(op.sessionId) ? [byId.get(op.sessionId)] : [];
+    }
+    const art = (state.artifacts || []).find((a) => a.id === id);
+    if (art) {
+      return (art.sessionIds || []).map((sid) => byId.get(sid)).filter(Boolean);
+    }
+    return [];
+  }
+
+  /**
+   * First prompt of each session behind a node. Read from the transcripts now, for display;
+   * nothing is stored. A transcript is only read from inside the folders this scan covered.
+   */
+  describeNodePrompts(nodeId, { limit = 3 } = {}) {
+    const sessions = this.sessionsForNode(nodeId).sort((a, b) =>
+      String(a.startedAt || '').localeCompare(String(b.startedAt || ''))
+    );
+    const roots = this.activeState.authorizedRoots || [];
+    const prompts = sessions.slice(0, limit).map((session) => {
+      const inScope =
+        session.sourcePath && this.platformServices.isWithinAuthorizedRoots(session.sourcePath, roots);
+      const prompt = inScope
+        ? readSessionFirstPrompt(session)
+        : { available: false, reason: 'NOT_RECORDED_FOR_THIS_APP' };
+      return {
+        sessionId: session.id,
+        title: session.title,
+        startedAt: session.startedAt,
+        ...prompt
+      };
+    });
+    return { prompts, sessionCount: sessions.length };
   }
 
   prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {

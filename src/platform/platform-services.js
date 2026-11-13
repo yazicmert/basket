@@ -33,6 +33,41 @@ const HOME_PROTECTED_RELATIVES = [
   'Library/Messages'
 ];
 
+/** Windows system locations, relative to the system drive. Compared without regard to case. */
+const WINDOWS_PROTECTED_RELATIVES = [
+  'Windows',
+  'Program Files',
+  'Program Files (x86)',
+  'ProgramData\\Microsoft',
+  'System Volume Information',
+  '$Recycle.Bin',
+  'Recovery'
+];
+
+const WINDOWS_HOME_PROTECTED_RELATIVES = [
+  '.ssh',
+  '.gnupg',
+  '.aws',
+  '.azure',
+  '.kube',
+  'AppData\\Roaming\\gnupg',
+  'AppData\\Roaming\\Microsoft\\Credentials',
+  'AppData\\Roaming\\Microsoft\\Protect',
+  'AppData\\Roaming\\Microsoft\\Crypto',
+  'AppData\\Roaming\\Microsoft\\SystemCertificates',
+  'AppData\\Local\\Microsoft\\Credentials',
+  'AppData\\Local\\Microsoft\\Vault'
+];
+
+const isWindowsPath = (p) => /^[A-Za-z]:[\\/]/.test(p);
+
+/** True when `candidate` is `base` or inside it; Windows paths compare without case. */
+function isSameOrInside(candidate, base, separator, ignoreCase) {
+  const a = ignoreCase ? candidate.toLowerCase() : candidate;
+  const b = ignoreCase ? base.toLowerCase() : base;
+  return a === b || a.startsWith(b.endsWith(separator) ? b : b + separator);
+}
+
 export class PlatformServices {
   constructor(options = {}) {
     const rawHome = path.resolve(options.homeDir || os.homedir());
@@ -85,8 +120,27 @@ export class PlatformServices {
    */
   isProtectedSystemPath(targetPath) {
     const resolved = path.resolve(targetPath);
-    if (resolved === '/' || resolved === this.homeDir) {
+    // A filesystem or drive root, or the home folder itself
+    if (path.parse(resolved).root === resolved || resolved === this.homeDir) {
       return true;
+    }
+
+    if (isWindowsPath(resolved)) {
+      if (resolved.toLowerCase() === this.homeDir.toLowerCase()) {
+        return true;
+      }
+      const drive = resolved.slice(0, 3);
+      for (const rel of WINDOWS_PROTECTED_RELATIVES) {
+        if (isSameOrInside(resolved, drive + rel, '\\', true)) {
+          return true;
+        }
+      }
+      for (const rel of WINDOWS_HOME_PROTECTED_RELATIVES) {
+        if (isSameOrInside(resolved, `${this.homeDir}\\${rel}`, '\\', true)) {
+          return true;
+        }
+      }
+      return false;
     }
 
     for (const prefix of SYSTEM_PROTECTED_PREFIXES) {
@@ -360,6 +414,34 @@ export class PlatformServices {
     return found;
   }
 
+  /** True when this home folder is laid out the Windows way (AppData instead of Library). */
+  get isWindowsLayout() {
+    return this.platform === 'win32';
+  }
+
+  /** Per-user application data folders on Windows: Roaming, Local and LocalLow. */
+  getWindowsAppDataDirs() {
+    const appData = path.join(this.homeDir, 'AppData');
+    return {
+      roaming: path.join(appData, 'Roaming'),
+      local: path.join(appData, 'Local'),
+      localLow: path.join(appData, 'LocalLow')
+    };
+  }
+
+  /** Standard per-user data locations for an application, by its name, on Windows. */
+  getStandardWindowsLocations({ appName }) {
+    if (!appName) {
+      return [];
+    }
+    const dirs = this.getWindowsAppDataDirs();
+    return [
+      { role: 'APP_SUPPORT', path: path.join(dirs.roaming, appName) },
+      { role: 'LOCAL_APP_DATA', path: path.join(dirs.local, appName) },
+      { role: 'LOCAL_APP_DATA', path: path.join(dirs.localLow, appName) }
+    ];
+  }
+
   /**
    * Standard macOS Library and dotfile roots for an application identity.
    */
@@ -404,6 +486,14 @@ export class PlatformServices {
           } else {
             resolve({ ok: true, action: 'OPEN_REVEAL_MACOS', path: resolved });
           }
+        });
+      });
+    }
+    if (this.platform === 'win32' && process.platform === 'win32') {
+      return new Promise((resolve) => {
+        // File Explorer selects the file; it reports a non-zero exit code even when it worked
+        execFile('explorer.exe', [`/select,${resolved}`], () => {
+          resolve({ ok: true, action: 'EXPLORER_SELECT_WINDOWS', path: resolved });
         });
       });
     }

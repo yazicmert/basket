@@ -25,6 +25,7 @@ function hasFlag(flagName) {
 const VALUE_FLAGS = new Set([
   '--port',
   '--home',
+  '--platform',
   '--data-dir',
   '--api-token',
   '--parent-pid',
@@ -58,6 +59,8 @@ function createPersistentService() {
   const baseDir = path.resolve(dataDir || path.join(os.homedir(), '.artifact-atlas'));
   return new ArtifactAtlasService({
     homeDir: parseFlagValue('--home', null) || undefined,
+    // Layout of the home folder being read ("darwin" or "win32"); this system's by default
+    platform: parseFlagValue('--platform', null) || undefined,
     dbPath: path.join(baseDir, 'atlas-index.sqlite'),
     quarantineRoot: path.join(baseDir, 'quarantine-vault')
   });
@@ -137,7 +140,7 @@ async function runVerticalSliceDemo() {
   try {
     const demo = createDeterministicDemoEnvironment(sandboxDir);
     const service = new ArtifactAtlasService({
-      homeDir: demo.homeDir,
+      homeDir: demo.homeDir, platform: 'darwin',
       dbPath: path.join(sandboxDir, 'atlas.sqlite'),
       quarantineRoot: path.join(sandboxDir, 'quarantine-vault'),
       isDemoEnvironment: true

@@ -6,6 +6,7 @@ import {
   createArtifactGroupModel
 } from '../models/entities.js';
 import { PlatformServices } from '../platform/platform-services.js';
+import { toPathKey } from '../platform/path-keys.js';
 
 const CREDENTIAL_PATTERNS = [
   /^\.env(\..+)?$/i,
@@ -75,7 +76,15 @@ const MODEL_WEIGHT_EXTENSIONS = new Set([
 // Cache directories that Chromium / Electron based applications keep inside their own data
 // folder. They count as dedicated cache directories only when they sit inside an application
 // data container, never by name alone somewhere else on disk.
-const APP_CONTAINER_MARKERS = ['/library/application support/', '/library/containers/', '/library/group containers/'];
+const APP_CONTAINER_MARKERS = [
+  '/library/application support/',
+  '/library/containers/',
+  '/library/group containers/',
+  // Windows: per-user application data
+  '/appdata/roaming/',
+  '/appdata/local/',
+  '/appdata/locallow/'
+];
 const APP_CONTAINER_CACHE_DIRS = [
   '/cache/',
   '/cache_data/',
@@ -182,7 +191,7 @@ export class ClassificationEngine {
   classifySingleArtifact(artifact, gitRootCache = null) {
     const result = this.classifyByContextRules(artifact);
     const gitRepositoryRoot = this.platformServices.findGitRepositoryRoot(
-      artifact.parentDir || artifact.canonicalPath.slice(0, artifact.canonicalPath.lastIndexOf('/')) || '/',
+      artifact.parentDir || path.dirname(artifact.canonicalPath),
       gitRootCache
     );
     result.gitRepositoryRoot = gitRepositoryRoot;
@@ -225,7 +234,8 @@ export class ClassificationEngine {
   }
 
   classifyByContextRules(artifact) {
-    const canonical = artifact.canonicalPath;
+    // Matched as a '/'-separated key so the same rules read Windows paths
+    const canonical = toPathKey(artifact.canonicalPath);
     const lowerPath = canonical.toLowerCase();
     const fileName = artifact.name;
     const lowerName = fileName.toLowerCase();

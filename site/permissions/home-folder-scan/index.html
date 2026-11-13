@@ -8,7 +8,7 @@
 <link rel="icon" href="../../favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="../../apple-touch-icon.png" />
-<link rel="stylesheet" href="../../style.css?v=5" />
+<link rel="stylesheet" href="../../style.css?v=7" />
 </head>
 <body class="doc">
 <div class="topbar">
@@ -33,18 +33,19 @@
   <p><span class="tag req">Required for real scans</span><span class="tag">Asked inside Artifact Atlas</span></p>
 
   <h2>What it is</h2>
-  <p>This is a consent you give inside Artifact Atlas, not a macOS setting. Until you give it, the app only shows built-in sample data and reads nothing from your disk.</p>
+  <p>This is a consent you give inside Artifact Atlas, not a macOS or Windows setting. Until you give it, the app only shows built-in sample data and reads nothing from your disk.</p>
   <h2>Why Artifact Atlas asks for it</h2>
-  <p>To show the leftovers of an application you drop, Artifact Atlas has to list the folders where that application keeps its data. Most of them are hidden: <code>~/Library</code> and dot-folders such as <code>~/.claude</code>, <code>~/.cursor</code> or <code>~/.ollama</code>.</p>
+  <p>To show the leftovers of an application you drop, Artifact Atlas has to list the folders where that application keeps its data. Most of them are hidden: <code>~/Library</code> on macOS, <code>AppData</code> on Windows, and dot-folders such as <code>.claude</code>, <code>.cursor</code> or <code>.ollama</code> in your home folder.</p>
   <h2>What is read</h2>
   <ul>
     <li>File and folder names, sizes, timestamps and permissions inside the dropped application's data folders.</li>
     <li>For Claude Code, Cursor and Codex: session IDs, timestamps, tool names and the file paths those tools wrote, so files can be linked to the session that created them.</li>
-    <li>The project folders those sessions worked in.</li>
+    <li>In the project folders those sessions worked in: the files their tool calls named. The rest of a project folder is counted only if you <a href="../project-folders/">include whole project folders</a>.</li>
+    <li>When you select an item: the first prompt of the session behind it, read from the session's own record and shown in the details panel. It is not stored.</li>
   </ul>
   <h2>What never happens</h2>
   <ul>
-    <li>It never stores your prompts or the assistant's replies.</li>
+    <li>It never stores your prompts or the assistant's replies. The index holds session IDs, timestamps, tool names and file paths only.</li>
     <li>It never uploads anything. The app uses the network only to check for and download its own updates, which sends nothing about your files.</li>
     <li>It never runs the application you drop.</li>
     <li>It never scans credential folders such as <code>~/.ssh</code>, <code>~/.aws</code> or Keychains.</li>
@@ -52,14 +53,14 @@
   </ul>
   <h2>How to grant it</h2>
   <ol>
-    <li>Open Artifact Atlas. The Permissions window appears on first launch, or click <strong>Permissions</strong> in the top bar.</li>
-    <li>Click <strong>Allow Scanning My Home Folder</strong>.</li>
-    <li>The badge in the title bar changes from <em>Sample Data</em> to <em>Live: Home Folder</em>.</li>
+    <li>Choose a real application. Before its first scan Artifact Atlas shows the permissions it needs; you can also click <strong>Permissions</strong> in the top bar at any time.</li>
+    <li>Click <strong>Allow</strong> on <em>Scan my home folder</em>, then <strong>Scan</strong>.</li>
+    <li>The badge in the title bar changes from <em>Sample data</em> to <em>Your Mac</em> (or <em>Your PC</em>).</li>
   </ol>
   <h2>How to take it back</h2>
-  <p>Open <strong>Permissions</strong> and click <strong>Stop Scanning My Home Folder</strong>. The app returns to sample data immediately. Files already in the Quarantine Vault stay there and can still be restored after you allow scanning again.</p>
+  <p>Open <strong>Permissions</strong> and click <strong>Stop Scanning</strong>. The app returns to sample data immediately. Files already in the Quarantine Vault stay there and can still be restored after you allow scanning again.</p>
   <h2>If you do not grant it</h2>
-  <p>The app works, but only on its built-in sample applications. Dropping a real application shows no real leftovers.</p>
+  <p>The app works, but only on its built-in sample applications. Choosing a real application asks for this permission again and scans nothing until you allow it.</p>
 </main>
 
 <footer>
