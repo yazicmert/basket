@@ -462,6 +462,12 @@
     return g;
   }
 
+  // On a narrow screen the map is wider than the window: keep its centre in view
+  function centerScroller() {
+    var spare = scroller.scrollWidth - scroller.clientWidth;
+    if (spare > 0) scroller.scrollLeft = spare / 2;
+  }
+
   function drawLevel(animate) {
     var level = buildLevel(state.level);
     state.level = level.id;
@@ -486,6 +492,7 @@
       svg.classList.add('reveal');
     }
     renderCrumbs(level);
+    centerScroller();
   }
 
   function renderCrumbs(level) {
@@ -822,6 +829,7 @@
     tabMap.setAttribute('aria-selected', String(state.view === 'map'));
     tabQuarantine.setAttribute('aria-selected', String(state.view === 'quarantine'));
     scroller.hidden = state.view !== 'map';
+    if (!scroller.hidden) centerScroller();
     list.hidden = state.view !== 'quarantine';
 
     crumbBar.hidden = state.view !== 'map';

@@ -2335,7 +2335,7 @@ function renderNodeInspector(node, trace) {
         const count = await selectByDescription({ kind: 'session-leftovers', sessionId: meta.session.id });
         showToast(
           count > 0
-            ? `Selected ${pluralize(count, 'file')} this session left behind. Review them before moving.`
+            ? `Selected ${pluralize(count, 'file')} this session left behind. Review ${count === 1 ? 'it' : 'them'} before moving.`
             : 'Nothing this session left behind can be offered for removal.'
         );
       } catch (err) {

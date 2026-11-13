@@ -2126,3 +2126,10 @@ h3.platform span {
   margin-top: 10px;
   width: 100%;
 }
+
+/* Phones: a smaller map that scrolls less, kept centred by demo.js */
+@media (max-width: 560px) {
+  .demo-scroll svg {
+    min-width: 540px;
+  }
+}
