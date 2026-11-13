@@ -1937,3 +1937,162 @@ footer {
   fill: var(--surface);
   stroke: none;
 }
+
+/* ---------- Preview: level-by-level map ---------- */
+
+.demo-crumbbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px 12px 0;
+  font-size: 12.5px;
+}
+
+.demo-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.demo-crumb {
+  font: inherit;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+button.demo-crumb {
+  cursor: pointer;
+}
+
+button.demo-crumb:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.demo-crumb.current {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.demo-crumb-sep,
+.demo-crumb-note {
+  color: var(--ink-3);
+}
+
+.demo-crumb-up {
+  font: inherit;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.demo-crumb-up:hover {
+  background: var(--hover);
+}
+
+.demo-groupby {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+}
+
+.demo-groupby select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+.demo-edge {
+  opacity: 0.45;
+}
+
+@keyframes demo-fade {
+  from { opacity: 0; }
+  to { opacity: 0.45; }
+}
+
+.demo-node.static {
+  cursor: default;
+}
+
+.demo-node.static:hover .demo-hit {
+  fill: transparent;
+}
+
+.demo-node.center text {
+  font-weight: 600;
+}
+
+.demo-node text.meta {
+  font-size: 10px;
+  font-weight: 400;
+  fill: var(--ink-3);
+}
+
+.demo-node.session.center > :nth-child(2),
+.demo-node.session > :nth-child(2) {
+  fill: var(--ink-2);
+}
+
+.demo-riskbar rect {
+  stroke: none;
+}
+
+.demo-riskbar .safe {
+  fill: var(--risk-safe);
+}
+
+.demo-riskbar .review {
+  fill: var(--risk-review);
+}
+
+.demo-riskbar .high {
+  fill: var(--risk-high);
+}
+
+.demo-riskbar .protected {
+  fill: var(--risk-protected);
+}
+
+.demo-scroll svg {
+  min-width: 700px;
+}
+
+.demo-stage {
+  display: flex;
+  flex-direction: column;
+}
+
+.demo-stage > .demo-scroll,
+.demo-stage > .demo-list {
+  flex: 1 1 auto;
+}
+
+.demo-stage > .demo-action {
+  margin-top: auto;
+}
+
+@media (max-width: 860px) {
+  .demo-intro {
+    place-items: start center;
+    padding-top: 28px;
+  }
+}

@@ -11,6 +11,7 @@
   var desktop = document.getElementById('mac-desktop');
 
   var SVG = 'http://www.w3.org/2000/svg';
+  var reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var RISK = {
     safe: 'Safe to remove',
     review: 'Review first',
@@ -21,16 +22,15 @@
   // kind: app | workspace | session | group | unknown | file
   var nodes = [
     { id: 'app', kind: 'app', label: 'Claude Code', x: 430, y: 300 },
-    { id: 'ws', kind: 'workspace', label: 'neural-search-engine', x: 500, y: 96 },
     { id: 'sA', kind: 'session', label: 'Session Alpha', x: 596, y: 262 },
     { id: 'sB', kind: 'session', label: 'Session Beta', x: 318, y: 176 },
-    { id: 'unk', kind: 'unknown', label: 'Unknown origin', x: 150, y: 96 },
     { id: 'gLogs', kind: 'group', type: 'LOG', label: 'Diagnostic Logs', x: 708, y: 238 },
     { id: 'gCache', kind: 'group', type: 'REGENERABLE_CACHE', label: 'Regenerable Caches', x: 372, y: 446 },
     { id: 'gTmp', kind: 'group', type: 'TEMP_FILE', label: 'Temporary Files', x: 612, y: 404 },
     { id: 'gHist', kind: 'group', type: 'SESSION_HISTORY', label: 'Session Histories', x: 232, y: 366 },
     { id: 'gBuild', kind: 'group', type: 'BUILD_OUTPUT', label: 'Build Outputs', x: 176, y: 250 },
     { id: 'gSrc', kind: 'group', type: 'USER_CONTENT', label: 'Source & User Content', x: 690, y: 110 },
+    { id: 'gUnk', kind: 'group', type: 'UNKNOWN', label: 'Unclassified', x: 0, y: 0 },
 
     { id: 'f1', kind: 'file', label: 'mcp-transport-sess_alpha_01.log', x: 806, y: 300, size: 14848, risk: 'safe',
       group: 'gLogs', sessions: [['sA', 'likely']],
@@ -60,19 +60,18 @@
       group: 'gSrc', sessions: [['sA', 'recorded']],
       why: 'Source code inside a Git repository. Protected files cannot be moved to quarantine.' },
     { id: 'f10', kind: 'file', label: 'notes-export.md', x: 56, y: 150, size: 4096, risk: 'review',
-      group: null, sessions: [],
+      group: 'gUnk', sessions: [],
       why: 'No session record names this file. Unknown origin is never marked safe.' },
     { id: 'f11', kind: 'file', label: 'old-run.log', x: 214, y: 34, size: 8602, risk: 'review',
-      group: null, sessions: [],
+      group: 'gUnk', sessions: [],
       why: 'A log outside a dedicated log folder, with no session record. The extension alone decides nothing.' }
   ];
 
   var byId = {};
   nodes.forEach(function (n) { byId[n.id] = n; });
-  // A file has the artifact type of its group. The two files of unknown origin are typed here.
-  var LOOSE_TYPES = { f10: 'UNKNOWN', f11: 'LOG' };
+  // A file has the artifact type of its group, except the stray log among the unclassified.
   nodes.forEach(function (n) {
-    if (n.kind === 'file') n.type = n.group ? byId[n.group].type : LOOSE_TYPES[n.id];
+    if (n.kind === 'file') n.type = n.id === 'f11' ? 'LOG' : byId[n.group].type;
   });
 
   // Sample apps the opening screen offers, as in the real app.
@@ -87,9 +86,8 @@
 
   function iconOf(n) {
     if (n.kind === 'app') return Icons.forApp({ name: n.label });
-    if (n.kind === 'workspace') return 'folder';
-    if (n.kind === 'session') return 'session';
-    if (n.kind === 'unknown') return 'unknown';
+    if (n.kind === 'bucket') return 'folder';
+    if (n.kind === 'session' || n.kind === 'sessions') return 'session';
     return Icons.forArtifactType(n.type);
   }
 
@@ -119,24 +117,8 @@
   }
   var files = nodes.filter(function (n) { return n.kind === 'file'; });
 
-  // Edges: [from, to, strength]
-  var edges = [
-    ['app', 'ws', 'recorded'],
-    ['ws', 'sA', 'recorded'],
-    ['ws', 'sB', 'recorded'],
-    ['app', 'sA', 'recorded'],
-    ['app', 'sB', 'recorded']
-  ];
-  nodes.forEach(function (n) {
-    if (n.kind === 'group') edges.push(['app', n.id, 'recorded']);
-  });
-  files.forEach(function (f) {
-    if (f.group) edges.push([f.group, f.id, 'recorded']);
-    f.sessions.forEach(function (s) { edges.push([s[0], f.id, s[1]]); });
-    if (!f.sessions.length) edges.push(['unk', f.id, 'unknown']);
-  });
-
-  var state = { selected: 'f1', view: 'map', quarantined: [], armed: null };
+  // level: which part of the map is open (see buildLevel); selected: a file id or null
+  var state = { level: 'root', selected: null, view: 'map', quarantined: [], armed: null };
 
   function el(name, attrs, text) {
     var node = document.createElementNS(SVG, name);
@@ -163,33 +145,99 @@
     return state.quarantined.indexOf(id) !== -1;
   }
 
-  function filesOf(node) {
-    return files.filter(function (f) {
-      if (isQuarantined(f.id)) return false;
-      if (node.kind === 'app' || node.kind === 'workspace') return f.sessions.length > 0;
-      if (node.kind === 'group') return f.group === node.id;
-      if (node.kind === 'session') return f.sessions.some(function (s) { return s[0] === node.id; });
-      if (node.kind === 'unknown') return !f.sessions.length;
-      return false;
-    });
+  function liveFiles() {
+    return files.filter(function (f) { return !isQuarantined(f.id); });
   }
 
-  // The set of node ids that stay lit for the current selection.
-  function litSet() {
-    var lit = {};
-    var sel = byId[state.selected];
-    if (!sel) return null;
-    lit[sel.id] = true;
-    if (sel.kind === 'file') {
-      if (sel.group) { lit[sel.group] = true; lit.app = true; }
-      sel.sessions.forEach(function (s) { lit[s[0]] = true; lit.ws = true; lit.app = true; });
-      if (!sel.sessions.length) lit.unk = true;
-    } else {
-      filesOf(sel).forEach(function (f) { lit[f.id] = true; });
-      if (sel.kind === 'session') { lit.ws = true; lit.app = true; }
-      if (sel.kind === 'group' || sel.kind === 'workspace') lit.app = true;
+  function originOf(f) {
+    if (!f.sessions.length) return 'unknown';
+    return f.sessions.some(function (s) { return s[1] === 'recorded'; }) ? 'recorded' : 'likely';
+  }
+
+  function summarize(list) {
+    var risks = {};
+    var bytes = 0;
+    list.forEach(function (f) { risks[f.risk] = (risks[f.risk] || 0) + 1; bytes += f.size; });
+    return { count: list.length, bytes: bytes, risks: risks };
+  }
+
+  var GROUPINGS = {
+    risk: { label: 'Cleanup risk', buckets: [['safe', 'Safe to remove'], ['review', 'Review first'], ['high', 'High risk'], ['protected', 'Protected']], keyOf: function (f) { return f.risk; } },
+    origin: { label: 'Origin', buckets: [['recorded', 'Recorded by a session'], ['likely', 'Likely from this app'], ['unknown', 'Unknown origin']], keyOf: originOf }
+  };
+
+  // The map is explored one level at a time, as in the app: the application with its kinds
+  // and sessions; then one kind, one session or one bucket with its files.
+  function buildLevel(levelId) {
+    var live = liveFiles();
+    var appCrumb = { id: 'root', title: 'Claude Code' };
+    var summaryNode = function (id, kind, label, list, extra) {
+      var n = { id: id, kind: kind, label: label, summary: summarize(list), drill: id };
+      for (var k in extra || {}) n[k] = extra[k];
+      return n;
+    };
+    var fileNode = function (f, strength) {
+      return { id: f.id, kind: 'file', label: f.label, risk: f.risk, type: f.type, file: f, strength: strength || 'recorded' };
+    };
+    var appCenter = { id: 'app', kind: 'app', label: 'Claude Code', summary: summarize(live) };
+
+    if (levelId === 'root') {
+      var kinds = nodes.filter(function (n) { return n.kind === 'group'; }).map(function (g) {
+        return summaryNode('group:' + g.id, 'group', g.label, live.filter(function (f) { return f.group === g.id; }), { type: g.type });
+      }).filter(function (n) { return n.summary.count > 0; });
+      kinds.sort(function (a, b) { return b.summary.bytes - a.summary.bytes; });
+      kinds.push(summaryNode('sessions', 'sessions', 'Sessions (2)', live.filter(function (f) { return f.sessions.length; })));
+      return { id: 'root', grouping: 'kind', parent: null, crumbs: [appCrumb], center: appCenter, children: kinds };
     }
-    return lit;
+    if (levelId.indexOf('root:') === 0 && GROUPINGS[levelId.slice(5)]) {
+      var gname = levelId.slice(5);
+      var def = GROUPINGS[gname];
+      var buckets = def.buckets.map(function (b) {
+        return summaryNode('bucket:' + gname + ':' + b[0], 'bucket', b[1], live.filter(function (f) { return def.keyOf(f) === b[0]; }));
+      }).filter(function (n) { return n.summary.count > 0; });
+      return { id: levelId, grouping: gname, parent: null, crumbs: [{ id: levelId, title: 'Claude Code' }], center: appCenter, children: buckets };
+    }
+    if (levelId === 'sessions') {
+      var sess = nodes.filter(function (n) { return n.kind === 'session'; }).map(function (sn) {
+        return summaryNode('session:' + sn.id, 'session', sn.label, live.filter(function (f) { return f.sessions.some(function (x) { return x[0] === sn.id; }); }));
+      });
+      return { id: 'sessions', grouping: 'kind', parent: 'root', crumbs: [appCrumb, { id: 'sessions', title: 'Sessions' }],
+        center: { id: 'sessions-center', kind: 'sessions', label: 'Sessions (2)', summary: summarize(live.filter(function (f) { return f.sessions.length; })) }, children: sess };
+    }
+    var parts = levelId.split(':');
+    if (parts[0] === 'group' && byId[parts[1]]) {
+      var grp = byId[parts[1]];
+      var inGroup = live.filter(function (f) { return f.group === grp.id; });
+      return { id: levelId, grouping: 'kind', parent: 'root', crumbs: [appCrumb, { id: levelId, title: grp.label }],
+        center: { id: levelId + '-center', kind: 'group', type: grp.type, label: grp.label, summary: summarize(inGroup) },
+        children: inGroup.map(function (f) { return fileNode(f, originOf(f) === 'unknown' ? 'unknown' : 'recorded'); }) };
+    }
+    if (parts[0] === 'session' && byId[parts[1]]) {
+      var sn2 = byId[parts[1]];
+      var linked = live.filter(function (f) { return f.sessions.some(function (x) { return x[0] === sn2.id; }); });
+      return { id: levelId, grouping: 'kind', parent: 'sessions', crumbs: [appCrumb, { id: 'sessions', title: 'Sessions' }, { id: levelId, title: sn2.label }],
+        center: { id: levelId + '-center', kind: 'session', label: sn2.label, summary: summarize(linked) },
+        children: linked.map(function (f) {
+          return fileNode(f, f.sessions.filter(function (x) { return x[0] === sn2.id; })[0][1]);
+        }) };
+    }
+    if (parts[0] === 'bucket' && GROUPINGS[parts[1]]) {
+      var def2 = GROUPINGS[parts[1]];
+      var found = def2.buckets.filter(function (b) { return b[0] === parts[2]; })[0];
+      if (found) {
+        var inBucket = live.filter(function (f) { return def2.keyOf(f) === parts[2]; });
+        return { id: levelId, grouping: parts[1], parent: 'root:' + parts[1],
+          crumbs: [{ id: 'root:' + parts[1], title: 'Claude Code' }, { id: levelId, title: found[1] }],
+          center: { id: levelId + '-center', kind: 'bucket', label: found[1], summary: summarize(inBucket) },
+          children: inBucket.map(function (f) { return fileNode(f, originOf(f)); }) };
+      }
+    }
+    return buildLevel('root');
+  }
+
+  // The level that shows a file: its kind.
+  function levelOfFile(f) {
+    return 'group:' + f.group;
   }
 
   // ---------- Skeleton ----------
@@ -219,7 +267,7 @@
   root.appendChild(bar);
 
   // The walkthrough is a real sequence, so its steps are numbered.
-  var STEPS = ['Drop an app', 'Scan', 'See the totals', 'Trace a file', 'Quarantine', 'Restore'];
+  var STEPS = ['Drop an app', 'Scan', 'See the totals', 'Open a kind', 'Trace a file', 'Quarantine', 'Restore'];
   var stepper = html('ol', 'demo-steps');
   var stepEls = STEPS.map(function (label) {
     var li = html('li', null, label);
@@ -236,7 +284,9 @@
   var nodeLayer = el('g', {});
   svg.appendChild(edgeLayer);
   svg.appendChild(nodeLayer);
+  var crumbBar = html('div', 'demo-crumbbar');
   scroller.appendChild(svg);
+  stage.appendChild(crumbBar);
   stage.appendChild(scroller);
   var list = html('div', 'demo-list');
   stage.appendChild(list);
@@ -340,48 +390,148 @@
 
   // ---------- Map ----------
 
-  var edgeEls = edges.map(function (e) {
-    var a = byId[e[0]];
-    var b = byId[e[1]];
-    var line = el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, 'class': 'demo-edge ' + e[2] });
-    edgeLayer.appendChild(line);
-    return { from: e[0], to: e[1], line: line };
-  });
+  var CX = 440, CY = 268;
+  var currentLevel = null;
+
+  function shapeFor(n, x, y) {
+    if (n.kind === 'app') return [el('circle', { cx: x, cy: y, r: 21 }), 22];
+    if (n.kind === 'session' || n.kind === 'sessions') return [el('circle', { cx: x, cy: y, r: 15 }), 16];
+    if (n.kind === 'file') return [el('circle', { cx: x, cy: y, r: 11.5 }), 13];
+    return [el('rect', { x: x - 16, y: y - 16, width: 32, height: 32, rx: 8 }), 18];
+  }
+
+  function drawNode(n, x, y, index, isCenter) {
+    var cls = n.kind === 'bucket' ? 'group' : n.kind === 'sessions' ? 'session' : n.kind;
+    var g = el('g', { 'class': 'demo-node ' + cls + (n.risk ? ' ' + n.risk : '') + (n.kind === 'file' ? ' lit' : '') + (isCenter ? ' center' : '') });
+    var built = shapeFor(n, x, y);
+    var half = n.kind === 'app' ? 21 : n.kind === 'file' ? 11.5 : n.kind === 'session' || n.kind === 'sessions' ? 15 : 16;
+    g.appendChild(el('circle', { cx: x, cy: y, r: half + 10, 'class': 'demo-hit' }));
+    g.appendChild(built[0]);
+    var glyph = el('g', {
+      'class': 'demo-glyph' + (n.kind === 'app' ? ' logo' : ''),
+      transform: 'translate(' + (x - built[1] / 2) + ' ' + (y - built[1] / 2) + ') scale(' + (built[1] / 24) + ')'
+    });
+    if (n.kind === 'app') glyph.appendChild(el('path', { d: APP_LOGO_PATH }));
+    else Icons.paths[iconOf(n)].forEach(function (d) { glyph.appendChild(el('path', { d: d })); });
+    g.appendChild(glyph);
+
+    var labelY = y + half + 15;
+    if (n.summary && n.summary.count > 0) {
+      // Share of each risk level, as in the app
+      var bar = el('g', { 'class': 'demo-riskbar' });
+      var w = 46, bx = x - w / 2;
+      ['safe', 'review', 'high', 'protected'].forEach(function (risk) {
+        var share = (n.summary.risks[risk] || 0) / n.summary.count;
+        if (share <= 0) return;
+        bar.appendChild(el('rect', { x: bx, y: y + half + 5, width: Math.max(1, w * share - 1), height: 3, 'class': risk }));
+        bx += w * share;
+      });
+      g.appendChild(bar);
+      labelY += 8;
+    }
+    g.appendChild(el('text', { x: x, y: labelY, 'text-anchor': 'middle' }, n.label));
+    if (n.summary) {
+      g.appendChild(el('text', { x: x, y: labelY + 13, 'text-anchor': 'middle', 'class': 'meta' },
+        n.summary.count + (n.summary.count === 1 ? ' file' : ' files') + ' \u00b7 ' + formatBytes(n.summary.bytes)));
+    }
+    g.style.setProperty('--d', (isCenter ? 0 : 0.08 + index * 0.05) + 's');
+
+    var activate = null;
+    if (n.kind === 'file') activate = function () { select(n.id); };
+    else if (!isCenter && n.drill) activate = function () { go(n.drill); };
+    if (activate) {
+      g.setAttribute('tabindex', '0');
+      g.setAttribute('role', 'button');
+      g.setAttribute('aria-label', n.label + (n.risk ? ', ' + RISK[n.risk] : n.summary ? ', ' + n.summary.count + ' files, open' : ''));
+      g.addEventListener('click', activate);
+      g.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activate(); }
+      });
+    } else {
+      g.classList.add('static');
+    }
+    nodeLayer.appendChild(g);
+    return g;
+  }
+
+  function drawLevel(animate) {
+    var level = buildLevel(state.level);
+    state.level = level.id;
+    currentLevel = level;
+    edgeLayer.textContent = '';
+    nodeLayer.textContent = '';
+    nodeEls = {};
+    var count = level.children.length;
+    level.children.forEach(function (n, i) {
+      var angle = (i / Math.max(count, 1)) * Math.PI * 2 - Math.PI / 2;
+      var x = CX + Math.cos(angle) * 300;
+      var y = CY + Math.sin(angle) * 176;
+      var line = el('line', { x1: CX, y1: CY, x2: x, y2: y, 'class': 'demo-edge ' + (n.kind === 'file' ? n.strength : 'recorded') });
+      line.style.setProperty('--d', (0.08 + i * 0.05) + 's');
+      edgeLayer.appendChild(line);
+      nodeEls[n.id] = drawNode(n, x, y, i, false);
+    });
+    drawNode(level.center, CX, CY, 0, true);
+    if (animate && !reducedMotion) {
+      svg.classList.remove('reveal');
+      void svg.getBoundingClientRect();
+      svg.classList.add('reveal');
+    }
+    renderCrumbs(level);
+  }
+
+  function renderCrumbs(level) {
+    crumbBar.textContent = '';
+    if (level.parent) {
+      var up = html('button', 'demo-crumb-up', '\u2190');
+      up.type = 'button';
+      up.title = 'Up one level';
+      up.setAttribute('aria-label', 'Up one level');
+      up.addEventListener('click', function () { go(level.parent); });
+      crumbBar.appendChild(up);
+    }
+    var crumbs = html('div', 'demo-crumbs');
+    level.crumbs.forEach(function (c, i) {
+      if (i) crumbs.appendChild(html('span', 'demo-crumb-sep', '/'));
+      if (i === level.crumbs.length - 1) {
+        crumbs.appendChild(html('span', 'demo-crumb current', c.title));
+      } else {
+        var b = html('button', 'demo-crumb', c.title);
+        b.type = 'button';
+        b.addEventListener('click', function () { go(c.id); });
+        crumbs.appendChild(b);
+      }
+    });
+    crumbBar.appendChild(crumbs);
+    crumbBar.appendChild(html('span', 'demo-crumb-note', level.parent ? 'Click a file to trace it.' : 'Click a mark to open it.'));
+
+    var label = html('label', 'demo-groupby');
+    label.appendChild(html('span', null, 'Group by'));
+    var selectEl = document.createElement('select');
+    selectEl.id = 'demo-group-by';
+    [['kind', 'Kind'], ['risk', 'Cleanup risk'], ['origin', 'Origin']].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      if (level.grouping === o[0]) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+    selectEl.addEventListener('change', function () { go(selectEl.value === 'kind' ? 'root' : 'root:' + selectEl.value); });
+    label.appendChild(selectEl);
+    crumbBar.appendChild(label);
+  }
 
   var nodeEls = {};
-  nodes.forEach(function (n) {
-    var g = el('g', { 'class': 'demo-node ' + n.kind + (n.risk ? ' ' + n.risk : ''), tabindex: '0', role: 'button' });
-    g.setAttribute('aria-label', n.label + (n.risk ? ', ' + RISK[n.risk] : ''));
-    var shape;
-    var glyphSize;
-    if (n.kind === 'app') { shape = el('circle', { cx: n.x, cy: n.y, r: 15 }); glyphSize = 17; }
-    else if (n.kind === 'session') { shape = el('circle', { cx: n.x, cy: n.y, r: 10.5 }); glyphSize = 12.5; }
-    else if (n.kind === 'unknown') { shape = el('circle', { cx: n.x, cy: n.y, r: 11 }); glyphSize = 13; }
-    else if (n.kind === 'file') { shape = el('circle', { cx: n.x, cy: n.y, r: 9.5 }); glyphSize = 11.5; }
-    else { shape = el('rect', { x: n.x - 11, y: n.y - 11, width: 22, height: 22, rx: n.kind === 'group' ? 6 : 3 }); glyphSize = 14; }
-    g.appendChild(el('circle', { cx: n.x, cy: n.y, r: 21, 'class': 'demo-hit' }));
-    g.appendChild(shape);
-    var glyph = el('g', {
-      'class': 'demo-glyph',
-      transform: 'translate(' + (n.x - glyphSize / 2) + ' ' + (n.y - glyphSize / 2) + ') scale(' + (glyphSize / 24) + ')'
-    });
-    if (n.kind === 'app') {
-      glyph.setAttribute('class', 'demo-glyph logo');
-      glyph.appendChild(el('path', { d: APP_LOGO_PATH }));
-    } else {
-      Icons.paths[iconOf(n)].forEach(function (d) { glyph.appendChild(el('path', { d: d })); });
-    }
-    g.appendChild(glyph);
-    var anchor = n.x > 700 ? 'end' : n.x < 130 ? 'start' : 'middle';
-    var tx = anchor === 'end' ? n.x + 12 : anchor === 'start' ? n.x - 12 : n.x;
-    g.appendChild(el('text', { x: tx, y: n.y + (n.kind === 'app' ? 33 : 29), 'text-anchor': anchor }, n.label));
-    g.addEventListener('click', function () { select(n.id); });
-    g.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(n.id); }
-    });
-    nodeLayer.appendChild(g);
-    nodeEls[n.id] = g;
-  });
+
+  // Opens a level of the map.
+  function go(levelId) {
+    state.level = levelId;
+    state.selected = null;
+    state.armed = null;
+    state.view = 'map';
+    drawLevel(true);
+    render();
+  }
 
   function select(id) {
     state.selected = id;
@@ -483,17 +633,6 @@
     panel.appendChild(kind);
     panel.appendChild(html('h3', 'demo-title', sel.label));
 
-    if (sel.kind !== 'file') {
-      var own = filesOf(sel);
-      var bytes = own.reduce(function (sum, f) { return sum + f.size; }, 0);
-      panel.appendChild(html('p', 'demo-muted', own.length + (own.length === 1 ? ' file' : ' files') + ' · ' + formatBytes(bytes)));
-      var hint = sel.kind === 'unknown'
-        ? 'Files that no session record names are attached here. They are never linked to a session by timestamp.'
-        : 'The highlighted files are linked to this ' + kindLabel[sel.kind].toLowerCase() + '. Select one to see the evidence.';
-      panel.appendChild(html('p', 'demo-note', hint));
-      return;
-    }
-
     var meta = html('div', 'demo-meta');
     meta.appendChild(riskLine(sel.risk));
     meta.appendChild(html('span', 'demo-muted', formatBytes(sel.size)));
@@ -562,14 +701,17 @@
     state.selected = null;
     state.armed = null;
     state.view = 'quarantine';
+    drawLevel(false);
     render();
     if (!tour.running) tabQuarantine.focus();
   }
 
   function restore(id) {
     state.quarantined = state.quarantined.filter(function (q) { return q !== id; });
-    state.selected = id;
+    state.level = levelOfFile(byId[id]);
     state.view = 'map';
+    drawLevel(true);
+    state.selected = id;
     render();
   }
 
@@ -609,37 +751,30 @@
     scroller.hidden = state.view !== 'map';
     list.hidden = state.view !== 'quarantine';
 
-    var lit = litSet();
-    nodes.forEach(function (n) {
-      var g = nodeEls[n.id];
-      g.classList.toggle('gone', isQuarantined(n.id));
-      g.classList.toggle('dim', !!lit && !lit[n.id]);
-      g.classList.toggle('lit', !!lit && !!lit[n.id]);
-      g.classList.toggle('selected', state.selected === n.id);
-      g.setAttribute('aria-pressed', String(state.selected === n.id));
-    });
-    edgeEls.forEach(function (e) {
-      var gone = isQuarantined(e.from) || isQuarantined(e.to);
-      e.line.classList.toggle('gone', gone);
-      e.line.classList.toggle('lit', !!lit && !!lit[e.from] && !!lit[e.to]);
-      e.line.classList.toggle('dim', !!lit && !(lit[e.from] && lit[e.to]));
-    });
+    crumbBar.hidden = state.view !== 'map';
+    for (var nodeId in nodeEls) {
+      nodeEls[nodeId].classList.toggle('selected', state.selected === nodeId);
+      nodeEls[nodeId].classList.toggle('dim', !!state.selected && state.selected !== nodeId && !!byId[nodeId]);
+    }
 
     renderPanel();
     renderAction();
     renderList();
 
-    // On narrow screens the map scrolls sideways; keep the selection in view.
-    var sel = byId[state.selected];
-    if (sel && state.view === 'map' && scroller.scrollWidth > scroller.clientWidth) {
-      scroller.scrollLeft = (sel.x / 880) * scroller.scrollWidth - scroller.clientWidth / 2;
-    }
   }
 
   tabMap.addEventListener('click', function () { state.view = 'map'; render(); });
   tabQuarantine.addEventListener('click', function () { state.view = 'quarantine'; state.armed = null; render(); });
   svg.addEventListener('click', function (ev) {
     if (ev.target === svg) select(null);
+  });
+  // Escape goes up a level while the pointer or the keyboard focus is in the preview
+  var pointerInside = false;
+  root.addEventListener('pointerenter', function () { pointerInside = true; });
+  root.addEventListener('pointerleave', function () { pointerInside = false; });
+  document.addEventListener('keydown', function (ev) {
+    var here = pointerInside || root.contains(document.activeElement);
+    if (ev.key === 'Escape' && here && state.view === 'map' && currentLevel && currentLevel.parent) go(currentLevel.parent);
   });
 
   // ---------- Walkthrough ----------
@@ -717,6 +852,8 @@
     state.selected = null;
     state.armed = null;
     state.view = 'map';
+    state.level = 'root';
+    drawLevel(false);
     render();
 
     // 1. The opening screen: an app is dragged from Finder onto the window.
@@ -745,29 +882,33 @@
       });
     });
 
-    // 3 and 4. Results: the map draws itself beside the scan totals, then one file is traced.
+    // 3. Results: the top level draws itself beside the scan totals.
     later(6000, function () {
       setStep(2);
       showIntro(null);
-      svg.classList.add('reveal');
+      go('root');
     });
-    later(7900, function () { svg.classList.remove('reveal'); });
-    later(9400, function () {
+    // 4. A kind is opened, as a click on its mark would.
+    later(8600, function () {
       setStep(3);
-      state.selected = 'f1';
-      render();
+      go('group:gLogs');
     });
-
-    // 4 and 5. The file goes to quarantine and comes back.
-    later(12200, function () {
+    // 5. One of its files is traced back to its session.
+    later(10600, function () {
       setStep(4);
+      select('f1');
+    });
+    // 6 and 7. The file goes to quarantine and comes back.
+    later(13400, function () {
+      setStep(5);
       quarantine('f1');
     });
-    later(14800, function () {
-      setStep(5);
+    later(16000, function () {
+      setStep(6);
       restore('f1');
     });
-    later(17100, stopTour);
+    later(18400, stopTour);
+
   }
 
   // Any interaction hands control to the visitor.
@@ -778,20 +919,11 @@
   });
   replay.addEventListener('click', playTour);
 
-  // Stagger the map's entrance: origin first, files last.
-  var order = { app: 0, workspace: 1, session: 2, unknown: 2, group: 3, file: 4 };
-  nodes.forEach(function (n, i) {
-    nodeEls[n.id].style.setProperty('--d', (order[n.kind] * 0.22 + (i % 5) * 0.05) + 's');
-  });
-  edgeEls.forEach(function (e) {
-    e.line.style.setProperty('--d', (order[byId[e.to].kind] * 0.22) + 's');
-  });
-
   root.classList.add('ready');
+  drawLevel(false);
   render();
 
-  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduced) {
+  if (reducedMotion) {
     replay.textContent = 'Play walkthrough';
   } else if ('IntersectionObserver' in window) {
     var seen = new IntersectionObserver(function (entries) {
