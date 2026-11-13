@@ -293,6 +293,7 @@ export function createScanModel(fields) {
     deduplicatedHardlinkCount: Number(fields.deduplicatedHardlinkCount || 0),
     permissionLimitations: Array.isArray(fields.permissionLimitations) ? fields.permissionLimitations : [],
     skippedSymlinks: Array.isArray(fields.skippedSymlinks) ? fields.skippedSymlinks : [],
+    skippedBulkDirectories: Array.isArray(fields.skippedBulkDirectories) ? fields.skippedBulkDirectories : [],
     truncated: Boolean(fields.truncated),
     maxFilesLimit: fields.maxFilesLimit ? Number(fields.maxFilesLimit) : null,
     startedAt: fields.startedAt || new Date().toISOString(),

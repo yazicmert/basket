@@ -286,6 +286,8 @@ export function createAtlasServer(options = {}) {
             scannedLocations: undefined,
             scannedLocationsCount: (state.scan.scannedLocations || []).length,
             skippedSymlinks: (state.scan.skippedSymlinks || []).slice(0, 50),
+            skippedBulkDirectories: (state.scan.skippedBulkDirectories || []).slice(0, 50),
+            skippedBulkDirectoryCount: (state.scan.skippedBulkDirectories || []).length,
             permissionLimitations: (state.scan.permissionLimitations || []).slice(0, 200)
           }
         : state.scan,

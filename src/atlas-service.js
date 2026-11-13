@@ -165,6 +165,7 @@ export class ArtifactAtlasService {
     const { scan, rawEntries } = await this.scanner.scan({
       applicationId: application ? application.id : null,
       authorizedRoots,
+      projectRoots: workspaces.map((ws) => ws.canonicalPath),
       signal,
       artificialDelayMs,
       onProgress: (prog) => {

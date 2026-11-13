@@ -10,6 +10,7 @@ import {
 export const MAP_MAX_ARTIFACT_NODES = 320;
 export const MAP_MAX_RECORDED_NODES = 160;
 export const MAP_MAX_NODES_PER_GROUP = 14;
+export const MAP_MAX_OPERATION_NODES = 160;
 
 /**
  * Chooses which files get a mark on the map. Selection only affects drawing: provenance,
@@ -318,9 +319,25 @@ export class GraphEngine {
       });
     });
 
+    // Which files get a mark is decided here, before tool calls, because a large scan only
+    // draws the tool calls that touched a drawn file.
+    const activeArtifacts = artifacts.filter((a) => !a.quarantined);
+    // A large scan cannot draw every file. The map shows every file a session recorded, then
+    // the largest files of each group; totals and the Sizes view always cover all files.
+    const shownArtifacts = selectArtifactsForMap(activeArtifacts, artifactGroups);
+    const isCapped = shownArtifacts.length < activeArtifacts.length;
+
     // 5. Operation nodes (tool calls)
-    operations.forEach((op, idx) => {
-      const angle = (idx / Math.max(operations.length, 1)) * Math.PI * 2;
+    let shownOperations = operations;
+    if (isCapped || operations.length > MAP_MAX_OPERATION_NODES) {
+      const touched = new Set();
+      for (const art of shownArtifacts) {
+        for (const opId of art.operationIds || []) touched.add(opId);
+      }
+      shownOperations = operations.filter((op) => touched.has(op.id)).slice(0, MAP_MAX_OPERATION_NODES);
+    }
+    shownOperations.forEach((op, idx) => {
+      const angle = (idx / Math.max(shownOperations.length, 1)) * Math.PI * 2;
       addNode({
         id: op.id,
         nodeType: NodeType.OPERATION,
@@ -362,10 +379,6 @@ export class GraphEngine {
     }
 
     // 7. Artifact nodes (outer ring clustered near their group or session)
-    const activeArtifacts = artifacts.filter((a) => !a.quarantined);
-    // A large scan cannot draw every file. The map shows every file a session recorded, then
-    // the largest files of each group; totals and the Sizes view always cover all files.
-    const shownArtifacts = selectArtifactsForMap(activeArtifacts, artifactGroups);
     shownArtifacts.forEach((art, idx) => {
       const angle = (idx / Math.max(shownArtifacts.length, 1)) * Math.PI * 2;
       const ringRadius = 540 + (idx % 3) * 48;
@@ -494,6 +507,8 @@ export class GraphEngine {
         shownArtifactCount: shownArtifacts.length,
         hiddenArtifactCount: activeArtifacts.length - shownArtifacts.length,
         sessionCount: sessions.length,
+        operationCount: operations.length,
+        shownOperationCount: shownOperations.length,
         riskCounts: countBy(activeArtifacts, (a) => a.cleanupClassification),
         largestArtifact: largestOf(activeArtifacts),
         verifiedArtifactCount: activeArtifacts.filter(

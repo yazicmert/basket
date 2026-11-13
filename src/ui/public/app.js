@@ -746,6 +746,11 @@ function renderScanNoticesBanner(state) {
       `The scan stopped at ${state.scan.maxFilesLimit.toLocaleString()} files. Results and sizes are partial.`
     );
   }
+  if (state.scan.skippedBulkDirectoryCount > 0) {
+    notices.push(
+      `${pluralize(state.scan.skippedBulkDirectoryCount, 'dependency or Git folder')} inside project folders ${state.scan.skippedBulkDirectoryCount === 1 ? 'was' : 'were'} left out (node_modules, .git and similar). They are never cleaned up from here.`
+    );
+  }
   const hiddenOnMap = state.graph?.stats?.hiddenArtifactCount || 0;
   if (hiddenOnMap > 0) {
     notices.push(
@@ -780,6 +785,7 @@ function loadGraphFromState(graphData) {
   uiState.edges = graphData.edges.map((e) => ({ ...e }));
   // Fit the whole map into view once the layout has settled, unless the user moves it first
   uiState.fitCameraAtTick = uiState.animTick + 150;
+  uiState.layoutSettlesAtTick = uiState.animTick + 420;
 
   const canvas = document.getElementById('knowledge-graph-canvas');
   if (canvas) {
@@ -945,7 +951,10 @@ function renderGraphCanvas() {
     fitCameraToGraph();
   }
   if (uiState.activeTab === 'graph' && uiState.nodes.length > 0) {
-    stepGraphPhysics();
+    // The layout runs until it has settled, then rests; dragging a mark wakes it up.
+    if (uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick) {
+      stepGraphPhysics();
+    }
     drawGraph();
   }
   requestAnimationFrame(renderGraphCanvas);

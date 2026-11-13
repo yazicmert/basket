@@ -2,6 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ScanStatus, createScanModel } from '../models/entities.js';
 
+/** Dependency and version-control folders that are skipped inside project folders. */
+export const PROJECT_BULK_DIRECTORIES = new Set([
+  'node_modules',
+  'bower_components',
+  '.pnpm-store',
+  '.git',
+  '.hg',
+  '.svn',
+  '.venv',
+  'venv',
+  'Pods',
+  '.gradle'
+]);
+
 export class Scanner {
   constructor({ platformServices, maxFiles = 300000 }) {
     this.platformServices = platformServices;
@@ -24,8 +38,17 @@ export class Scanner {
     signal = null,
     onProgress = null,
     followInBoundarySymlinks = false,
-    artificialDelayMs = 0
+    artificialDelayMs = 0,
+    projectRoots = []
   }) {
+    // Inside project folders, dependency and version-control folders are not listed file by
+    // file: they can hold hundreds of thousands of files that no cleanup should touch one at
+    // a time. They are recorded as skipped so the result says what it left out.
+    const normalizedProjectRoots = projectRoots
+      .filter(Boolean)
+      .map((r) => this.platformServices.resolveRealPathSafe(r));
+    const isInsideProject = (dirPath) =>
+      normalizedProjectRoots.some((root) => dirPath === root || dirPath.startsWith(root + path.sep));
     const normalizedRoots = Array.from(
       new Set(
         authorizedRoots
@@ -247,6 +270,10 @@ export class Scanner {
         if (lstat.isDirectory()) {
           // Do not descend into .app bundles found inside a workspace
           if (dirent.name.endsWith('.app')) {
+            continue;
+          }
+          if (PROJECT_BULK_DIRECTORIES.has(dirent.name) && isInsideProject(dirRealPath)) {
+            scanRecord.skippedBulkDirectories.push(childPath);
             continue;
           }
           await walkDirectory(childPath);
