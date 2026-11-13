@@ -859,7 +859,10 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/map/level' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const level = buildMapLevel(activeService().activeState, body.levelId || 'root');
+        // Session marks carry their first prompt, read now for this response only
+        const level = activeService().decorateLevelWithPrompts(
+          buildMapLevel(activeService().activeState, body.levelId || 'root')
+        );
         if (!level) {
           return sendJson(res, 404, { ok: false, error: 'UNKNOWN_MAP_LEVEL' });
         }

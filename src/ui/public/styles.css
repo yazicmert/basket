@@ -1426,3 +1426,15 @@ button.crumb:hover {
   max-height: 220px;
   overflow-y: auto;
 }
+
+.graph-hover-tooltip .tooltip-prompt {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid currentColor;
+  border-top-color: color-mix(in srgb, currentColor 25%, transparent);
+  opacity: 0.9;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

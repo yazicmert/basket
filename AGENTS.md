@@ -20,7 +20,8 @@
    - Deduplicate physical storage metrics by `${dev}:${ino}` so hardlinked files or multi-session files are never double-counted.
 6. **Zero Raw Conversation Persistence**:
    - When parsing `.jsonl` transcripts or composer databases, extract only structural metadata (session ID, timestamps, workspace path, tool name, target file paths). Never copy user prompts or assistant prose into SQLite.
-   - One exception is for display only: `src/provenance/session-prompt.js` reads the first prompt of a session from its transcript when the user selects a node (`/api/node/prompt`). The text goes to the local window and nowhere else: never into SQLite, the scan state, a log or a file. Only transcripts inside the folders of the active scan are read. Do not add other readers of conversation text, and do not cache this one.
+   - One exception is for display only: `src/provenance/session-prompt.js` reads the first prompt of a session from its transcript when the user selects a node (`/api/node/prompt`) and when a map level with session marks is served (`/api/map/level`, where it labels sessions whose title was made up from their ID). The text is put on that response only and goes to the local window and nowhere else: never into the session model, SQLite, the scan state, a log or a file. Only transcripts inside the folders of the active scan are read. Do not add other readers of conversation text, and do not cache this one.
+   - A session's transcript is its main file (`<session>.jsonl`), not a subagent's (`<session>/subagents/*.jsonl`), whose records carry the parent's session ID.
 
 7. **Never Scan the Real Home Folder Without Consent**:
    - The UI server serves sandbox sample data until the user grants the `home-folder-scan` consent; the consent is persisted and revocable. Probing permission status must never trigger a macOS prompt or read file contents.

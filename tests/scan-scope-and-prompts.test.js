@@ -33,12 +33,20 @@ function makeHome() {
   const transcripts = path.join(home, '.claude', 'projects', 'importer');
   fs.mkdirSync(transcripts, { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{}');
+  // A subagent's transcript carries the parent's session ID and sorts before the main one
+  const subagents = path.join(transcripts, 'sess-one', 'subagents');
+  fs.mkdirSync(subagents, { recursive: true });
+  fs.writeFileSync(
+    path.join(subagents, 'agent-1.jsonl'),
+    JSON.stringify({ sessionId: 'sess-one', isSidechain: true, type: 'user', cwd: project, timestamp: '2026-11-01T10:05:00.000Z', message: { role: 'user', content: 'Subagent task text' } }) + '\n'
+  );
   const transcript = path.join(transcripts, 'sess-one.jsonl');
   const base = { sessionId: 'sess-one', cwd: project, timestamp: '2026-11-01T10:00:00.000Z' };
   fs.writeFileSync(
     transcript,
     [
       JSON.stringify({ ...base, type: 'user', isMeta: true, message: { role: 'user', content: 'Caveat: meta text' } }),
+      JSON.stringify({ ...base, type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation.' } }),
       JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: `<command-name>/init</command-name>` } }),
       JSON.stringify({ ...base, type: 'user', message: { role: 'user', content: [{ type: 'text', text: PROMPT }] } }),
       JSON.stringify({
@@ -208,7 +216,19 @@ test('P2. First prompt: shown for a session, its tool calls and its files, and s
   const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', dbPath });
   try {
     const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    assert.equal(state.sessions.length, 1, 'the subagent transcript belongs to its session');
     const session = state.sessions[0];
+    assert.equal(session.sourcePath, env.transcript, "the session's record is its main transcript");
+
+    // Session marks on the map carry the prompt; the made-up title is replaced by it
+    const { buildMapLevel } = await import('../src/graph/map-levels.js');
+    const sessionsLevel = service.decorateLevelWithPrompts(buildMapLevel(state, 'sessions'));
+    const mark = sessionsLevel.nodes.find((n) => n.id === `session:${session.id}`);
+    assert.equal(mark.metadata.firstPrompt, PROMPT);
+    assert.ok(PROMPT.startsWith(mark.label.replace(/…$/, '')), mark.label);
+    const opened = service.decorateLevelWithPrompts(buildMapLevel(state, `session:${session.id}`));
+    assert.equal(opened.nodes[0].metadata.firstPrompt, PROMPT);
+    assert.match(session.title, /^Claude Session /, 'the session itself is not changed');
     const file = state.artifacts.find((a) => a.name === 'importer.js');
     const untraced = state.artifacts.find((a) => a.name === 'settings.json');
     assert.deepEqual(untraced.sessionIds, []);
@@ -237,6 +257,22 @@ test('P2. First prompt: shown for a session, its tool calls and its files, and s
     db.close();
   } finally {
     try { service.sqliteStore.close(); } catch { /* already closed */ }
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('S5. Files a session recorded are kept when a scan reaches the file limit', async () => {
+  const env = makeHome();
+  for (let i = 0; i < 40; i++) fs.writeFileSync(path.join(env.project, 'src', `bulk-${i}.txt`), 'b');
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', maxFiles: 5 });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    assert.equal(state.scan.truncated, true);
+    const recorded = state.artifacts.find((a) => a.name === 'importer.js');
+    assert.ok(recorded, 'the recorded file is in the scan');
+    assert.equal(recorded.provenanceConfidence, 'VERIFIED');
+  } finally {
+    service.sqliteStore.close();
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });

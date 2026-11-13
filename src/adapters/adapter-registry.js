@@ -113,7 +113,13 @@ export class ClaudeCodeAdapter {
       if (!fs.existsSync(projectsRoot)) {
         continue;
       }
-      const jsonlFiles = safeWalkJsonlFiles(projectsRoot, 4);
+      // A session's subagents write their own transcripts under <session>/subagents/, and
+      // their records carry the parent's session ID. Main transcripts are read first so a
+      // session's record is its own file, whatever order the folder lists them in.
+      const isSubagentTranscript = (p) => path.basename(path.dirname(p)) === 'subagents';
+      const jsonlFiles = safeWalkJsonlFiles(projectsRoot, 4).sort(
+        (a, b) => Number(isSubagentTranscript(a)) - Number(isSubagentTranscript(b)) || a.localeCompare(b)
+      );
       for (const jsonlPath of jsonlFiles) {
         let content = '';
         try {
@@ -182,6 +188,10 @@ export class ClaudeCodeAdapter {
           }
 
           const session = sessionsById.get(externalSessionId);
+          // The file named after the session is its main transcript
+          if (path.basename(jsonlPath, '.jsonl') === externalSessionId && !isSubagentTranscript(jsonlPath)) {
+            session.sourcePath = platformServices.resolveRealPathSafe(jsonlPath);
+          }
           if (workspace && !session.workspaceId) {
             session.workspaceId = workspace.id;
           }

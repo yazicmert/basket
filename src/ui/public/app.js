@@ -1731,9 +1731,11 @@ function initGraphCanvas() {
           hit.nodeType === 'ARTIFACT' ? RISK_LABELS[hit.riskCategory] : null,
           hit.sizeBytes ? formatBytes(hit.sizeBytes) : null
         ].filter(Boolean);
+        const firstPrompt = hit.metadata?.firstPrompt;
         tooltip.innerHTML = `
           <div>${escapeHtml(hit.label)}</div>
           <div class="tooltip-meta">${escapeHtml(tooltipMeta.join(' · '))}</div>
+          ${firstPrompt && firstPrompt !== hit.label ? `<div class="tooltip-prompt">${escapeHtml(firstPrompt)}</div>` : ''}
         `;
       } else {
         tooltip.classList.add('hidden');

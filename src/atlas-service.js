@@ -11,7 +11,7 @@ import { GraphEngine } from './graph/graph-engine.js';
 import { CleanupEngine } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
 import { normalizeScanScope } from './platform/permissions.js';
-import { readSessionFirstPrompt } from './provenance/session-prompt.js';
+import { readSessionFirstPrompt, promptExcerpt } from './provenance/session-prompt.js';
 
 // Upper bound on files in one scan. The map and the UI stay responsive well beyond this
 // because they work from summaries; the bound keeps memory and scan time predictable.
@@ -19,6 +19,9 @@ export const DEFAULT_MAX_FILES = 300000;
 
 /** Upper bound on files named by session tool calls that are read inside project folders. */
 export const MAX_RECORDED_FILES = 50000;
+
+/** Titles the adapters make up from a session ID when the record names none. */
+const GENERATED_SESSION_TITLE = /^(Claude Session|Codex Rollout|Cursor Composer|Session) \S+$/;
 
 export class ArtifactAtlasService {
   constructor(options = {}) {
@@ -377,6 +380,45 @@ export class ArtifactAtlasService {
   }
 
   /**
+   * First prompt of a session, read from its transcript now. Only a transcript inside the
+   * folders this scan covered is read. Nothing is stored.
+   */
+  readPromptOf(session) {
+    const roots = this.activeState.authorizedRoots || [];
+    const inScope =
+      session && session.sourcePath && this.platformServices.isWithinAuthorizedRoots(session.sourcePath, roots);
+    return inScope ? readSessionFirstPrompt(session) : { available: false, reason: 'NOT_RECORDED_FOR_THIS_APP' };
+  }
+
+  /**
+   * Adds each session's first prompt to the session marks of a map level, for display. The
+   * level is built fresh for every request; the prompt is put on that copy only, never on
+   * the session, the scan state or the index. A session whose title was made up from its ID
+   * is labelled by its prompt instead.
+   */
+  decorateLevelWithPrompts(level) {
+    if (!level || !Array.isArray(level.nodes)) {
+      return level;
+    }
+    const byId = new Map((this.activeState.sessions || []).map((s) => [s.id, s]));
+    for (const node of level.nodes) {
+      const session = node.metadata && node.metadata.session ? byId.get(node.metadata.session.id) : null;
+      if (!session) {
+        continue;
+      }
+      const prompt = this.readPromptOf(session);
+      if (!prompt.available) {
+        continue;
+      }
+      node.metadata = { ...node.metadata, firstPrompt: promptExcerpt(prompt.text, 200) };
+      if (GENERATED_SESSION_TITLE.test(node.label || '')) {
+        node.label = promptExcerpt(prompt.text, 42);
+      }
+    }
+    return level;
+  }
+
+  /**
    * First prompt of each session behind a node. Read from the transcripts now, for display;
    * nothing is stored. A transcript is only read from inside the folders this scan covered.
    */
@@ -384,13 +426,8 @@ export class ArtifactAtlasService {
     const sessions = this.sessionsForNode(nodeId).sort((a, b) =>
       String(a.startedAt || '').localeCompare(String(b.startedAt || ''))
     );
-    const roots = this.activeState.authorizedRoots || [];
     const prompts = sessions.slice(0, limit).map((session) => {
-      const inScope =
-        session.sourcePath && this.platformServices.isWithinAuthorizedRoots(session.sourcePath, roots);
-      const prompt = inScope
-        ? readSessionFirstPrompt(session)
-        : { available: false, reason: 'NOT_RECORDED_FOR_THIS_APP' };
+      const prompt = this.readPromptOf(session);
       return {
         sessionId: session.id,
         title: session.title,
