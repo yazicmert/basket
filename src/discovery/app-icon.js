@@ -69,6 +69,34 @@ function readInfoPlist(contentsDir) {
 }
 
 /**
+ * Picks the bundle's .icns file. Info.plist usually names it (CFBundleIconFile). Apps built
+ * around an asset catalog name the icon set instead (CFBundleIconName) and still ship an
+ * .icns beside it, so those names are tried too, then a lone .icns in Resources.
+ */
+function findIconFile(contentsDir, plist) {
+  const resourcesDir = path.join(contentsDir, 'Resources');
+  const usable = (name) => {
+    if (typeof name !== 'string' || !name || name !== path.basename(name)) return null;
+    const fileName = name.toLowerCase().endsWith('.icns') ? name : `${name}.icns`;
+    const candidate = path.join(resourcesDir, fileName);
+    const stat = fs.lstatSync(candidate, { throwIfNoEntry: false });
+    return stat && stat.isFile() && stat.size <= MAX_ICNS_BYTES ? candidate : null;
+  };
+  for (const name of [plist.CFBundleIconFile, plist.CFBundleIconName, 'AppIcon', 'electron', 'icon', 'app']) {
+    const found = usable(name);
+    if (found) return found;
+  }
+  let entries = [];
+  try {
+    entries = fs.readdirSync(resourcesDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const icns = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.icns'));
+  return icns.length === 1 ? usable(icns[0].name) : null;
+}
+
+/**
  * Returns the application's icon as a PNG buffer, or null when the bundle has no icon
  * that can be read this way (for example icons that exist only in an asset catalog).
  */
@@ -85,15 +113,8 @@ export function readAppIconPng(bundlePath) {
 
     const contentsDir = path.join(resolvedBundlePath, 'Contents');
     const plist = readInfoPlist(contentsDir);
-    const iconName = plist.CFBundleIconFile;
-    if (typeof iconName !== 'string' || !iconName || iconName !== path.basename(iconName)) {
-      return null;
-    }
-    const fileName = iconName.toLowerCase().endsWith('.icns') ? iconName : `${iconName}.icns`;
-    const iconPath = path.join(contentsDir, 'Resources', fileName);
-
-    const iconStat = fs.lstatSync(iconPath, { throwIfNoEntry: false });
-    if (!iconStat || !iconStat.isFile() || iconStat.size > MAX_ICNS_BYTES) {
+    const iconPath = findIconFile(contentsDir, plist);
+    if (!iconPath) {
       return null;
     }
     // The icon must live inside the bundle even after resolving parent directories.

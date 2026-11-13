@@ -401,6 +401,25 @@ export function createAtlasServer(options = {}) {
     listLimit: REVIEW_LIST_LIMIT
   });
 
+  // Application icons are requested once per row of the app list. Reading them is cached,
+  // and so is the list of bundles that may be asked for.
+  const iconCache = new Map();
+  const cachedAppIcon = (bundlePath) => {
+    if (!iconCache.has(bundlePath)) {
+      if (iconCache.size > 600) iconCache.clear();
+      iconCache.set(bundlePath, readAppIconPng(bundlePath));
+    }
+    return iconCache.get(bundlePath);
+  };
+  let listedCache = { at: 0, mode: null, paths: new Set() };
+  const listedBundlePaths = () => {
+    const mode = currentMode();
+    if (listedCache.mode !== mode || Date.now() - listedCache.at > 15000) {
+      listedCache = { at: Date.now(), mode, paths: new Set(discoverAvailableBundles().map((b) => b.bundlePath)) };
+    }
+    return listedCache.paths;
+  };
+
   const sendJson = (res, statusCode, payload, extraHeaders = {}) => {
     const body = JSON.stringify(payload);
     res.writeHead(statusCode, {
@@ -544,8 +563,7 @@ export function createAtlasServer(options = {}) {
       // Only bundles that are already listed in the picker can be asked for.
       if (url.pathname === '/api/app/icon' && req.method === 'GET') {
         const requested = url.searchParams.get('bundlePath') || '';
-        const listed = discoverAvailableBundles().some((b) => b.bundlePath === requested);
-        const png = listed ? readAppIconPng(requested) : null;
+        const png = listedBundlePaths().has(requested) ? cachedAppIcon(requested) : null;
         if (!png) {
           return sendJson(res, 404, { ok: false, error: 'NO_ICON' });
         }

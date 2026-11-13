@@ -12,6 +12,7 @@ import { summarizeRisk } from './graph-engine.js';
  * fast because no level holds more than a few dozen marks.
  *
  *   root                      the application, its kinds of files, and its sessions
+ *   root:<grouping>           the same files grouped another way: risk, origin, age, type
  *   sessions                  every session
  *   group:<id>                one kind of file (caches, logs, ...), by folder
  *   session:<id>              the files one session wrote or is linked to, by folder
@@ -27,6 +28,61 @@ export const LEVEL_MAX_SESSIONS = 40;
 /** A folder with more direct files than this shows its largest few and bundles the rest by type. */
 export const LEVEL_FILES_BEFORE_BUNDLING = 12;
 export const LEVEL_MAX_TYPE_BUNDLES = 14;
+
+/**
+ * Other ways to split the whole scan at the top level. Each one is a list of buckets; a
+ * bucket is a scope (like a kind or a session) that then opens by folder.
+ */
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const GROUPINGS = {
+  risk: {
+    title: 'By cleanup risk',
+    buckets: () => [
+      { key: 'LOW', label: 'Safe to remove' },
+      { key: 'REVIEW', label: 'Review first' },
+      { key: 'HIGH', label: 'High risk' },
+      { key: 'PROTECTED', label: 'Protected' }
+    ],
+    keyOf: (art) => art.cleanupClassification
+  },
+  origin: {
+    title: 'By origin',
+    buckets: () => [
+      { key: 'VERIFIED', label: 'Recorded by a session' },
+      { key: 'INFERRED', label: 'Likely from this app' },
+      { key: 'UNKNOWN', label: 'Unknown origin' }
+    ],
+    keyOf: (art) => art.provenanceConfidence
+  },
+  age: {
+    title: 'By last change',
+    buckets: () => [
+      { key: 'week', label: 'Last 7 days' },
+      { key: 'month', label: '8 to 30 days ago' },
+      { key: 'halfyear', label: '1 to 6 months ago' },
+      { key: 'older', label: 'More than 6 months ago' },
+      { key: 'unknown', label: 'Date unknown' }
+    ],
+    keyOf: (art, now) => {
+      const at = Date.parse(art.modifiedAt || '');
+      if (!Number.isFinite(at)) return 'unknown';
+      const days = (now - at) / DAY_MS;
+      return days <= 7 ? 'week' : days <= 30 ? 'month' : days <= 183 ? 'halfyear' : 'older';
+    }
+  },
+  type: {
+    title: 'By file type',
+    buckets: (files) => {
+      const counts = new Map();
+      for (const f of files) counts.set(fileTypeOf(f), (counts.get(fileTypeOf(f)) || 0) + (f.sizeBytes || 0));
+      return [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 22)
+        .map(([key]) => ({ key, label: key === 'no extension' ? 'No extension' : `${key} files` }));
+    },
+    keyOf: (art) => fileTypeOf(art)
+  }
+};
 
 /** What a file "is" for bundling: its extension, or a short word for files without one. */
 export function fileTypeOf(art) {
@@ -187,7 +243,8 @@ function indexState(state) {
       if (!links.has(edge.sourceId)) links.set(edge.sourceId, edge.confidence);
     }
   }
-  return { live, byId, sessions, sessionLinks };
+  const now = Date.parse(state.scan?.completedAt || '') || Date.now();
+  return { live, byId, sessions, sessionLinks, now };
 }
 
 function scopeFiles(ix, state, scope) {
@@ -196,6 +253,15 @@ function scopeFiles(ix, state, scope) {
     const group = (state.artifactGroups || []).find((g) => g.id === scope.slice(6));
     if (!group) return null;
     return { files: group.artifactIds.map((id) => ix.byId.get(id)).filter(Boolean), links: null, group };
+  }
+  if (scope.startsWith('bucket:')) {
+    const [, grouping, ...rest] = scope.split(':');
+    const key = rest.join(':');
+    const def = GROUPINGS[grouping];
+    if (!def) return null;
+    const bucket = def.buckets(ix.live).find((b) => b.key === key);
+    if (!bucket) return null;
+    return { files: ix.live.filter((a) => def.keyOf(a, ix.now) === key), links: null, bucket: { grouping, ...bucket } };
   }
   if (scope.startsWith('session:')) {
     const session = ix.sessions.find((s) => s.id === scope.slice(8));
@@ -210,6 +276,7 @@ function scopeTitle(state, scope, scoped) {
   if (scope === 'all') return 'All files';
   if (scoped.group) return scoped.group.name;
   if (scoped.session) return scoped.session.title || 'Session';
+  if (scoped.bucket) return scoped.bucket.label;
   return scope;
 }
 
@@ -217,6 +284,8 @@ function scopeTitle(state, scope, scoped) {
 export function parseLevelId(levelId) {
   const id = String(levelId || 'root');
   if (id === 'root' || id === 'sessions') return { kind: id };
+  if (id.startsWith('root:')) return GROUPINGS[id.slice(5)] ? { kind: 'grouping', grouping: id.slice(5) } : null;
+  if (id.startsWith('bucket:')) return { kind: 'scope', scope: id };
   if (id.startsWith('group:')) return { kind: 'scope', scope: id };
   if (id.startsWith('session:')) return { kind: 'scope', scope: id };
   if (id.startsWith('type:')) {
@@ -243,7 +312,7 @@ export function levelArtifactIds(state, levelId) {
   const parsed = parseLevelId(levelId);
   if (!parsed) return null;
   const ix = indexState(state);
-  if (parsed.kind === 'root') return ix.live.map((a) => a.id);
+  if (parsed.kind === 'root' || parsed.kind === 'grouping') return ix.live.map((a) => a.id);
   if (parsed.kind === 'sessions') {
     const ids = new Set();
     for (const links of ix.sessionLinks.values()) for (const id of links.keys()) ids.add(id);
@@ -312,6 +381,33 @@ export function buildMapLevel(state, levelId = 'root') {
     return finish({ id: 'root', title: rootCrumb.title, breadcrumb: [rootCrumb], parentId: null, center, children });
   }
 
+  if (parsed.kind === 'grouping') {
+    const def = GROUPINGS[parsed.grouping];
+    const center = app
+      ? {
+          id: app.id,
+          nodeType: NodeType.AI_APPLICATION,
+          label: app.name,
+          subtitle: `${ix.live.length.toLocaleString('en-US')} files`,
+          sizeBytes: 0,
+          confidence: ProvenanceConfidence.VERIFIED,
+          riskCategory: RiskCategory.PROTECTED,
+          radius: 30,
+          metadata: { ...app, summary: summarize(ix.live) }
+        }
+      : summaryNode({ id: 'all', nodeType: NodeType.FOLDER, label: 'All files', summary: summarize(ix.live) });
+    const children = [];
+    for (const bucket of def.buckets(ix.live)) {
+      const files = ix.live.filter((a) => def.keyOf(a, ix.now) === bucket.key);
+      if (files.length === 0) continue;
+      const scope = `bucket:${parsed.grouping}:${bucket.key}`;
+      children.push(
+        summaryNode({ id: scope, nodeType: NodeType.FOLDER, label: bucket.label, summary: summarize(files), drillId: scope, extra: { bucket: { grouping: parsed.grouping, key: bucket.key } } })
+      );
+    }
+    return finish({ id: levelId, title: rootCrumb.title, breadcrumb: [{ id: levelId, title: rootCrumb.title }], parentId: null, center, children, grouping: parsed.grouping });
+  }
+
   if (parsed.kind === 'sessions') {
     const center = summaryNode({
       id: 'sessions',
@@ -346,9 +442,12 @@ export function buildMapLevel(state, levelId = 'root') {
   const scoped = scopeFiles(ix, state, parsed.scope);
   if (!scoped) return null;
   const scopeLevelId = parsed.scope === 'all' ? 'root' : parsed.scope;
+  const bucketRoot = scoped.bucket ? `root:${scoped.bucket.grouping}` : null;
   const scopeCrumbs =
     parsed.scope === 'all'
       ? [rootCrumb]
+      : bucketRoot
+        ? [{ id: bucketRoot, title: rootCrumb.title }, { id: parsed.scope, title: scoped.bucket.label }]
       : parsed.scope.startsWith('session:')
         ? [rootCrumb, { id: 'sessions', title: 'Sessions' }, { id: parsed.scope, title: scopeTitle(state, parsed.scope, scoped) }]
         : [rootCrumb, { id: parsed.scope, title: scopeTitle(state, parsed.scope, scoped) }];
@@ -395,6 +494,8 @@ export function buildMapLevel(state, levelId = 'root') {
   let center;
   if (isScopeTop && scoped.group) {
     center = summaryNode({ id: thisId, nodeType: NodeType.ARTIFACT_GROUP, label: scoped.group.name, summary: summarize(inLevel), artifactType: scoped.group.artifactType, extra: { path: level.prefix } });
+  } else if (isScopeTop && scoped.bucket) {
+    center = summaryNode({ id: thisId, nodeType: NodeType.FOLDER, label: scoped.bucket.label, summary: summarize(inLevel), extra: { path: level.prefix, bucket: scoped.bucket } });
   } else if (isScopeTop && scoped.session) {
     center = summaryNode({ id: thisId, nodeType: NodeType.SESSION, label: scoped.session.title || 'Session', summary: summarize(inLevel), extra: { session: scoped.session, path: level.prefix } });
   } else {
@@ -459,7 +560,7 @@ export function buildMapLevel(state, levelId = 'root') {
   // Up: the nearest ancestor that is its own level
   let parentId = null;
   if (thisId === scopeLevelId) {
-    parentId = parsed.scope === 'all' ? null : parsed.scope.startsWith('session:') ? 'sessions' : 'root';
+    parentId = parsed.scope === 'all' ? null : bucketRoot ? bucketRoot : parsed.scope.startsWith('session:') ? 'sessions' : 'root';
   } else {
     let dir = parentOf(level.prefix);
     parentId = scopeLevelId;
@@ -491,7 +592,7 @@ export function buildMapLevel(state, levelId = 'root') {
   });
 }
 
-function finish({ id, title, breadcrumb, parentId, center, children, note = null, path = null }) {
+function finish({ id, title, breadcrumb, parentId, center, children, note = null, path = null, grouping = null }) {
   center.pinned = true;
   center.x = 0;
   center.y = 0;
@@ -504,5 +605,8 @@ function finish({ id, title, breadcrumb, parentId, center, children, note = null
       child.nodeType === NodeType.ARTIFACT ? child.linkConfidence || child.confidence : ProvenanceConfidence.VERIFIED
     )
   );
-  return { id, title, breadcrumb, parentId, note, path, nodes: [center, ...children], edges };
+  // Which top-level grouping this level belongs to, so the control on the map can show it
+  const rootId = breadcrumb[0].id;
+  const activeGrouping = grouping || (rootId.startsWith('root:') ? rootId.slice(5) : 'kind');
+  return { id, title, breadcrumb, parentId, note, path, grouping: activeGrouping, nodes: [center, ...children], edges };
 }

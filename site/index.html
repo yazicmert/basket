@@ -8,7 +8,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=4" />
+<link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
 <div class="topbar">
@@ -138,8 +138,12 @@
           <p>There is no account and no upload. The app reads nothing from your disk until you <a href="permissions/">allow it</a>, and that consent can be withdrawn. It uses the network only to check for and download its own updates.</p></div>
         <div><h3>Works with any app</h3>
           <p>Drop any <code>.app</code>. Its data is located by bundle identifier and name across Library folders, sandbox containers and hidden home folders. Claude Code, Cursor and Codex also get session-level tracing.</p></div>
+        <div><h3>Opens level by level</h3>
+          <p>The map starts with the app, its kinds of files and its sessions. Click a kind, a session or a folder to go inside it, and regroup everything by cleanup risk, origin, last change or file type.</p></div>
+        <div><h3>Updates itself when you ask</h3>
+          <p>When a new version is out, a button appears in the title bar. One confirmation downloads it, checks it against its published SHA-256 and restarts into the new version.</p></div>
         <div><h3>Shows real disk usage</h3>
-          <p>Sizes are physical. Hardlinked files are counted once, so the space you can reclaim is not inflated.</p></div>
+          <p>Sizes are physical. Hardlinked files are counted once, and your project folders are counted separately from the app's own data, so the space you can reclaim is not inflated.</p></div>
       </div>
     </div>
   </section>
@@ -299,7 +303,7 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js?v=4" defer></script>
-<script src="demo.js?v=4" defer></script>
+<script src="icons.js?v=5" defer></script>
+<script src="demo.js?v=5" defer></script>
 </body>
 </html>

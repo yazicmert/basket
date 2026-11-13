@@ -87,20 +87,31 @@ function appIconUrl(bundlePath) {
 }
 
 // Fills an `.app-icon` element for an application ({ name, adapterId, bundlePath, isDemoFixture }).
+// Order of preference: the application's own icon from its bundle, a known logo, a glyph.
 function fillAppIcon(el, app) {
   if (!el) return;
-  el.innerHTML = iconSvg(app ? Icons.forApp(app) : 'folder', 16);
   el.classList.remove('has-image');
+  const logo = app ? Icons.logoForApp(app) : null;
+  if (logo) {
+    el.innerHTML = `<i class="app-logo" style="-webkit-mask-image:url(/logos/${logo}.svg);mask-image:url(/logos/${logo}.svg)"></i>`;
+  } else {
+    el.innerHTML = iconSvg(app ? Icons.forApp(app) : 'folder', 16);
+  }
   if (app && app.bundlePath && !app.isDemoFixture) {
-    const img = new Image();
+    // The image sits in the page from the start so the browser loads it when its row is
+    // visible; it replaces the fallback only once it has loaded.
+    const img = document.createElement('img');
     img.alt = '';
     img.loading = 'lazy';
     img.decoding = 'async';
+    img.className = 'app-icon-image';
     img.addEventListener('load', () => {
       el.classList.add('has-image');
       el.replaceChildren(img);
     });
+    img.addEventListener('error', () => img.remove());
     img.src = appIconUrl(app.bundlePath);
+    el.appendChild(img);
   }
 }
 
@@ -752,10 +763,15 @@ const scanViz = {
       // The application in the middle
       ctx.globalAlpha = 1;
       ctx.beginPath();
-      ctx.arc(0, 0, 24, 0, Math.PI * 2);
-      ctx.fillStyle = colors.ink;
-      ctx.fill();
-      if (Icons) Icons.draw(ctx, Icons.forApp({ name: this.appName }), 0, 0, 26, colors.surface);
+      if (uiState.appIconImage) {
+        ctx.drawImage(uiState.appIconImage, -26, -26, 52, 52);
+      } else {
+        ctx.arc(0, 0, 24, 0, Math.PI * 2);
+        ctx.fillStyle = colors.ink;
+        ctx.fill();
+        if (uiState.appLogoImage) ctx.drawImage(uiState.appLogoImage, -14, -14, 28, 28);
+        else if (Icons) Icons.draw(ctx, Icons.forApp({ name: this.appName }), 0, 0, 26, colors.surface);
+      }
       ctx.font = '600 12px -apple-system, sans-serif';
       ctx.fillStyle = colors.ink;
       ctx.textAlign = 'center';
@@ -776,6 +792,8 @@ async function executeScan({ bundlePath, workspacePath }) {
     bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'folder'
   }…`;
   document.getElementById('scan-current-path').textContent = 'Preparing…';
+  const scannedBundle = (uiState.bootstrap?.availableBundles || []).find((b) => b.bundlePath === bundlePath);
+  loadGraphAppIcon(scannedBundle || (bundlePath ? { name: bundlePath.split('/').pop().replace(/\.app$/, ''), bundlePath } : null));
   scanViz.start(bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'Folder');
   document.getElementById('scan-metric-roots').textContent = '0';
   document.getElementById('scan-metric-count').textContent = '0';
@@ -951,13 +969,22 @@ function showMapLevel(level) {
   loadGraphFromState(level);
   renderMapBreadcrumb();
   const center = uiState.nodes.find((n) => n.pinned);
-  if (center && level.id !== 'root') {
+  if (center && level.parentId) {
     renderNodeInspector(center, null);
   } else {
     document.getElementById('inspector-detail-content').classList.add('hidden');
     document.getElementById('inspector-empty-state').classList.remove('hidden');
   }
 }
+
+// Ways to split the scan at the top of the map (see GROUPINGS in src/graph/map-levels.js)
+const MAP_GROUPINGS = [
+  ['kind', 'Kind'],
+  ['risk', 'Cleanup risk'],
+  ['origin', 'Origin'],
+  ['age', 'Last change'],
+  ['type', 'File type']
+];
 
 function renderMapBreadcrumb() {
   const nav = document.getElementById('map-breadcrumb');
@@ -973,10 +1000,19 @@ function renderMapBreadcrumb() {
   nav.innerHTML = `
     ${level.parentId ? `<button class="crumb-up" type="button" data-level="${escapeHtml(level.parentId)}" title="Up one level (Esc)">←</button>` : ''}
     <div class="crumbs">${crumbs}</div>
-    ${level.note ? `<span class="crumb-note">${escapeHtml(level.note)}</span>` : '<span class="crumb-note">Click a kind, session or folder to open it.</span>'}
+    ${level.note ? `<span class="crumb-note">${escapeHtml(level.note)}</span>` : '<span class="crumb-note">Click a mark to open it.</span>'}
+    <label class="map-group-by">
+      <span>Group by</span>
+      <select id="map-group-by" class="filter-select">
+        ${MAP_GROUPINGS.map(([value, label]) => `<option value="${value}"${level.grouping === value ? ' selected' : ''}>${label}</option>`).join('')}
+      </select>
+    </label>
   `;
   nav.querySelectorAll('[data-level]').forEach((btn) => {
     btn.addEventListener('click', () => loadMapLevel(btn.dataset.level));
+  });
+  nav.querySelector('#map-group-by').addEventListener('change', (e) => {
+    loadMapLevel(e.target.value === 'kind' ? 'root' : `root:${e.target.value}`);
   });
 }
 
@@ -1016,7 +1052,27 @@ function loadGraphFromState(graphData) {
 // The application's own icon for its node on the map, when the bundle has a readable one.
 function loadGraphAppIcon(app) {
   uiState.appIconImage = null;
-  if (!app || !app.bundlePath || app.isDemoFixture) return;
+  uiState.appLogoImage = null;
+  if (!app) return;
+  // A known logo, tinted to sit on the ink disc, in case the app's own icon cannot be read
+  const logo = Icons.logoForApp(app);
+  if (logo) {
+    const logoImg = new Image();
+    logoImg.addEventListener('load', () => {
+      const tinted = document.createElement('canvas');
+      tinted.width = 128;
+      tinted.height = 128;
+      const tctx = tinted.getContext('2d');
+      tctx.drawImage(logoImg, 0, 0, 128, 128);
+      tctx.globalCompositeOperation = 'source-in';
+      tctx.fillStyle = themeColors().surface;
+      tctx.fillRect(0, 0, 128, 128);
+      uiState.appLogoImage = tinted;
+      uiState.lastDrawnSignature = null;
+    });
+    logoImg.src = `/logos/${logo}.svg`;
+  }
+  if (!app.bundlePath || app.isDemoFixture) return;
   const img = new Image();
   img.addEventListener('load', () => {
     uiState.appIconImage = img;
@@ -1208,7 +1264,8 @@ function mapSignature() {
     uiState.focusMode,
     canvas ? `${canvas.width}x${canvas.height}` : '',
     cachedThemeColors ? 1 : 0,
-    uiState.appIconImage ? 1 : 0
+    uiState.appIconImage ? 1 : 0,
+    uiState.appLogoImage ? 1 : 0
   ].join('|');
 }
 
@@ -1388,6 +1445,9 @@ function drawGraph() {
       if (isApp && uiState.appIconImage) {
         const side = r * 2.1;
         ctx.drawImage(uiState.appIconImage, node.x - side / 2, node.y - side / 2, side, side);
+      } else if (isApp && uiState.appLogoImage) {
+        const side = r * 1.15;
+        ctx.drawImage(uiState.appLogoImage, node.x - side / 2, node.y - side / 2, side, side);
       } else {
         const glyphColor = isFile
           ? glyphColorOnRisk(node.riskCategory)
@@ -1414,16 +1474,33 @@ function drawGraph() {
       ctx.font = `${node.nodeType === 'AI_APPLICATION' ? '600 ' : ''}${labelPx}px -apple-system, sans-serif`;
       ctx.fillStyle = isStructural || isSelected ? colors.ink : colors.ink2;
       ctx.textAlign = 'center';
-      ctx.fillText(node.label, node.x, node.y + r + 3 + labelPx);
-      // Kinds, sessions and folders also show how much they hold
-      if (node.metadata?.summary && (isStructural || isSelected)) {
+      const summary = !isFile ? node.metadata?.summary : null;
+      // Kinds, sessions and folders carry a thin bar with their share of each risk level
+      const barGap = summary ? 9 / uiState.camera.scale : 0;
+      if (summary && summary.artifactCount > 0) {
+        const px = 1 / uiState.camera.scale;
+        const barWidth = Math.max(r * 2, 44 * px);
+        const barHeight = 3 * px;
+        let x = node.x - barWidth / 2;
+        const y = node.y + r + 5 * px;
+        for (const risk of ['LOW', 'REVIEW', 'HIGH', 'PROTECTED']) {
+          const share = (summary.riskCounts?.[risk] || 0) / summary.artifactCount;
+          if (share <= 0) continue;
+          ctx.fillStyle = colors[risk];
+          ctx.fillRect(x, y, Math.max(px, barWidth * share - px), barHeight);
+          x += barWidth * share;
+        }
+      }
+      ctx.fillStyle = isStructural || isSelected ? colors.ink : colors.ink2;
+      ctx.fillText(node.label, node.x, node.y + r + 3 + labelPx + barGap);
+      if (summary && (isStructural || isSelected)) {
         const metaPx = 10 / uiState.camera.scale;
         ctx.font = `${metaPx}px -apple-system, sans-serif`;
         ctx.fillStyle = colors.ink3;
         ctx.fillText(
-          `${Number(node.metadata.summary.artifactCount).toLocaleString()} files · ${formatBytes(node.metadata.summary.bytes)}`,
+          `${Number(summary.artifactCount).toLocaleString()} files · ${formatBytes(summary.bytes)}`,
           node.x,
-          node.y + r + 5 + labelPx + metaPx
+          node.y + r + 5 + labelPx + metaPx + barGap
         );
       }
     }

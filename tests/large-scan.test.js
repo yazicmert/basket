@@ -348,3 +348,57 @@ test('session project folders: only files a tool call named are read', async () 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('map groupings: risk, origin, age and file type split the same files and open by folder', async () => {
+  const { buildMapLevel, levelArtifactIds, GROUPINGS } = await import('../src/graph/map-levels.js');
+  const base = '/home/u/Library/Application Support/Big';
+  const now = Date.parse('2026-11-01T00:00:00Z');
+  const artifacts = [];
+  for (let i = 0; i < 400; i++) {
+    artifacts.push(
+      fakeArtifact(i, {
+        name: `f_${i}${i % 4 === 0 ? '.json' : '.log'}`,
+        canonicalPath: `${base}/d${i % 3}/f_${i}`,
+        parentDir: `${base}/d${i % 3}`,
+        cleanupClassification: i % 2 ? 'LOW' : 'HIGH',
+        provenanceConfidence: i % 10 === 0 ? 'VERIFIED' : 'INFERRED',
+        modifiedAt: new Date(now - (i % 300) * 86400000).toISOString()
+      })
+    );
+  }
+  const state = {
+    application: { id: 'app', name: 'Big' },
+    artifacts,
+    artifactGroups: [{ id: 'g', name: 'Logs', artifactType: 'LOG', artifactIds: artifacts.map((a) => a.id) }],
+    sessions: [],
+    provenanceEdges: [],
+    scan: { completedAt: new Date(now).toISOString() }
+  };
+
+  for (const grouping of Object.keys(GROUPINGS)) {
+    const top = buildMapLevel(state, `root:${grouping}`);
+    assert.equal(top.grouping, grouping);
+    const buckets = top.nodes.slice(1);
+    assert.ok(buckets.length >= 2, `${grouping} has several buckets`);
+    // Every file lands in exactly one bucket
+    const ids = buckets.flatMap((b) => levelArtifactIds(state, b.drillId));
+    assert.equal(ids.length, 400, grouping);
+    assert.equal(new Set(ids).size, 400, grouping);
+    // A bucket opens by folder and leads back to its grouping
+    const bucket = buildMapLevel(state, buckets[0].drillId);
+    assert.equal(bucket.parentId, `root:${grouping}`);
+    assert.equal(bucket.grouping, grouping);
+    assert.ok(bucket.nodes.some((n) => n.nodeType === 'FOLDER' && n.drillId));
+  }
+
+  const age = buildMapLevel(state, 'root:age');
+  assert.deepEqual(
+    age.nodes.slice(1).map((n) => n.label),
+    ['Last 7 days', '8 to 30 days ago', '1 to 6 months ago', 'More than 6 months ago']
+  );
+  const risk = buildMapLevel(state, 'root:risk');
+  assert.deepEqual(risk.nodes.slice(1).map((n) => [n.label, n.riskCategory]), [['Safe to remove', 'LOW'], ['High risk', 'HIGH']]);
+  assert.equal(buildMapLevel(state, 'root').grouping, 'kind');
+  assert.equal(buildMapLevel(state, 'root:nope'), null);
+  assert.equal(buildMapLevel(state, 'bucket:risk:NOPE'), null);
+});

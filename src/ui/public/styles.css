@@ -1327,3 +1327,33 @@ button.crumb:hover {
   opacity: 0.7;
   cursor: default;
 }
+
+/* App icon fallbacks: a known logo drawn in one ink, and the real icon while it loads */
+.app-logo {
+  display: block;
+  width: 62%;
+  height: 62%;
+  background: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+.app-icon {
+  position: relative;
+}
+.app-icon:not(.has-image) .app-icon-image {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.map-group-by {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.map-group-by .filter-select {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}

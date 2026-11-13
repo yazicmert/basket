@@ -82,6 +82,29 @@
     return ARTIFACT_TYPE_ICON[type] || 'unknown';
   }
 
+  // Known applications that have a logo file in logos/. Used when the application's own
+  // icon cannot be read from its bundle, and for the built-in sample apps.
+  var APP_LOGOS = [
+    [/claude/, 'claudecode'],
+    [/cursor/, 'cursor'],
+    [/windsurf|codeium/, 'windsurf'],
+    [/ollama/, 'ollama'],
+    [/lm ?studio/, 'lmstudio'],
+    [/\bzed\b/, 'zedindustries'],
+    [/gemini/, 'googlegemini'],
+    [/copilot/, 'githubcopilot'],
+    [/perplexity/, 'perplexity'],
+    [/\btrae\b/, 'trae']
+  ];
+
+  function logoForApp(app) {
+    var text = [app && app.name, app && app.bundleId, app && app.adapterId].join(' ').toLowerCase();
+    for (var i = 0; i < APP_LOGOS.length; i++) {
+      if (APP_LOGOS[i][0].test(text)) return APP_LOGOS[i][1];
+    }
+    return null;
+  }
+
   // Fallback glyph for an application, chosen from its adapter or name.
   function forApp(app) {
     var text = [app && app.adapterId, app && app.name, app && app.bundleId].join(' ').toLowerCase();
@@ -140,6 +163,7 @@
     artifactTypeIcons: ARTIFACT_TYPE_ICON,
     forArtifactType: forArtifactType,
     forApp: forApp,
+    logoForApp: logoForApp,
     forNode: forNode,
     svg: svg,
     draw: draw
