@@ -1026,6 +1026,7 @@ function transitionToExplorerView() {
     `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(scanTotalBytes(state.scan))}`;
 
   renderScanNoticesBanner(state);
+  uiState.sessionLabels = null;
   runScanSearch();
   loadMapLevel('root');
   renderGlobalInspectorSummary();
@@ -2507,6 +2508,20 @@ function bindExplorerControls() {
   });
 }
 
+// Session names as the map shows them, for the Sizes tab
+async function loadSessionLabels() {
+  try {
+    const res = await apiRequest('/api/map/level', 'POST', { levelId: 'sessions' });
+    uiState.sessionLabels = new Map(
+      res.level.nodes
+        .filter((n) => n.metadata?.session?.id)
+        .map((n) => [n.metadata.session.id, n.label])
+    );
+  } catch {
+    uiState.sessionLabels = new Map();
+  }
+}
+
 function renderTreemapView() {
   const tm = uiState.activeState?.graph?.treemap;
   if (!tm) return;
@@ -2556,7 +2571,16 @@ function renderTreemapView() {
   );
   const maxBytes = Math.max(1, ...cells.map((c) => c.bytes));
 
-  cells.forEach((cell) => {
+  // Sessions are named by their prompt, as on the map (labels come with the sessions level)
+  const sessionLabels = uiState.treemapGroupBy === 'bySession' ? uiState.sessionLabels || null : null;
+  if (uiState.treemapGroupBy === 'bySession' && !uiState.sessionLabels) {
+    loadSessionLabels().then(() => {
+      if (uiState.treemapGroupBy === 'bySession') renderTreemapView();
+    });
+  }
+
+  cells.forEach((rawCell) => {
+    const cell = sessionLabels && sessionLabels.has(rawCell.id) ? { ...rawCell, label: sessionLabels.get(rawCell.id) } : rawCell;
     const risk = cell.riskCategory || 'REVIEW';
     const tile = document.createElement('div');
     tile.className = 'treemap-tile';

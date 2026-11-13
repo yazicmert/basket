@@ -1519,3 +1519,8 @@ button.crumb:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.search-results > .inspector-section {
+  border-top: 0;
+  padding-top: 0;
+}
