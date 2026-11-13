@@ -57,4 +57,6 @@
 - [x] Green macOS CI run producing verified arm64 `.app`, `.dmg`, and `.zip` artifacts (`PACKAGED_APP_WORKFLOW_VERIFIED: OK`).
 - [ ] Separate Intel (`x86_64`) / Universal builds validated on CI.
 - [ ] Developer ID signing & notarization (needs Apple credentials as repository secrets).
-- Add Windows (`%APPDATA%` / `%LOCALAPPDATA%`) and Linux (`$XDG_CONFIG_HOME` / `$XDG_CACHE_HOME`) platform path adapters on top of the existing `PlatformServices` abstraction.
+- [x] Windows: `%APPDATA%` / `%LOCALAPPDATA%` locations, Start Menu application list, `ArtifactAtlas.exe` launcher with bundled runtime, ZIP built and verified on CI, tests passing on Windows.
+- [ ] Windows: validate known-app locations against real installs; code signing; in-place update; application icons read from program files.
+- Add Linux (`$XDG_CONFIG_HOME` / `$XDG_CACHE_HOME`) platform path adapters on top of the existing `PlatformServices` abstraction.

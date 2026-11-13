@@ -16,8 +16,15 @@ The packaged `ArtifactAtlas.app` is **100% self-contained** and runs completely 
 3. Drag **`ArtifactAtlas.app`** into the **`Applications`** folder shortcut.
 4. Launch **Artifact Atlas** from `/Applications` or Spotlight.
 
+### Installation on Windows from `ArtifactAtlas-Windows.zip`
+1. Download `ArtifactAtlas-Windows.zip` (Windows 10 or 11, 64-bit) and extract it.
+2. Start `ArtifactAtlas.exe` from the extracted `ArtifactAtlas` folder. The build is not signed with a certificate, so Windows shows *Windows protected your PC*: choose **More info**, then **Run anyway**.
+3. The app opens in a window of its own (drawn by Microsoft Edge or Chrome with a separate profile). Closing the window quits it.
+
+Nothing is installed and no administrator rights are needed. The folder holds the launcher, its own Node.js runtime and the app's source. Settings, the index and the Quarantine Vault are kept in `%LOCALAPPDATA%\ArtifactAtlas`. On Windows, applications are listed from the Start Menu, and their data is located by name in `AppData\Roaming`, `AppData\Local` and hidden home folders.
+
 ### First Launch: Sample Data, Then Your Real Files
-Artifact Atlas starts on built-in sample data and reads nothing from your disk. The **Permissions** window lists what it needs to scan your real files, and each permission has its own page:
+Artifact Atlas starts on built-in sample data and reads nothing from your disk. When you choose a real application, it asks for what the scan needs before reading anything; the **Permissions** window shows the same list afterwards, and each permission has its own page:
 
 | Permission | Type | Page |
 |---|---|---|
@@ -25,6 +32,12 @@ Artifact Atlas starts on built-in sample data and reads nothing from your disk. 
 | Full Disk Access | macOS setting, recommended | [full-disk-access](https://yazicmert.github.io/basket/permissions/full-disk-access/) |
 | Data from other apps | macOS prompt, asked when needed | [app-data](https://yazicmert.github.io/basket/permissions/app-data/) |
 | Desktop, Documents and Downloads | macOS prompt, asked when needed | [files-and-folders](https://yazicmert.github.io/basket/permissions/files-and-folders/) |
+| Whole project folders | What a scan counts, off by default | [project-folders](https://yazicmert.github.io/basket/permissions/project-folders/) |
+| Dependency and Git folders | What a scan counts, off by default | [dependency-folders](https://yazicmert.github.io/basket/permissions/dependency-folders/) |
+
+**Why two scans can show different totals.** By default a scan counts the application's own folders, plus only the files its sessions' tool calls named inside your project folders. With *Whole project folders* included, every file in those project folders is counted, which can double the total. The details panel says how the current scan was counted, and how many items could not be read.
+
+**Starting prompt.** Selecting a session, a tool call or a file shows the first prompt of the session behind it. It is read from the session's own record at that moment and is not stored by Artifact Atlas.
 
 After you allow home folder scanning, drop any `.app` onto the window. Its data is located by bundle identifier and name across `~/Library` containers, sandbox containers, and hidden home folders (`~/.claude`, `~/.ollama`, `~/.config/<app>`, …), and the folder being scanned is shown live. Claude Code, Cursor and Codex CLI additionally get session-level provenance; for every other application, files are attributed to the application (`INFERRED`), not to a conversation.
 

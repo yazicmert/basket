@@ -362,8 +362,9 @@ function renderPermissionsModal(payload) {
   const list = document.getElementById('permissions-list');
   list.innerHTML = '';
   const sections = [
-    { title: 'Access', kinds: ['IN_APP_CONSENT', 'MACOS_PRIVACY'] },
-    { title: 'What a scan counts', kinds: ['SCAN_SCOPE'] }
+    { title: 'Access', kinds: ['IN_APP_CONSENT'] },
+    { title: 'What a scan counts', kinds: ['SCAN_SCOPE'] },
+    { title: 'macOS privacy settings', kinds: ['MACOS_PRIVACY'] }
   ];
   for (const section of sections) {
     // Permissions that do not exist on this system are left out
