@@ -330,6 +330,18 @@ export class ArtifactAtlasService {
     return !(home === resolved || home.startsWith(resolved + path.sep));
   }
 
+  /**
+   * Quarantine entries with the IDs of the sessions their file belonged to, so the window can
+   * name the prompt each came from. Only IDs are added; no conversation text.
+   */
+  quarantineEntriesWithSessions() {
+    const byId = new Map((this.activeState.artifacts || []).map((a) => [a.id, a]));
+    return this.sqliteStore.listQuarantineEntries().map((entry) => ({
+      ...entry,
+      sessionIds: byId.get(entry.artifactId)?.sessionIds || []
+    }));
+  }
+
   cancelActiveScan() {
     if (this.currentScanAbortController) {
       this.currentScanAbortController.abort();
@@ -517,7 +529,7 @@ export class ArtifactAtlasService {
     return {
       ...result,
       updatedGraph: this.activeState.graph,
-      quarantineEntries: this.sqliteStore.listQuarantineEntries()
+      quarantineEntries: this.quarantineEntriesWithSessions()
     };
   }
 
@@ -540,7 +552,7 @@ export class ArtifactAtlasService {
     return {
       ...result,
       updatedGraph: this.activeState.graph,
-      quarantineEntries: this.sqliteStore.listQuarantineEntries()
+      quarantineEntries: this.quarantineEntriesWithSessions()
     };
   }
 

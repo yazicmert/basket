@@ -671,7 +671,7 @@ export function createAtlasServer(options = {}) {
           availableBundles: discoverAvailableBundles(),
           defaultWorkspacePath: currentMode() === 'demo' ? demoEnv.workspaceDir : '',
           activeState: stateForClient(activeService().activeState),
-          quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
+          quarantineEntries: activeService().quarantineEntriesWithSessions()
         });
       }
 
@@ -729,7 +729,7 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           state: stateForClient(state),
-          quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
+          quarantineEntries: activeService().quarantineEntriesWithSessions()
         });
       }
 

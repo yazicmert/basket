@@ -1280,7 +1280,9 @@ function resizeCanvas() {
 }
 
 function isNodeVisibleByFilter(node) {
-  if (uiState.focusMode && uiState.activeTrace) {
+  // Focus keeps the files linked to the selected one. Marks that stand for many files (the
+  // level's centre, kinds, folders, sessions) stay, so the level keeps its shape.
+  if (uiState.focusMode && uiState.activeTrace && node.nodeType === 'ARTIFACT' && node.id !== uiState.selectedNodeId) {
     if (!uiState.activeTrace.highlightedNodeIds.includes(node.id)) {
       return false;
     }
@@ -2630,6 +2632,19 @@ function renderTreemapView() {
   });
 }
 
+// Which prompt a quarantined file came from, by the session names the map uses
+function quarantineOriginHtml(entry) {
+  const ids = entry.sessionIds || [];
+  if (ids.length === 0) return '';
+  if (!uiState.sessionLabels) {
+    loadSessionLabels().then(() => renderQuarantineVaultView());
+    return '';
+  }
+  const names = ids.map((id) => uiState.sessionLabels.get(id)).filter(Boolean);
+  if (names.length === 0) return '';
+  return `<div class="quarantine-row-origin">From ${names.length === 1 ? 'the session' : 'the sessions'} <strong>${names.map(escapeHtml).join('</strong>, <strong>')}</strong></div>`;
+}
+
 function renderQuarantineVaultView() {
   const listEl = document.getElementById('quarantine-entries-list');
   if (!listEl) return;
@@ -2657,6 +2672,7 @@ function renderQuarantineVaultView() {
           }</span>
         </div>
         <div class="quarantine-row-path mono">${escapeHtml(entry.originalPath)}</div>
+        ${quarantineOriginHtml(entry)}
       </div>
       ${
         isHeld
