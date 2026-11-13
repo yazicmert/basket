@@ -39,10 +39,12 @@ jobs:
       - name: Run Portable Core & Loopback Security Tests
         run: npm test
 
-  # Experimental: shows how far the portable core is from running on Windows. It does not
-  # gate merges; Windows is not a supported platform yet.
+  # Experimental: shows how far the portable core is from running on Windows, which is not a
+  # supported platform yet. It runs only when this workflow is started by hand, so pushes and
+  # pull requests are not marked as failing by a platform that is known not to pass.
   portable-core-windows:
     name: Portable Core Tests (Windows, experimental)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     continue-on-error: true
     steps:
