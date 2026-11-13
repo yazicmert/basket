@@ -1761,7 +1761,8 @@ function initGraphCanvas() {
         const tooltipMeta = [
           NODE_TYPE_LABELS[hit.nodeType] || sentenceCase(hit.nodeType),
           hit.nodeType === 'ARTIFACT' ? RISK_LABELS[hit.riskCategory] : null,
-          hit.sizeBytes ? formatBytes(hit.sizeBytes) : null
+          hit.sizeBytes ? formatBytes(hit.sizeBytes) : null,
+          hit.metadata?.session?.endedAt ? `last active ${formatDate(hit.metadata.session.endedAt)}` : null
         ].filter(Boolean);
         const firstPrompt = hit.metadata?.firstPrompt;
         tooltip.innerHTML = `
