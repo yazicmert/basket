@@ -199,14 +199,29 @@ ln -s /Applications "$DMG_STAGE/Applications"
 # produces a volume that is too small ("No space left on device" while copying the bundle).
 DMG_SIZE_MB=$(( $(du -sm "$DMG_STAGE" | cut -f1) + 64 ))
 
-hdiutil create \
-  -volname "$APP_DISPLAY_NAME" \
-  -srcfolder "$DMG_STAGE" \
-  -size "${DMG_SIZE_MB}m" \
-  -fs HFS+ \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH"
+# hdiutil occasionally fails with "Resource busy" while the system is still indexing the
+# staging folder. The image is rebuilt from scratch on each attempt, so retrying is safe.
+DMG_CREATED=0
+for attempt in 1 2 3 4 5; do
+  if hdiutil create \
+    -volname "$APP_DISPLAY_NAME" \
+    -srcfolder "$DMG_STAGE" \
+    -size "${DMG_SIZE_MB}m" \
+    -fs HFS+ \
+    -ov \
+    -format UDZO \
+    "$DMG_PATH"; then
+    DMG_CREATED=1
+    break
+  fi
+  echo "    hdiutil create failed (attempt $attempt of 5); retrying in $((attempt * 3))s..."
+  rm -f "$DMG_PATH"
+  sleep $((attempt * 3))
+done
+if [[ "$DMG_CREATED" != "1" ]]; then
+  echo "ERROR: could not create the disk image after 5 attempts" >&2
+  exit 1
+fi
 
 rm -rf "$DMG_STAGE"
 
