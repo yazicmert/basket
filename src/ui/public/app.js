@@ -1878,7 +1878,12 @@ function summarizeScan() {
     origins: [
       { key: 'VERIFIED', label: 'Recorded by a session', count: g.stats.verifiedArtifactCount },
       { key: 'INFERRED', label: 'Likely from this app', count: g.stats.inferredArtifactCount },
-      { key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }
+      ...(g.stats.unknownInProjectsCount > 0
+        ? [
+            { key: 'UNKNOWN', label: 'Unknown, in your project folders', count: g.stats.unknownInProjectsCount },
+            { key: 'UNKNOWN', label: 'Unknown, elsewhere', count: g.stats.unknownArtifactCount - g.stats.unknownInProjectsCount }
+          ].filter((o) => o.count > 0)
+        : [{ key: 'UNKNOWN', label: 'Unknown origin', count: g.stats.unknownArtifactCount }])
     ],
     kinds: [...(tm.byGroup || [])].sort((x, y) => y.bytes - x.bytes),
     sessionCount: g.stats.sessionCount || 0,
@@ -2004,6 +2009,22 @@ function renderGlobalInspectorSummary() {
       openPermissionsModal();
     });
   }
+}
+
+// What a kind is made of, by file type, largest first
+function breakdownHtml(breakdown) {
+  if (!breakdown || !Array.isArray(breakdown.types) || breakdown.types.length === 0) return '';
+  const rows = breakdown.types
+    .map(
+      (t) => `<div class="kv-item"><span class="kv-key mono">${escapeHtml(t.type)}</span><span class="kv-val">${pluralize(t.count, 'file')} · ${formatBytes(t.bytes)}</span></div>`
+    )
+    .join('');
+  return `
+    <div class="inspector-section">
+      <div class="inspector-section-title">Largest file types</div>
+      <div class="kv-list">${rows}</div>
+      ${breakdown.otherTypes > 0 ? `<div class="inspector-note">And ${pluralize(breakdown.otherTypes, 'other type')}. Open the kind on the map to see its folders.</div>` : ''}
+    </div>`;
 }
 
 const PROMPT_UNAVAILABLE_REASONS = {
@@ -2184,6 +2205,7 @@ function renderNodeInspector(node, trace) {
 
     <div id="inspector-prompt-section"></div>
 
+    ${breakdownHtml(meta.breakdown)}
     ${cleanupSectionHtml}
     ${sharedHtml}
 

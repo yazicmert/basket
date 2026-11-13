@@ -538,6 +538,10 @@ export class GraphEngine {
         ).length,
         unknownArtifactCount: activeArtifacts.filter(
           (a) => a.provenanceConfidence === ProvenanceConfidence.UNKNOWN
+        ).length,
+        // The display splits unknown origin by where the file is; the origin itself stays UNKNOWN
+        unknownInProjectsCount: activeArtifacts.filter(
+          (a) => a.provenanceConfidence === ProvenanceConfidence.UNKNOWN && a.workspaceId
         ).length
       }
     };

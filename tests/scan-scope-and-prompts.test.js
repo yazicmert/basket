@@ -323,3 +323,28 @@ test('S6. Past the file limit files are measured, so the total is complete altho
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('S7. Project files no session recorded are your own work: protected, and shown apart from other unknown files', async () => {
+  const env = makeHome();
+  fs.writeFileSync(path.join(env.project, 'photo.png'), 'p'.repeat(3000));
+  fs.writeFileSync(path.join(env.project, 'data.parquet'), 'q'.repeat(500));
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    const byName = Object.fromEntries(state.artifacts.map((a) => [a.name, a]));
+    assert.equal(byName['photo.png'].artifactType, 'USER_CONTENT');
+    assert.equal(byName['photo.png'].cleanupClassification, 'PROTECTED');
+    assert.equal(byName['photo.png'].provenanceConfidence, 'UNKNOWN', 'the origin itself is not changed');
+    const stats = state.graph.stats;
+    assert.equal(stats.unknownInProjectsCount, state.artifacts.filter((a) => a.workspaceId && a.provenanceConfidence === 'UNKNOWN').length);
+    assert.ok(stats.unknownInProjectsCount >= 2);
+
+    const { typeBreakdown } = await import('../src/graph/map-levels.js');
+    const breakdown = typeBreakdown([byName['photo.png'], byName['data.parquet'], byName['untouched.js']], 2);
+    assert.deepEqual(breakdown.types.map((t) => t.type), ['.js', '.png'], 'largest first: untouched.js is 5,000 bytes');
+    assert.equal(breakdown.otherTypes, 1);
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

@@ -461,7 +461,22 @@ export class ClassificationEngine {
       };
     }
 
-    // 13. Fallback: Unknown Artifact Type
+    // 13. Anything else inside a project folder is the user's own work (images, documents,
+    // data). This rule only raises protection: without a recorded origin it is PROTECTED, and
+    // a file a session recorded stays reviewable but is never LOW.
+    if (artifact.workspaceId) {
+      const recorded = artifact.provenanceConfidence !== ProvenanceConfidence.UNKNOWN;
+      return {
+        artifactType: ArtifactType.USER_CONTENT,
+        riskCategory: recorded ? RiskCategory.REVIEW : RiskCategory.PROTECTED,
+        explanation: recorded
+          ? 'File in a project folder that an AI session created or changed. Kept for review because project files are your work, not the application\'s.'
+          : 'File in one of your project folders that no session recorded. Your own work; protected from cleanup.',
+        consequences: 'Removing project files can lose work that exists nowhere else.'
+      };
+    }
+
+    // 14. Fallback: Unknown Artifact Type
     return {
       artifactType: ArtifactType.UNKNOWN,
       riskCategory:

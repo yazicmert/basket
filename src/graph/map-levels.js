@@ -227,6 +227,20 @@ function summaryNode({ id, nodeType, label, summary, drillId = null, artifactTyp
   };
 }
 
+/** The largest file types among some files, for the details panel. */
+export function typeBreakdown(files, limit = 6) {
+  const byType = new Map();
+  for (const art of files) {
+    const type = fileTypeOf(art);
+    const entry = byType.get(type) || { type, count: 0, bytes: 0 };
+    entry.count += 1;
+    entry.bytes += art.sizeBytes || 0;
+    byType.set(type, entry);
+  }
+  const all = [...byType.values()].sort((a, b) => b.bytes - a.bytes || b.count - a.count);
+  return { types: all.slice(0, limit), otherTypes: Math.max(0, all.length - limit) };
+}
+
 /** Builds the lookups a level needs from the active scan state. */
 function indexState(state) {
   const live = (state.artifacts || []).filter((a) => !a.quarantined);
@@ -506,7 +520,7 @@ export function buildMapLevel(state, levelId = 'root') {
   // The center: the kind, the session, or the folder
   let center;
   if (isScopeTop && scoped.group) {
-    center = summaryNode({ id: thisId, nodeType: NodeType.ARTIFACT_GROUP, label: scoped.group.name, summary: summarize(inLevel), artifactType: scoped.group.artifactType, extra: { path: level.prefix } });
+    center = summaryNode({ id: thisId, nodeType: NodeType.ARTIFACT_GROUP, label: scoped.group.name, summary: summarize(inLevel), artifactType: scoped.group.artifactType, extra: { path: level.prefix, breakdown: typeBreakdown(inLevel) } });
   } else if (isScopeTop && scoped.bucket) {
     center = summaryNode({ id: thisId, nodeType: NodeType.FOLDER, label: scoped.bucket.label, summary: summarize(inLevel), extra: { path: level.prefix, bucket: scoped.bucket } });
   } else if (isScopeTop && scoped.session) {
