@@ -395,6 +395,8 @@ export class CleanupEngine {
               riskCategory: artifact.cleanupClassification,
               artifactType: artifact.artifactType,
               provenanceConfidence: artifact.provenanceConfidence,
+              // The sessions it belonged to (IDs only), so Quarantine can name them later
+              sessionIds: artifact.sessionIds || [],
               reason: artifact.cleanupExplanation
             }
           });

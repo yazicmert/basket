@@ -512,3 +512,36 @@ test('A1. The ChatGPT app that hosts Codex is listed once and traced; ChatGPT Cl
     }
   }
 });
+
+test('Q1. A quarantined file keeps the session it came from after a new scan (IDs only)', async () => {
+  const env = makeHome();
+  const kept = path.join(path.dirname(env.transcript), 'sess-one', 'tool-results', 'result.txt');
+  fs.mkdirSync(path.dirname(kept), { recursive: true });
+  fs.writeFileSync(kept, 'r'.repeat(700));
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+  for (const f of [env.transcript, kept, path.join(path.dirname(env.transcript), 'sess-one', 'subagents', 'agent-1.jsonl')]) fs.utimesSync(f, dayAgo, dayAgo);
+  const dbPath = path.join(env.root, 'index.sqlite');
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', dbPath, quarantineRoot: path.join(env.root, 'vault') });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const sessionId = state.sessions[0].id;
+    const { sessionLeftoverIds } = await import('../src/graph/prompt-costs.js');
+    const ids = sessionLeftoverIds(state, sessionId, state.promptCosts);
+    assert.ok(ids.length > 0);
+    const review = service.prepareCleanupReview(ids);
+    const moved = service.executeQuarantine({ artifactIds: ids, confirmationToken: review.confirmationToken });
+    assert.equal(moved.quarantinedEntries.length, review.eligibleItems.length);
+
+    await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const entries = service.quarantineEntriesWithSessions();
+    assert.ok(entries.length > 0);
+    assert.ok(entries.every((e) => e.sessionIds.length === 1 && e.sessionIds[0] === sessionId));
+    // The manifest carries the IDs too, and nothing else about the session
+    const manifest = JSON.parse(fs.readFileSync(entries[0].manifestPath, 'utf8'));
+    assert.deepEqual(manifest.sessionIds, [sessionId]);
+    assert.ok(!JSON.stringify(manifest).includes('CSV'));
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

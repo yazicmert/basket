@@ -203,8 +203,25 @@ const MIGRATIONS = [
       ALTER TABLE scans ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE scans ADD COLUMN max_files_limit INTEGER;
     `
+  },
+  {
+    version: 4,
+    name: '004_quarantine_session_ids',
+    // Session IDs only (JSON array); never conversation text
+    sql: `
+      ALTER TABLE quarantine_entries ADD COLUMN session_ids TEXT NOT NULL DEFAULT '[]';
+    `
   }
 ];
+
+function parseIdList(raw) {
+  try {
+    const list = JSON.parse(raw || '[]');
+    return Array.isArray(list) ? list.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 export class SQLiteStore {
   constructor(dbPath = ':memory:') {
@@ -536,8 +553,8 @@ export class SQLiteStore {
             original_path, quarantine_path, manifest_path, size_bytes,
             original_mode, original_mtime_ms, original_inode_key, sha256,
             risk_category, artifact_type, provenance_confidence, reason,
-            quarantined_at, restored_at, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            quarantined_at, restored_at, status, session_ids
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           entry.id,
@@ -559,7 +576,8 @@ export class SQLiteStore {
           entry.reason,
           entry.quarantinedAt,
           entry.restoredAt,
-          entry.status
+          entry.status,
+          JSON.stringify(Array.isArray(entry.sessionIds) ? entry.sessionIds : [])
         );
 
       this.db
@@ -600,7 +618,8 @@ export class SQLiteStore {
       reason: r.reason,
       quarantinedAt: r.quarantined_at,
       restoredAt: r.restored_at,
-      status: r.status
+      status: r.status,
+      sessionIds: parseIdList(r.session_ids)
     }));
   }
 

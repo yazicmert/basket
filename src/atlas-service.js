@@ -338,7 +338,8 @@ export class ArtifactAtlasService {
     const byId = new Map((this.activeState.artifacts || []).map((a) => [a.id, a]));
     return this.sqliteStore.listQuarantineEntries().map((entry) => ({
       ...entry,
-      sessionIds: byId.get(entry.artifactId)?.sessionIds || []
+      // Stored with the entry; entries made before this was stored fall back to the scan
+      sessionIds: entry.sessionIds?.length ? entry.sessionIds : byId.get(entry.artifactId)?.sessionIds || []
     }));
   }
 

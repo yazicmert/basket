@@ -98,9 +98,10 @@ export const KNOWN_APP_PROFILES = [
     ai: true,
     bundleIdPrefixes: ['com.openai.codex'],
     // The Codex app became the new ChatGPT desktop app in July 2026 (Chat, Work and Codex in
-    // one app); the Codex CLI is separate. Both keep their sessions in ~/.codex. An app is
-    // matched to this profile by its bundle identifier or the name Codex, never by the name
-    // ChatGPT alone, which ChatGPT Classic also uses.
+    // one app); the Codex CLI is separate. An app is matched to this profile by the Codex
+    // app's bundle identifier or the name Codex, never by the name ChatGPT alone, which
+    // ChatGPT Classic also uses. Whether the new ChatGPT app keeps the Codex app's bundle
+    // identifier has not been confirmed on a real install.
     names: ['codex', 'codex cli'],
     extraLocations: ['.codex']
   },
