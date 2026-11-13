@@ -401,6 +401,7 @@ export class ArtifactAtlasService {
       return level;
     }
     const byId = new Map((this.activeState.sessions || []).map((s) => [s.id, s]));
+    const labels = new Map();
     for (const node of level.nodes) {
       const session = node.metadata && node.metadata.session ? byId.get(node.metadata.session.id) : null;
       if (!session) {
@@ -412,9 +413,16 @@ export class ArtifactAtlasService {
       }
       node.metadata = { ...node.metadata, firstPrompt: promptExcerpt(prompt.text, 200) };
       if (GENERATED_SESSION_TITLE.test(node.label || '')) {
-        node.label = promptExcerpt(prompt.text, 42);
+        // About as long as the made-up title it replaces, so a full ring of sessions stays readable
+        node.label = promptExcerpt(prompt.text, 24);
+        labels.set(session.id, node.label);
       }
     }
+    // The breadcrumb names an opened session the same way its mark does
+    level.breadcrumb = (level.breadcrumb || []).map((crumb) => {
+      const sessionId = /^session:(.+)$/.exec(crumb.id || '')?.[1];
+      return sessionId && labels.has(sessionId) ? { ...crumb, title: labels.get(sessionId) } : crumb;
+    });
     return level;
   }
 
@@ -430,7 +438,8 @@ export class ArtifactAtlasService {
       const prompt = this.readPromptOf(session);
       return {
         sessionId: session.id,
-        title: session.title,
+        // A title made up from the session ID says nothing; the window shows "Session" instead
+        title: GENERATED_SESSION_TITLE.test(session.title || '') ? null : session.title,
         startedAt: session.startedAt,
         ...prompt
       };

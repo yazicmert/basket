@@ -8,7 +8,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=7" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 <div class="topbar">
@@ -136,7 +136,7 @@
         <div><h3>Keeps conversations private</h3>
           <p>Only structural metadata is indexed: session IDs, timestamps, tool names and file paths. Prompts and replies are never stored.</p></div>
         <div><h3>Shows the prompt that started it</h3>
-          <p>Select a session, a tool call or a file to see the first prompt of the session behind it. It is read from the session's own record at that moment and shown in the details panel; Artifact Atlas keeps no copy.</p></div>
+          <p>Sessions on the map are labelled by the prompt that started them, and selecting a session, a tool call or a file shows that prompt in full. It is read from the session's own record each time it is shown; Artifact Atlas keeps no copy.</p></div>
         <div><h3>Asks before it scans</h3>
           <p>The first scan of a real app asks what it may read and what it should count: only the files a session's tool calls named, or <a href="permissions/project-folders/">whole project folders</a>, with or without <a href="permissions/dependency-folders/">dependency and Git folders</a>. Change it any time under Permissions.</p></div>
         <div><h3>Stays on your computer</h3>
@@ -321,7 +321,7 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js?v=7" defer></script>
-<script src="demo.js?v=7" defer></script>
+<script src="icons.js?v=8" defer></script>
+<script src="demo.js?v=8" defer></script>
 </body>
 </html>

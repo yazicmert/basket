@@ -131,7 +131,7 @@ flowchart TD
 - Includes numbered forward migrations in `schema_migrations`:
   - `001_initial_schema`: `applications`, `workspaces`, `sessions`, `operations`, `scans`, `artifacts`, `artifact_groups`, `provenance_edges`, `evidence`.
   - `002_quarantine_and_audit`: `cleanup_recommendations`, `quarantine_entries`, `audit_events`.
-- Stores zero raw conversation prompt/response text. The first prompt of a session is read on demand for display (`src/provenance/session-prompt.js`) and is never written here.
+- Stores zero raw conversation prompt/response text. The first prompt of a session is read on demand for display, when an item is selected and when a map level with session marks is served (`src/provenance/session-prompt.js`), and is never written here.
 
 ### 3.11 `DesktopUI` (`src/ui/` & `Sources/ArtifactAtlasApp/`)
 - Minimal empty workspace dropzone → live scan progress drawer → interactive Obsidian-inspired Knowledge Graph & Space Treemap → right-hand Provenance & Evidence Inspector → bottom contextual action bar (`Inspect`, `Reveal in Finder`, `Select Related`, `Delete / Move to Quarantine`) → Confirmation Modal & Quarantine Vault manager.

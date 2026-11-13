@@ -37,7 +37,7 @@ Artifact Atlas starts on built-in sample data and reads nothing from your disk. 
 
 **Why two scans can show different totals.** By default a scan counts the application's own folders, plus only the files its sessions' tool calls named inside your project folders. With *Whole project folders* included, every file in those project folders is counted, which can double the total. The details panel says how the current scan was counted, and how many items could not be read.
 
-**Starting prompt.** Selecting a session, a tool call or a file shows the first prompt of the session behind it. It is read from the session's own record at that moment and is not stored by Artifact Atlas.
+**Starting prompt.** Sessions on the map are labelled by their first prompt, and selecting a session, a tool call or a file shows that prompt in full. It is read from the session's own record each time it is shown and is not stored by Artifact Atlas.
 
 After you allow home folder scanning, drop any `.app` onto the window. Its data is located by bundle identifier and name across `~/Library` containers, sandbox containers, and hidden home folders (`~/.claude`, `~/.ollama`, `~/.config/<app>`, …), and the folder being scanned is shown live. Claude Code, Cursor and Codex CLI additionally get session-level provenance; for every other application, files are attributed to the application (`INFERRED`), not to a conversation.
 
