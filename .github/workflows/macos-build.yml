@@ -39,6 +39,24 @@ jobs:
       - name: Run Portable Core & Loopback Security Tests
         run: npm test
 
+  # Experimental: shows how far the portable core is from running on Windows. It does not
+  # gate merges; Windows is not a supported platform yet.
+  portable-core-windows:
+    name: Portable Core Tests (Windows, experimental)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run Portable Core Tests
+        run: npm test
+
   build-and-package-macos:
     name: Build & Verify ArtifactAtlas.app (.dmg & .zip)
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}

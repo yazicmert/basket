@@ -515,6 +515,15 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/scan/start' && req.method === 'POST') {
         const body = await readJsonBody(req);
+        // Sample mode scans the built-in sample apps only. A real application is scanned
+        // after the user has allowed the home folder scan.
+        if (
+          currentMode() === 'demo' &&
+          body.bundlePath &&
+          !demoBundles().some((b) => b.bundlePath === body.bundlePath)
+        ) {
+          return sendJson(res, 409, { ok: false, error: 'HOME_FOLDER_SCAN_NOT_ALLOWED' });
+        }
         const state = await activeService().scanAndAnalyze({
           bundlePath: body.bundlePath || null,
           additionalWorkspacePaths: Array.isArray(body.workspacePaths)
