@@ -210,6 +210,56 @@ function fileNode(art) {
   };
 }
 
+/**
+ * Files anywhere in the scan whose name or path contains the query, optionally narrowed by
+ * cleanup risk and origin. The map shows one level at a time, so search runs over every
+ * listed file, not only the marks on screen. Largest first.
+ */
+// Lower-cased paths per scan, kept for as long as the scan's file list exists
+const searchKeys = new WeakMap();
+function searchKeysOf(artifacts) {
+  let keys = searchKeys.get(artifacts);
+  if (!keys) {
+    keys = artifacts.map((a) => a.canonicalPath.toLowerCase());
+    searchKeys.set(artifacts, keys);
+  }
+  return keys;
+}
+
+export function searchFiles(state, { query = '', risk = 'ALL', origin = 'ALL', limit = 60 } = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  const artifacts = state.artifacts || [];
+  // The path ends with the file name, so one lower-cased path covers both
+  const keys = q ? searchKeysOf(artifacts) : null;
+  const matches = artifacts.filter(
+    (a, i) =>
+      !a.quarantined &&
+      (!q || keys[i].includes(q)) &&
+      (risk === 'ALL' || a.cleanupClassification === risk) &&
+      (origin === 'ALL' || a.provenanceConfidence === origin)
+  );
+  const seen = new Set();
+  let bytes = 0;
+  for (const a of matches) {
+    const key = a.physicalInodeKey || a.canonicalPath;
+    if (!seen.has(key)) {
+      seen.add(key);
+      bytes += a.sizeBytes || 0;
+    }
+  }
+  // The largest `limit` matches, without sorting every match
+  const top = [];
+  for (const a of matches) {
+    const size = a.sizeBytes || 0;
+    if (top.length === limit && size <= (top[top.length - 1].sizeBytes || 0)) continue;
+    let at = top.length;
+    while (at > 0 && (top[at - 1].sizeBytes || 0) < size) at -= 1;
+    top.splice(at, 0, a);
+    if (top.length > limit) top.pop();
+  }
+  return { total: matches.length, bytes, results: top.map(fileNode), ids: matches.map((a) => a.id) };
+}
+
 function summaryNode({ id, nodeType, label, summary, drillId = null, artifactType = null, extra = {} }) {
   return {
     id,

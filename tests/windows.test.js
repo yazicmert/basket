@@ -258,16 +258,16 @@ test('W7. Windows app list: Start Menu shortcuts, plus tools found by the data t
     const boot = (await api('/api/bootstrap')).data;
     assert.equal(boot.platform, 'win32');
     const names = boot.availableBundles.map((b) => b.name);
-    assert.deepEqual(names.slice(0, 2).sort(), ['Claude', 'Cursor'], 'AI apps come first');
+    assert.deepEqual(names.slice(0, 2).sort(), ['Claude Code', 'Cursor'], 'AI apps come first');
     assert.ok(names.includes('Notepad Plus'));
     // No macOS privacy settings are offered on Windows
     assert.ok(boot.permissions.filter((p) => p.kind === 'MACOS_PRIVACY').every((p) => p.status === 'NOT_APPLICABLE'));
 
     // Claude Code has no Start Menu entry; it is offered because ~/.claude exists
-    const claude = boot.availableBundles.find((b) => b.name === 'Claude');
+    const claude = boot.availableBundles.find((b) => b.name === 'Claude Code');
     assert.equal(claude.bundlePath, 'atlas-known:claude');
     const scan = (await api('/api/scan/start', { bundlePath: claude.bundlePath })).data;
-    assert.equal(scan.state.application.name, 'Claude');
+    assert.equal(scan.state.application.name, 'Claude Code');
     assert.equal(scan.state.graph.stats.sessionCount, 1);
     assert.ok(scan.state.graph.stats.verifiedArtifactCount >= 1);
 

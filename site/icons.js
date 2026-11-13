@@ -84,9 +84,13 @@
 
   // Known applications that have a logo file in logos/. Used when the application's own
   // icon cannot be read from its bundle, and for the built-in sample apps.
+  // The first match wins. A null entry means: no logo, the neutral glyph is shown.
   var APP_LOGOS = [
-    [/claude/, 'claudecode'],
+    [/claude[ -]?code/, 'claudecode'],
+    [/claude/, 'claude'],
     [/cursor/, 'cursor'],
+    // Windsurf is now Devin Desktop, which has no mark in the logo set
+    [/devin/, null],
     [/windsurf|codeium/, 'windsurf'],
     [/ollama/, 'ollama'],
     [/lm ?studio/, 'lmstudio'],
@@ -97,10 +101,16 @@
     [/\btrae\b/, 'trae']
   ];
 
+  // The name and bundle identifier decide; the adapter only when they match nothing, so
+  // the Claude app (read with the Claude Code adapter) keeps its own mark.
   function logoForApp(app) {
-    var text = [app && app.name, app && app.bundleId, app && app.adapterId].join(' ').toLowerCase();
-    for (var i = 0; i < APP_LOGOS.length; i++) {
-      if (APP_LOGOS[i][0].test(text)) return APP_LOGOS[i][1];
+    var own = [app && app.name, app && app.bundleId].join(' ').toLowerCase();
+    var adapter = String((app && app.adapterId) || '').toLowerCase();
+    for (var pass = 0; pass < 2; pass++) {
+      var text = pass === 0 ? own : adapter;
+      for (var i = 0; i < APP_LOGOS.length; i++) {
+        if (APP_LOGOS[i][0].test(text)) return APP_LOGOS[i][1];
+      }
     }
     return null;
   }
@@ -109,6 +119,7 @@
   function forApp(app) {
     var text = [app && app.adapterId, app && app.name, app && app.bundleId].join(' ').toLowerCase();
     if (/cursor/.test(text)) return 'pointer';
+    // Codex, in the CLI or in the ChatGPT app that now hosts it
     if (/codex/.test(text)) return 'braces';
     if (/claude|terminal|iterm|warp|aider/.test(text)) return 'terminal';
     return 'app';

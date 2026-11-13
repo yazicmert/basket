@@ -330,6 +330,19 @@ export class ArtifactAtlasService {
     return !(home === resolved || home.startsWith(resolved + path.sep));
   }
 
+  /**
+   * Quarantine entries with the IDs of the sessions their file belonged to, so the window can
+   * name the prompt each came from. Only IDs are added; no conversation text.
+   */
+  quarantineEntriesWithSessions() {
+    const byId = new Map((this.activeState.artifacts || []).map((a) => [a.id, a]));
+    return this.sqliteStore.listQuarantineEntries().map((entry) => ({
+      ...entry,
+      // Stored with the entry; entries made before this was stored fall back to the scan
+      sessionIds: entry.sessionIds?.length ? entry.sessionIds : byId.get(entry.artifactId)?.sessionIds || []
+    }));
+  }
+
   cancelActiveScan() {
     if (this.currentScanAbortController) {
       this.currentScanAbortController.abort();
@@ -462,24 +475,50 @@ export class ArtifactAtlasService {
     return { prompts, sessionCount: sessions.length };
   }
 
-  prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {
+  /**
+   * Splits a selection into files that may be reviewed and files of a session that may
+   * still be running (changed in the last hour, or with no date). Those are never moved,
+   * however they were selected: the tool using them would break.
+   */
+  splitBySessionActivity(artifactIds) {
     const wanted = new Set(artifactIds);
-    const selected = this.activeState.artifacts.filter(
-      (a) => wanted.has(a.id) && !a.quarantined
-    );
-    return this.cleanupEngine.prepareCleanupReview({
-      artifacts: selected,
+    const selected = this.activeState.artifacts.filter((a) => wanted.has(a.id) && !a.quarantined);
+    const costs = computePromptCosts(this.activeState);
+    const running = (art) => (art.sessionIds || []).some((sid) => costs.sessions[sid]?.possiblyRunning);
+    return {
+      selectionSize: selected.length,
+      allowed: selected.filter((art) => !running(art)),
+      blocked: selected.filter(running).map((art) => ({
+        artifactId: art.id,
+        name: art.name,
+        canonicalPath: art.canonicalPath,
+        riskCategory: art.cleanupClassification,
+        provenanceConfidence: art.provenanceConfidence,
+        code: 'SESSION_MAY_BE_RUNNING',
+        reasons: [
+          'A session this file belongs to changed in the last hour or has no date, so it may still be running. Its files are not moved.'
+        ]
+      }))
+    };
+  }
+
+  prepareCleanupReview(artifactIds = [], allowHighRiskSingleOverride = false) {
+    const { allowed, blocked, selectionSize } = this.splitBySessionActivity(artifactIds);
+    // Bulk rules follow what the user selected, not what is left after setting files aside
+    const review = this.cleanupEngine.prepareCleanupReview({
+      artifacts: allowed,
       authorizedRoots: this.activeState.authorizedRoots,
-      allowHighRiskSingleOverride
+      allowHighRiskSingleOverride,
+      selectionSize
     });
+    const blockedItems = [...(review.blockedItems || []), ...blocked];
+    return { ...review, blockedItems, totalBlockedCount: blockedItems.length };
   }
 
   executeQuarantine({ artifactIds = [], confirmationToken, allowHighRiskSingleOverride = false }) {
-    const wanted = new Set(artifactIds);
-    const selected = this.activeState.artifacts.filter(
-      (a) => wanted.has(a.id) && !a.quarantined
-    );
+    const { allowed: selected, selectionSize } = this.splitBySessionActivity(artifactIds);
     const result = this.cleanupEngine.executeQuarantine({
+      selectionSize,
       artifacts: selected,
       authorizedRoots: this.activeState.authorizedRoots,
       confirmationToken,
@@ -491,7 +530,7 @@ export class ArtifactAtlasService {
     return {
       ...result,
       updatedGraph: this.activeState.graph,
-      quarantineEntries: this.sqliteStore.listQuarantineEntries()
+      quarantineEntries: this.quarantineEntriesWithSessions()
     };
   }
 
@@ -514,7 +553,7 @@ export class ArtifactAtlasService {
     return {
       ...result,
       updatedGraph: this.activeState.graph,
-      quarantineEntries: this.sqliteStore.listQuarantineEntries()
+      quarantineEntries: this.quarantineEntriesWithSessions()
     };
   }
 

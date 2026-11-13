@@ -32,7 +32,7 @@
         <div class="dropzone-intro">
           <h2 class="dropzone-headline" id="dropzone-headline">Drop an app to see what it left behind.</h2>
           <p class="dropzone-subtext">
-            Artifact Atlas finds the app's caches, logs, models and session files, shows where each one came from, and lets you remove them safely. The app itself is never opened.
+            Artifact Atlas finds the app's caches, logs, models and session files, shows which session and prompt each one came from and what each prompt cost, and lets you remove them safely. The app itself is never opened.
           </p>
           <p class="dropzone-subtext" id="dropzone-how">Drag an app from the Applications folder in Finder. Apps cannot be dragged out of the Dock; pick one from the list below instead.</p>
         </div>
@@ -183,6 +183,7 @@
         </div>
 
         <aside id="provenance-inspector" class="provenance-inspector" aria-label="Details">
+          <div id="search-results" class="search-results hidden"></div>
           <div id="inspector-empty-state" class="inspector-empty-state">
             <h3>Details</h3>
             <p>Select an item to see where it came from and whether it is safe to remove.</p>

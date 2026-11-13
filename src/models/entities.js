@@ -279,6 +279,7 @@ export function createQuarantineEntryModel(fields) {
     artifactType: fields.artifactType || ArtifactType.UNKNOWN,
     provenanceConfidence: fields.provenanceConfidence || ProvenanceConfidence.UNKNOWN,
     reason: fields.reason || '',
+    sessionIds: Array.isArray(fields.sessionIds) ? fields.sessionIds.filter((id) => typeof id === 'string') : [],
     quarantinedAt: fields.quarantinedAt || new Date().toISOString(),
     restoredAt: fields.restoredAt || null,
     status: fields.status || 'QUARANTINED' // PENDING | QUARANTINED | RESTORED

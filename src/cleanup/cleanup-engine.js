@@ -215,9 +215,11 @@ export class CleanupEngine {
   prepareCleanupReview({
     artifacts = [],
     authorizedRoots = [],
-    allowHighRiskSingleOverride = false
+    allowHighRiskSingleOverride = false,
+    // How many files the user selected, when some were set aside before this review
+    selectionSize = null
   }) {
-    const isBulk = artifacts.length > 1;
+    const isBulk = (selectionSize ?? artifacts.length) > 1;
     const eligibleItems = [];
     const blockedItems = [];
     let totalReclaimableBytes = 0;
@@ -329,12 +331,14 @@ export class CleanupEngine {
     artifacts = [],
     authorizedRoots = [],
     confirmationToken = null,
-    allowHighRiskSingleOverride = false
+    allowHighRiskSingleOverride = false,
+    selectionSize = null
   }) {
     const review = this.prepareCleanupReview({
       artifacts,
       authorizedRoots,
-      allowHighRiskSingleOverride
+      allowHighRiskSingleOverride,
+      selectionSize
     });
 
     if (!review.confirmationToken || confirmationToken !== review.confirmationToken) {
@@ -391,6 +395,8 @@ export class CleanupEngine {
               riskCategory: artifact.cleanupClassification,
               artifactType: artifact.artifactType,
               provenanceConfidence: artifact.provenanceConfidence,
+              // The sessions it belonged to (IDs only), so Quarantine can name them later
+              sessionIds: artifact.sessionIds || [],
               reason: artifact.cleanupExplanation
             }
           });

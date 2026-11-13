@@ -423,3 +423,125 @@ test('C1. What a prompt cost: output, scratch, files kept for it and its record,
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('C2. Files of a session that may still be running are never moved, however they are selected', async () => {
+  const env = makeHome();
+  const scratch = path.join(env.home, 'scratch', 'probe.png');
+  fs.mkdirSync(path.dirname(scratch), { recursive: true });
+  fs.writeFileSync(scratch, 'x'.repeat(500));
+  const base = { sessionId: 'sess-one', cwd: env.project, timestamp: '2026-11-01T10:00:00.000Z' };
+  fs.appendFileSync(env.transcript, JSON.stringify({ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Write', input: { file_path: scratch } }] } }) + '\n');
+  // The transcript was just written: the session may still be running
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', quarantineRoot: path.join(env.root, 'vault') });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const probe = state.artifacts.find((a) => a.name === 'probe.png');
+    assert.equal(state.promptCosts.sessions[state.sessions[0].id].possiblyRunning, true);
+    const review = service.prepareCleanupReview([probe.id]);
+    assert.equal(review.eligibleItems.length, 0);
+    assert.deepEqual(review.blockedItems.map((b) => b.code), ['SESSION_MAY_BE_RUNNING']);
+    assert.equal(review.totalBlockedCount, 1);
+    // Setting a file aside does not turn a two-file selection into a single one: a high-risk
+    // file of no session stays under the bulk rule even with the single-file override
+    const highRisk = { ...state.artifacts.find((a) => a.name === 'settings.json'), cleanupClassification: 'HIGH' };
+    const review2 = service.cleanupEngine.prepareCleanupReview({ artifacts: [highRisk], authorizedRoots: state.authorizedRoots, allowHighRiskSingleOverride: true, selectionSize: 2 });
+    assert.deepEqual(review2.blockedItems.map((b) => b.code), ['BULK_HIGH_RISK_OR_UNKNOWN_BLOCKED']);
+    const result = service.executeQuarantine({ artifactIds: [probe.id], confirmationToken: review.confirmationToken });
+    assert.equal((result.quarantinedEntries || []).length, 0);
+    assert.ok(fs.existsSync(scratch), 'the file is still where it was');
+  } catch (err) {
+    // A refused confirmation is also a refusal to move
+    if (!/EXPLICIT_CONFIRMATION_REQUIRED/.test(err.message)) throw err;
+    assert.ok(fs.existsSync(scratch));
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('F1. Search looks through every listed file, with the risk and origin filters', async () => {
+  const env = makeHome();
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin' });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle, scanScope: { projectFolders: true } });
+    const { searchFiles } = await import('../src/graph/map-levels.js');
+    const byName = searchFiles(state, { query: 'IMPORTER.JS' });
+    assert.deepEqual(byName.results.map((n) => n.label), ['importer.js']);
+    assert.equal(byName.results[0].nodeType, 'ARTIFACT');
+    const byPath = searchFiles(state, { query: `${path.sep}src${path.sep}` });
+    assert.ok(byPath.total >= 2);
+    const verified = searchFiles(state, { origin: 'VERIFIED' });
+    assert.ok(verified.ids.every((id) => state.artifacts.find((a) => a.id === id).provenanceConfidence === 'VERIFIED'));
+    const protectedOnly = searchFiles(state, { risk: 'PROTECTED', query: '.js' });
+    assert.ok(protectedOnly.total > 0 && protectedOnly.results.every((n) => n.riskCategory === 'PROTECTED'));
+    const limited = searchFiles(state, { query: '', limit: 2 });
+    assert.equal(limited.results.length, 2);
+    assert.equal(limited.total, state.artifacts.length);
+    assert.ok(limited.results[0].sizeBytes >= limited.results[1].sizeBytes, 'largest first');
+    assert.equal(searchFiles(state, { query: 'no-such-file-anywhere' }).total, 0);
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('A1. The ChatGPT app that hosts Codex is listed once and traced; ChatGPT Classic is not given Codex sessions', async () => {
+  for (const [bundleId, expected] of [
+    ['com.openai.codex', { names: ['ChatGPT'], adapter: 'codex-cli' }],
+    ['com.openai.chat', { names: ['ChatGPT', 'Codex'], adapter: 'generic-macos-app' }]
+  ]) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-oai-')));
+    const home = path.join(root, 'home');
+    const apps = path.join(root, 'Applications');
+    const write = (p, c = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+    write(path.join(apps, 'ChatGPT.app', 'Contents', 'Info.plist'), `<plist><dict><key>CFBundleName</key><string>ChatGPT</string><key>CFBundleIdentifier</key><string>${bundleId}</string></dict></plist>`);
+    write(path.join(home, '.codex', 'sessions', '2026', '11', '01', 'rollout-x.jsonl'), JSON.stringify({ session_id: 's1', cwd: home, timestamp: '2026-11-01T10:00:00Z', type: 'message' }) + '\n');
+    const atlas = createAtlasServer({ dataDir: path.join(root, 'data'), liveHomeDir: home, platform: 'darwin', applicationDirs: [apps] });
+    try {
+      await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+      const api = async (route, body) =>
+        (await fetch(`http://127.0.0.1:${atlas.server.address().port}${route}`, { method: body ? 'POST' : 'GET', headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+      await api('/api/permissions/home-folder-scan', { granted: true });
+      const boot = await api('/api/bootstrap');
+      assert.deepEqual(boot.availableBundles.map((b) => b.name), expected.names, bundleId);
+      const scan = await api('/api/scan/start', { bundlePath: path.join(apps, 'ChatGPT.app') });
+      assert.equal(scan.state.application.adapterId, expected.adapter, bundleId);
+    } finally {
+      await atlas.shutdown();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('Q1. A quarantined file keeps the session it came from after a new scan (IDs only)', async () => {
+  const env = makeHome();
+  const kept = path.join(path.dirname(env.transcript), 'sess-one', 'tool-results', 'result.txt');
+  fs.mkdirSync(path.dirname(kept), { recursive: true });
+  fs.writeFileSync(kept, 'r'.repeat(700));
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+  for (const f of [env.transcript, kept, path.join(path.dirname(env.transcript), 'sess-one', 'subagents', 'agent-1.jsonl')]) fs.utimesSync(f, dayAgo, dayAgo);
+  const dbPath = path.join(env.root, 'index.sqlite');
+  const service = new ArtifactAtlasService({ homeDir: env.home, platform: 'darwin', dbPath, quarantineRoot: path.join(env.root, 'vault') });
+  try {
+    const state = await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const sessionId = state.sessions[0].id;
+    const { sessionLeftoverIds } = await import('../src/graph/prompt-costs.js');
+    const ids = sessionLeftoverIds(state, sessionId, state.promptCosts);
+    assert.ok(ids.length > 0);
+    const review = service.prepareCleanupReview(ids);
+    const moved = service.executeQuarantine({ artifactIds: ids, confirmationToken: review.confirmationToken });
+    assert.equal(moved.quarantinedEntries.length, review.eligibleItems.length);
+
+    await service.scanAndAnalyze({ bundlePath: env.bundle });
+    const entries = service.quarantineEntriesWithSessions();
+    assert.ok(entries.length > 0);
+    assert.ok(entries.every((e) => e.sessionIds.length === 1 && e.sessionIds[0] === sessionId));
+    // The manifest carries the IDs too, and nothing else about the session
+    const manifest = JSON.parse(fs.readFileSync(entries[0].manifestPath, 'utf8'));
+    assert.deepEqual(manifest.sessionIds, [sessionId]);
+    assert.ok(!JSON.stringify(manifest).includes('CSV'));
+  } finally {
+    service.sqliteStore.close();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

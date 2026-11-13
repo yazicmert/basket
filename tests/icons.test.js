@@ -158,10 +158,16 @@ test('every artifact type has its own icon, and the site copy matches the app co
   assert.equal(icons.forApp({ adapterId: 'claude-code', name: 'Claude Code' }), 'terminal');
   assert.equal(icons.forApp({ name: 'NebulaSketch' }), 'app');
   // Known applications have a logo file to fall back on, in the app and on the site
-  for (const [name, logo] of [['Claude', 'claudecode'], ['Cursor', 'cursor'], ['Ollama', 'ollama'], ['Zed', 'zedindustries']]) {
+  for (const [name, logo] of [['Claude', 'claude'], ['Claude Code', 'claudecode'], ['Cursor', 'cursor'], ['Ollama', 'ollama'], ['Zed', 'zedindustries'], ['Windsurf', 'windsurf']]) {
     assert.equal(icons.logoForApp({ name }), logo);
     assert.ok(fs.existsSync(path.resolve('src', 'ui', 'public', 'logos', `${logo}.svg`)), `${logo}.svg in the app`);
     assert.ok(fs.existsSync(path.resolve('site', 'logos', `${logo}.svg`)), `${logo}.svg on the site`);
+  }
+  // The Claude app keeps its own mark although it is read with the Claude Code adapter
+  assert.equal(icons.logoForApp({ name: 'Claude', bundleId: 'com.anthropic.claudefordesktop', adapterId: 'claude-code' }), 'claude');
+  // Windsurf is now Devin Desktop, which has no mark in the logo set; OpenAI apps have none either
+  for (const app of [{ name: 'Devin', bundleId: 'com.exafunction.windsurf' }, { name: 'ChatGPT' }, { name: 'Codex' }]) {
+    assert.equal(icons.logoForApp(app), null, app.name);
   }
   assert.equal(icons.logoForApp({ name: 'NebulaSketch' }), null);
   assert.equal(icons.logoForApp({ name: 'Zedd Player' }), null);

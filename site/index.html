@@ -3,12 +3,20 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Artifact Atlas — AI Artifact Provenance &amp; Cleanup Explorer</title>
-<meta name="description" content="Local-first app for macOS and Windows that shows which AI coding session created each file on your disk, and cleans up safely through a recoverable quarantine." />
+<title>Artifact Atlas — What your AI prompts left on disk</title>
+<meta name="description" content="Local-first app for macOS and Windows that shows which AI session and prompt created each file on your disk, what each prompt cost in files and gigabytes, and cleans up safely through a recoverable quarantine." />
+<meta property="og:title" content="Artifact Atlas — What your AI prompts left on disk" />
+<meta property="og:description" content="See which AI session and prompt created each file, what each prompt cost, and remove the leftovers safely. Runs offline on macOS and Windows." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://yazicmert.github.io/basket/" />
+<meta property="og:image" content="https://yazicmert.github.io/basket/screenshot.png" />
+<meta property="og:image:width" content="2720" />
+<meta property="og:image:height" content="1640" />
+<meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=9" />
+<link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body>
 <div class="topbar">
@@ -35,8 +43,9 @@
     <p class="eyebrow">macOS 14+ · Windows 10 and 11 · runs offline</p>
     <h1>Know which AI session made a file before you delete it.</h1>
     <p class="lead">
-      Artifact Atlas maps the files that Claude Code, Cursor, Codex CLI and other apps leave on your Mac or PC
-      to the sessions and tool calls that produced them. Cleanup moves files into a quarantine you can
+      Artifact Atlas maps the files that Claude Code, Cursor, Codex and other AI apps leave on your Mac or PC
+      to the sessions and tool calls that produced them, names each session by the prompt that started it,
+      and shows what that prompt cost beyond its output. Cleanup moves files into a quarantine you can
       restore from. Nothing is deleted permanently.
     </p>
     <div class="actions">
@@ -60,7 +69,7 @@
             <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>Artifact Atlas</span></div>
             <div id="demo" class="demo">
               <img src="screenshot.png" width="1360" height="820"
-                   alt="Artifact Atlas map linking an AI application, its sessions and tool calls to the files they created, colored by cleanup risk." />
+                   alt="Artifact Atlas showing one AI session, named by its starting prompt, with what that prompt cost: its output, the files the app keeps for it and its record." />
             </div>
           </div>
           <div class="mac-dock" id="mac-dock" aria-hidden="true"></div>
@@ -119,7 +128,7 @@
         <div class="row">
           <span class="sample" aria-hidden="true"><i class="dot protected"></i></span>
           <dt>Protected</dt>
-          <dd>Source code, Git repositories, credentials and configuration files.</dd>
+          <dd>Source code, Git repositories, credentials, configuration files, and files in your project folders that no session recorded.</dd>
         </div>
       </dl>
     </div>
@@ -156,16 +165,17 @@
   </section>
 
   <section class="spec" id="supported">
-    <h2>Supported apps <small>And any other .app</small></h2>
+    <h2>Supported apps <small>And any other app</small></h2>
     <div class="spec-body">
-      <p>Claude Code, Cursor and Codex (in the ChatGPT app or the CLI) get session-level tracing: each file is linked to the session and tool call that wrote it. The other apps listed here are found through their known data folders, and anything else you drop is located by its bundle identifier and name.</p>
+      <p>For <strong>Claude Code</strong> (the CLI, and the Code view of the Claude app) each file a session wrote is linked to the session and the tool call that wrote it. For <strong>Cursor</strong> and <strong>Codex</strong> (the CLI, and the Codex view of the ChatGPT app, which replaced the separate Codex app in July 2026), sessions are listed with their starting prompt; linking their files to tool calls is not yet supported for their current record formats. The other apps listed here are found through their known data folders, and any other app you choose, on macOS or Windows, is located by its identifier and name.</p>
       <div class="marquee">
         <div class="marquee-track">
           <ul>
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code<small>sessions</small></li>
+            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claude.svg);mask-image:url(logos/claude.svg)"></i></span>Claude<small>sessions</small></li>
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>ChatGPT and Codex<small>sessions</small></li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/windsurf.svg);mask-image:url(logos/windsurf.svg)"></i></span>Windsurf</li>
+            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex<small>in ChatGPT and the CLI</small></li>
+            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Devin Desktop<small>formerly Windsurf</small></li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/ollama.svg);mask-image:url(logos/ollama.svg)"></i></span>Ollama</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/lmstudio.svg);mask-image:url(logos/lmstudio.svg)"></i></span>LM Studio</li>
             <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>GPT4All</li>
@@ -173,9 +183,10 @@
           </ul>
           <ul aria-hidden="true">
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code<small>sessions</small></li>
+            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claude.svg);mask-image:url(logos/claude.svg)"></i></span>Claude<small>sessions</small></li>
             <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>ChatGPT and Codex<small>sessions</small></li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/windsurf.svg);mask-image:url(logos/windsurf.svg)"></i></span>Windsurf</li>
+            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex<small>in ChatGPT and the CLI</small></li>
+            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Devin Desktop<small>formerly Windsurf</small></li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/ollama.svg);mask-image:url(logos/ollama.svg)"></i></span>Ollama</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/lmstudio.svg);mask-image:url(logos/lmstudio.svg)"></i></span>LM Studio</li>
             <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>GPT4All</li>
@@ -196,7 +207,7 @@
             <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Aider</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/trae.svg);mask-image:url(logos/trae.svg)"></i></span>Trae</li>
             <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Kiro</li>
-            <li class="chip any"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Any other .app</li>
+            <li class="chip any"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Any other app</li>
           </ul>
           <ul aria-hidden="true">
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/googlegemini.svg);mask-image:url(logos/googlegemini.svg)"></i></span>Gemini</li>
@@ -209,7 +220,7 @@
             <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Aider</li>
             <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/trae.svg);mask-image:url(logos/trae.svg)"></i></span>Trae</li>
             <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Kiro</li>
-            <li class="chip any"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Any other .app</li>
+            <li class="chip any"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Any other app</li>
           </ul>
         </div>
       </div>
@@ -323,7 +334,7 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js?v=9" defer></script>
-<script src="demo.js?v=9" defer></script>
+<script src="icons.js?v=11" defer></script>
+<script src="demo.js?v=11" defer></script>
 </body>
 </html>

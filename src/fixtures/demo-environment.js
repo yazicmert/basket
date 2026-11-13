@@ -405,6 +405,11 @@ export function createDeterministicDemoEnvironment(rootDir) {
     'utf8'
   );
 
+  // The sample sessions ended on 10 November 2026; their files carry that date, so the
+  // sample shows them as finished sessions whose leftovers can be reviewed. Symlinks are
+  // left alone (their own times cannot be set without following them).
+  stampSampleTimes(homeDir, new Date('2026-11-10T15:00:00.000Z'));
+
   return {
     baseDir,
     homeDir,
@@ -486,4 +491,26 @@ function createMockAppBundle(
     bundlePath,
     version
   };
+}
+
+function stampSampleTimes(dir, when) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      stampSampleTimes(full, when);
+    } else if (entry.isFile()) {
+      try {
+        fs.utimesSync(full, when, when);
+      } catch {
+        // A file the tests made unreadable keeps its time
+      }
+    }
+  }
 }

@@ -800,7 +800,7 @@ export class GraphEngine {
 
       if (art.sessionIds.length > 1) {
         bucketKey = '__shared_multi_session__';
-        bucketLabel = `Shared Across Multiple Sessions (${art.sessionIds.length})`;
+        bucketLabel = `Shared by ${art.sessionIds.length} sessions`;
         focusNodeId = art.id;
       } else if (art.sessionIds.length === 1) {
         const s = sessMap.get(art.sessionIds[0]);
@@ -809,7 +809,7 @@ export class GraphEngine {
         focusNodeId = art.sessionIds[0];
       } else {
         bucketKey = '__unattributed_session__';
-        bucketLabel = 'Unattributed / Application-Level Only';
+        bucketLabel = 'The app as a whole (no session)';
         focusNodeId = application?.id || null;
       }
 

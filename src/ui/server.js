@@ -16,9 +16,24 @@ import {
 } from '../platform/permissions.js';
 import { findKnownAppProfile, listKnownApplicationsWithData } from '../discovery/app-footprint.js';
 import { listStartMenuApplications } from '../discovery/windows-apps.js';
-import { KNOWN_APP_PREFIX } from '../discovery/application-discovery.js';
+import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
+
+/**
+ * The bundle identifier in an application's Info.plist (static read; the app is not run).
+ * Used to tell apart apps that share a name, such as the ChatGPT app that now hosts Codex
+ * and ChatGPT Classic.
+ */
+function readBundleIdentifier(bundlePath) {
+  try {
+    const raw = fs.readFileSync(path.join(bundlePath, 'Contents', 'Info.plist'));
+    const plist = raw.toString('latin1', 0, 6) === 'bplist' ? parseMacOSBinaryPlist(raw) : parseMacOSPlistXml(raw.toString('utf8'));
+    return typeof plist.CFBundleIdentifier === 'string' ? plist.CFBundleIdentifier : null;
+  } catch {
+    return null;
+  }
+}
 import { readAppIconPng } from '../discovery/app-icon.js';
-import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
+import { buildMapLevel, levelArtifactIds, searchFiles } from '../graph/map-levels.js';
 import { sessionLeftoverIds } from '../graph/prompt-costs.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
 import {
@@ -326,15 +341,15 @@ export function createAtlasServer(options = {}) {
   const installedBundles = () => {
     const bundles = [];
     const seen = new Set();
-    const add = (name, bundlePath, description) => {
+    const add = (name, bundlePath, description, bundleId = null) => {
       if (seen.has(bundlePath)) {
         return;
       }
       seen.add(bundlePath);
-      const profile = findKnownAppProfile({ name });
+      const profile = findKnownAppProfile({ name, bundleId });
       bundles.push({
         name,
-        bundleId: null,
+        bundleId,
         bundlePath,
         version: 'Installed',
         description,
@@ -367,7 +382,11 @@ export function createAtlasServer(options = {}) {
         }
         for (const entry of entries) {
           if (entry.isDirectory() && entry.name.endsWith('.app')) {
-            add(entry.name.replace(/\.app$/, ''), path.join(appDir, entry.name), `Installed in ${appDir}`);
+            const name = entry.name.replace(/\.app$/, '');
+            const bundlePath = path.join(appDir, entry.name);
+            // Known AI apps are told apart by their bundle identifier; others by name only
+            const bundleId = findKnownAppProfile({ name }) ? readBundleIdentifier(bundlePath) : null;
+            add(name, bundlePath, `Installed in ${appDir}`, bundleId);
           }
         }
       }
@@ -450,6 +469,10 @@ export function createAtlasServer(options = {}) {
     // The files a finished session left behind outside your projects (see prompt-costs.js)
     if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
       return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
+    }
+    if (body.kind === 'search') {
+      if (!String(body.query || '').trim() && (body.risk || 'ALL') === 'ALL' && (body.origin || 'ALL') === 'ALL') return [];
+      return searchFiles(state, body).ids;
     }
     if (body.kind === 'cell' && TREEMAP_GROUPINGS.includes(body.groupBy)) {
       const cell = (state.graph?.treemap?.[body.groupBy] || []).find((c) => c.id === body.cellId);
@@ -648,7 +671,7 @@ export function createAtlasServer(options = {}) {
           availableBundles: discoverAvailableBundles(),
           defaultWorkspacePath: currentMode() === 'demo' ? demoEnv.workspaceDir : '',
           activeState: stateForClient(activeService().activeState),
-          quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
+          quarantineEntries: activeService().quarantineEntriesWithSessions()
         });
       }
 
@@ -706,7 +729,7 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           state: stateForClient(state),
-          quarantineEntries: activeService().sqliteStore.listQuarantineEntries()
+          quarantineEntries: activeService().quarantineEntriesWithSessions()
         });
       }
 
@@ -864,6 +887,17 @@ export function createAtlasServer(options = {}) {
           artifactIds,
           summary: summarizeSelection(activeService().activeState, artifactIds)
         });
+      }
+
+      // Search over every listed file of the scan, not only the marks of the open level
+      if (url.pathname === '/api/search' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const { total, bytes, results } = searchFiles(activeService().activeState, {
+          query: body.query,
+          risk: body.risk,
+          origin: body.origin
+        });
+        return sendJson(res, 200, { ok: true, total, bytes, results });
       }
 
       if (url.pathname === '/api/map/level' && req.method === 'POST') {

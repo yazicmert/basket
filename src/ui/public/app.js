@@ -1026,6 +1026,8 @@ function transitionToExplorerView() {
     `${pluralize(state.scan.discoveredArtifactCount, 'file')} · ${formatBytes(scanTotalBytes(state.scan))}`;
 
   renderScanNoticesBanner(state);
+  uiState.sessionLabels = null;
+  runScanSearch();
   loadMapLevel('root');
   renderGlobalInspectorSummary();
   renderTreemapView();
@@ -1058,6 +1060,9 @@ function renderScanNoticesBanner(state) {
   }
   if (state.application && state.scan.discoveredArtifactCount === 0) {
     notices.push(`No data folders were found for ${state.application.name}.`);
+  }
+  if (state.scan.status === 'CANCELLED') {
+    notices.push('You cancelled this scan. It shows only what was read before that; totals are partial. Scan again for the full picture.');
   }
   if (state.scan.truncated) {
     const over = state.scan.overflow || { fileCount: 0, physicalBytes: 0 };
@@ -1275,7 +1280,9 @@ function resizeCanvas() {
 }
 
 function isNodeVisibleByFilter(node) {
-  if (uiState.focusMode && uiState.activeTrace) {
+  // Focus keeps the files linked to the selected one. Marks that stand for many files (the
+  // level's centre, kinds, folders, sessions) stay, so the level keeps its shape.
+  if (uiState.focusMode && uiState.activeTrace && node.nodeType === 'ARTIFACT' && node.id !== uiState.selectedNodeId) {
     if (!uiState.activeTrace.highlightedNodeIds.includes(node.id)) {
       return false;
     }
@@ -2278,7 +2285,7 @@ function renderNodeInspector(node, trace) {
                 `<div class="kv-item"><span class="kv-key"><span class="legend-dot ${RISK_DOT_CLASS[risk]}"></span> ${escapeHtml(RISK_LABELS[risk])}</span><span class="kv-val">${pluralize(meta.summary.riskCounts[risk], 'file')}</span></div>`
             )
             .join('')}
-          ${meta.path ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path)}</span></div>` : ''}
+          ${meta.path && !meta.session ? `<div class="kv-item"><span class="kv-key">Path</span><span class="kv-val mono">${escapeHtml(meta.path)}</span></div>` : ''}
         `
             : ''
         }
@@ -2286,7 +2293,7 @@ function renderNodeInspector(node, trace) {
       ${
         meta.measuredOnly
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
-          : meta.summary && node.nodeType !== 'AI_APPLICATION'
+          : meta.summary && node.nodeType !== 'AI_APPLICATION' && !meta.cost
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
              <button id="select-level-files-btn" class="secondary-btn" type="button">Select These ${pluralize(meta.summary.artifactCount, 'File')}</button>`
           : ''
@@ -2328,7 +2335,7 @@ function renderNodeInspector(node, trace) {
         const count = await selectByDescription({ kind: 'session-leftovers', sessionId: meta.session.id });
         showToast(
           count > 0
-            ? `Selected ${pluralize(count, 'file')} this session left behind. Review them before moving.`
+            ? `Selected ${pluralize(count, 'file')} this session left behind. Review ${count === 1 ? 'it' : 'them'} before moving.`
             : 'Nothing this session left behind can be offered for removal.'
         );
       } catch (err) {
@@ -2357,6 +2364,79 @@ function renderNodeInspector(node, trace) {
    EXPLORER CONTROLS, TREEMAP VIEW & QUARANTINE VAULT (Sections 6 & 9)
    ========================================================================= */
 
+/* Search and the risk and origin filters look through every file of the scan. The marks on
+   the open level are dimmed as before; the matches are listed in the details panel. */
+let scanSearchTimer = null;
+function scheduleScanSearch() {
+  clearTimeout(scanSearchTimer);
+  scanSearchTimer = setTimeout(runScanSearch, 250);
+}
+
+function scanSearchActive() {
+  return Boolean(uiState.searchQuery) || uiState.filterRisk !== 'ALL' || uiState.filterConfidence !== 'ALL';
+}
+
+async function runScanSearch() {
+  const box = document.getElementById('search-results');
+  if (!box) return;
+  if (!scanSearchActive() || !uiState.activeState) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+  const description = { query: uiState.searchQuery, risk: uiState.filterRisk, origin: uiState.filterConfidence };
+  let res;
+  try {
+    res = await apiRequest('/api/search', 'POST', description);
+  } catch (err) {
+    showToast(`Could not search: ${err.message}`);
+    return;
+  }
+  // A newer search may have started meanwhile
+  if (description.query !== uiState.searchQuery || description.risk !== uiState.filterRisk || description.origin !== uiState.filterConfidence) return;
+  box.classList.remove('hidden');
+  const rows = res.results
+    .map(
+      (n, i) => `
+      <button type="button" class="search-row" data-index="${i}">
+        <span class="legend-dot ${RISK_DOT_CLASS[n.riskCategory] || ''}"></span>
+        <span class="search-row-name">${escapeHtml(n.label)}</span>
+        <span class="search-row-size">${formatBytes(n.sizeBytes)}</span>
+        <span class="search-row-path mono">${escapeHtml(shortPath(n.metadata.canonicalPath))}</span>
+      </button>`
+    )
+    .join('');
+  box.innerHTML = `
+    <div class="inspector-section">
+      <div class="search-head">
+        <div class="inspector-section-title">${res.total === 0 ? 'No files match' : `${pluralize(res.total, 'file')} match · ${formatBytes(res.bytes)}`}</div>
+        <button type="button" class="link-btn" id="search-clear-btn">Clear</button>
+      </div>
+      ${res.total > res.results.length ? `<div class="inspector-note">Showing the ${res.results.length} largest. Narrow the search or the filters to see others.</div>` : ''}
+      <div class="search-list">${rows}</div>
+      ${res.total > 0 ? `<button id="search-select-all-btn" class="secondary-btn" type="button">Select All ${pluralize(res.total, 'File')}</button>` : ''}
+    </div>`;
+  box.querySelectorAll('.search-row').forEach((row) => {
+    row.addEventListener('click', () => selectNodeInGraph(res.results[Number(row.dataset.index)]));
+  });
+  document.getElementById('search-clear-btn').addEventListener('click', () => {
+    uiState.searchQuery = '';
+    uiState.filterRisk = 'ALL';
+    uiState.filterConfidence = 'ALL';
+    document.getElementById('graph-search-input').value = '';
+    document.getElementById('filter-risk').value = 'ALL';
+    document.getElementById('filter-confidence').value = 'ALL';
+    runScanSearch();
+  });
+  const selectAll = document.getElementById('search-select-all-btn');
+  if (selectAll) {
+    selectAll.addEventListener('click', async () => {
+      const count = await selectByDescription({ kind: 'search', ...description });
+      showToast(`Selected ${pluralize(count, 'file')}. Every file is reviewed before it moves.`);
+    });
+  }
+}
+
 function bindExplorerControls() {
   const switchTab = (tab) => {
     uiState.activeTab = tab;
@@ -2379,14 +2459,17 @@ function bindExplorerControls() {
 
   document.getElementById('graph-search-input').addEventListener('input', (e) => {
     uiState.searchQuery = e.target.value.trim();
+    scheduleScanSearch();
   });
 
   document.getElementById('filter-confidence').addEventListener('change', (e) => {
     uiState.filterConfidence = e.target.value;
+    scheduleScanSearch();
   });
 
   document.getElementById('filter-risk').addEventListener('change', (e) => {
     uiState.filterRisk = e.target.value;
+    scheduleScanSearch();
   });
 
   document.getElementById('toggle-focus-mode-btn').addEventListener('click', (e) => {
@@ -2425,6 +2508,20 @@ function bindExplorerControls() {
     await apiRequest('/api/scan/cancel', 'POST');
     showToast('Scan canceled.');
   });
+}
+
+// Session names as the map shows them, for the Sizes tab
+async function loadSessionLabels() {
+  try {
+    const res = await apiRequest('/api/map/level', 'POST', { levelId: 'sessions' });
+    uiState.sessionLabels = new Map(
+      res.level.nodes
+        .filter((n) => n.metadata?.session?.id)
+        .map((n) => [n.metadata.session.id, n.label])
+    );
+  } catch {
+    uiState.sessionLabels = new Map();
+  }
 }
 
 function renderTreemapView() {
@@ -2476,7 +2573,16 @@ function renderTreemapView() {
   );
   const maxBytes = Math.max(1, ...cells.map((c) => c.bytes));
 
-  cells.forEach((cell) => {
+  // Sessions are named by their prompt, as on the map (labels come with the sessions level)
+  const sessionLabels = uiState.treemapGroupBy === 'bySession' ? uiState.sessionLabels || null : null;
+  if (uiState.treemapGroupBy === 'bySession' && !uiState.sessionLabels) {
+    loadSessionLabels().then(() => {
+      if (uiState.treemapGroupBy === 'bySession') renderTreemapView();
+    });
+  }
+
+  cells.forEach((rawCell) => {
+    const cell = sessionLabels && sessionLabels.has(rawCell.id) ? { ...rawCell, label: sessionLabels.get(rawCell.id) } : rawCell;
     const risk = cell.riskCategory || 'REVIEW';
     const tile = document.createElement('div');
     tile.className = 'treemap-tile';
@@ -2526,6 +2632,19 @@ function renderTreemapView() {
   });
 }
 
+// Which prompt a quarantined file came from, by the session names the map uses
+function quarantineOriginHtml(entry) {
+  const ids = entry.sessionIds || [];
+  if (ids.length === 0) return '';
+  if (!uiState.sessionLabels) {
+    loadSessionLabels().then(() => renderQuarantineVaultView());
+    return '';
+  }
+  const names = ids.map((id) => uiState.sessionLabels.get(id)).filter(Boolean);
+  if (names.length === 0) return '';
+  return `<div class="quarantine-row-origin">From ${names.length === 1 ? 'the session' : 'the sessions'} <strong>${names.map(escapeHtml).join('</strong>, <strong>')}</strong></div>`;
+}
+
 function renderQuarantineVaultView() {
   const listEl = document.getElementById('quarantine-entries-list');
   if (!listEl) return;
@@ -2553,6 +2672,7 @@ function renderQuarantineVaultView() {
           }</span>
         </div>
         <div class="quarantine-row-path mono">${escapeHtml(entry.originalPath)}</div>
+        ${quarantineOriginHtml(entry)}
       </div>
       ${
         isHeld
@@ -2898,7 +3018,11 @@ function openSettingsModal() {
         <input type="checkbox" id="settings-update-check" />
         <span>Check for new versions</span>
       </label>
-      <p class="inspector-note">The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.</p>
+      <p class="inspector-note">${
+        isWindows()
+          ? 'The check asks GitHub for the latest release number and sends nothing about you or your files. When a new version is out, the update button opens its download page. This is the only time the app uses the network.'
+          : 'The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.'
+      }</p>
     </div>
   `;
   modal.classList.remove('hidden');

@@ -1790,6 +1790,7 @@ footer {
 .demo-total strong {
   font-size: 22px;
   letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
 .demo-share {
@@ -2110,4 +2111,25 @@ h3.platform span {
   margin-left: 8px;
   font-weight: 400;
   color: var(--ink-3);
+}
+
+/* Walkthrough: a session's starting prompt */
+.demo-prompt {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+#demo-leftovers-button {
+  margin-top: 10px;
+  width: 100%;
+}
+
+/* Phones: a smaller map that scrolls less, kept centred by demo.js */
+@media (max-width: 560px) {
+  .demo-scroll svg {
+    min-width: 540px;
+  }
 }
