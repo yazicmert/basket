@@ -87,20 +87,31 @@ function appIconUrl(bundlePath) {
 }
 
 // Fills an `.app-icon` element for an application ({ name, adapterId, bundlePath, isDemoFixture }).
+// Order of preference: the application's own icon from its bundle, a known logo, a glyph.
 function fillAppIcon(el, app) {
   if (!el) return;
-  el.innerHTML = iconSvg(app ? Icons.forApp(app) : 'folder', 16);
   el.classList.remove('has-image');
+  const logo = app ? Icons.logoForApp(app) : null;
+  if (logo) {
+    el.innerHTML = `<i class="app-logo" style="-webkit-mask-image:url(/logos/${logo}.svg);mask-image:url(/logos/${logo}.svg)"></i>`;
+  } else {
+    el.innerHTML = iconSvg(app ? Icons.forApp(app) : 'folder', 16);
+  }
   if (app && app.bundlePath && !app.isDemoFixture) {
-    const img = new Image();
+    // The image sits in the page from the start so the browser loads it when its row is
+    // visible; it replaces the fallback only once it has loaded.
+    const img = document.createElement('img');
     img.alt = '';
     img.loading = 'lazy';
     img.decoding = 'async';
+    img.className = 'app-icon-image';
     img.addEventListener('load', () => {
       el.classList.add('has-image');
       el.replaceChildren(img);
     });
+    img.addEventListener('error', () => img.remove());
     img.src = appIconUrl(app.bundlePath);
+    el.appendChild(img);
   }
 }
 
@@ -628,6 +639,149 @@ async function previewIdentifiedBundleInModal(bundlePath) {
    SCANNING WORKFLOW (Section 4.3)
    ========================================================================= */
 
+/* Live map while scanning: the app in the middle, and a mark for every top-level folder the
+   scan walks into. A mark appears when its folder is first read and grows as more of it is
+   read. It is a picture of progress only; the real map is built when the scan finishes. */
+const scanViz = {
+  running: false,
+  nodes: new Map(),
+  appName: '',
+  home: '',
+  current: null,
+  lastCount: 0,
+
+  start(appName) {
+    this.nodes = new Map();
+    this.appName = appName;
+    this.home = uiState.bootstrap?.homeDir || '';
+    this.current = null;
+    this.lastCount = 0;
+    if (this.running) return;
+    this.running = true;
+    requestAnimationFrame(() => this.frame());
+  },
+
+  stop() {
+    this.running = false;
+  },
+
+  // The folder key: up to three path segments below the home folder
+  keyFor(dirPath) {
+    let rel = dirPath;
+    if (this.home && dirPath.startsWith(this.home + '/')) rel = dirPath.slice(this.home.length + 1);
+    const parts = rel.split('/').filter(Boolean);
+    const depth = parts[0] === 'Library' ? 3 : parts[0]?.startsWith('.') ? 2 : 2;
+    return parts.slice(0, depth).join('/') || rel;
+  },
+
+  visit(dirPath, totalCount) {
+    const key = this.keyFor(dirPath);
+    let node = this.nodes.get(key);
+    if (!node && this.nodes.size < 28) {
+      const index = this.nodes.size;
+      const angle = index * 2.399963; // golden angle spreads marks evenly as they arrive
+      const ring = 150 + (index % 3) * 62;
+      node = { key, label: key.split('/').slice(-2).join('/'), tx: Math.cos(angle) * ring, ty: Math.sin(angle) * ring * 0.72, born: performance.now(), files: 0 };
+      this.nodes.set(key, node);
+    }
+    if (node) {
+      node.files += Math.max(0, (totalCount || 0) - this.lastCount);
+      this.current = key;
+    }
+    this.lastCount = totalCount || 0;
+  },
+
+  frame() {
+    if (!this.running) return;
+    const canvas = document.getElementById('scan-live-canvas');
+    if (canvas && !document.getElementById('scanning-view').classList.contains('hidden')) {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+      }
+      const ctx = canvas.getContext('2d');
+      const colors = themeColors();
+      const now = performance.now();
+      const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      // The map sits above the progress card
+      ctx.translate(rect.width / 2, rect.height * 0.36);
+      const fit = Math.min(1, rect.width / 760, (rect.height * 0.62) / 420);
+      ctx.scale(fit, fit);
+
+      for (const node of this.nodes.values()) {
+        const t = still ? 1 : Math.max(0, Math.min(1, (now - node.born) / 520));
+        const eased = 1 - Math.pow(1 - t, 3);
+        const x = node.tx * eased;
+        const y = node.ty * eased;
+        const active = node.key === this.current;
+        const r = Math.max(11, Math.min(26, 9 + Math.log10(node.files + 10) * 4.2));
+
+        ctx.globalAlpha = (active ? 0.9 : 0.3) * eased;
+        ctx.strokeStyle = active ? colors.ink : colors.ink3;
+        ctx.lineWidth = active ? 1.4 : 1;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        ctx.globalAlpha = eased;
+        ctx.beginPath();
+        ctx.roundRect(x - r, y - r, r * 2, r * 2, 6);
+        ctx.fillStyle = colors.surface;
+        ctx.fill();
+        ctx.strokeStyle = active ? colors.ink : colors.ink3;
+        ctx.lineWidth = active ? 1.8 : 1.2;
+        ctx.stroke();
+        if (Icons) Icons.draw(ctx, 'folder', x, y, r * 1.05, active ? colors.ink : colors.ink2);
+        if (active && !still) {
+          // A soft ring around the folder being read right now
+          const pulse = (now % 1100) / 1100;
+          ctx.globalAlpha = (1 - pulse) * 0.5;
+          ctx.beginPath();
+          ctx.roundRect(x - r - 4 - pulse * 8, y - r - 4 - pulse * 8, (r + 4 + pulse * 8) * 2, (r + 4 + pulse * 8) * 2, 9);
+          ctx.strokeStyle = colors.ink;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+        ctx.globalAlpha = eased * (active ? 1 : 0.75);
+        ctx.font = '11px -apple-system, sans-serif';
+        ctx.fillStyle = active ? colors.ink : colors.ink2;
+        ctx.textAlign = 'center';
+        ctx.fillText(node.label.length > 26 ? '…' + node.label.slice(-25) : node.label, x, y + r + 14);
+        if (node.files > 0) {
+          ctx.font = '10px -apple-system, sans-serif';
+          ctx.fillStyle = colors.ink3;
+          ctx.fillText(`${node.files.toLocaleString()} files`, x, y + r + 26);
+        }
+      }
+
+      // The application in the middle
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      if (uiState.appIconImage) {
+        ctx.drawImage(uiState.appIconImage, -26, -26, 52, 52);
+      } else {
+        ctx.arc(0, 0, 24, 0, Math.PI * 2);
+        ctx.fillStyle = colors.ink;
+        ctx.fill();
+        if (uiState.appLogoImage) ctx.drawImage(uiState.appLogoImage, -14, -14, 28, 28);
+        else if (Icons) Icons.draw(ctx, Icons.forApp({ name: this.appName }), 0, 0, 26, colors.surface);
+      }
+      ctx.font = '600 12px -apple-system, sans-serif';
+      ctx.fillStyle = colors.ink;
+      ctx.textAlign = 'center';
+      ctx.fillText(this.appName, 0, 44);
+      ctx.restore();
+    }
+    requestAnimationFrame(() => this.frame());
+  }
+};
+
 async function executeScan({ bundlePath, workspacePath }) {
   document.getElementById('app-picker-modal').classList.add('hidden');
   document.getElementById('empty-workspace-view').classList.add('hidden');
@@ -638,6 +792,9 @@ async function executeScan({ bundlePath, workspacePath }) {
     bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'folder'
   }…`;
   document.getElementById('scan-current-path').textContent = 'Preparing…';
+  const scannedBundle = (uiState.bootstrap?.availableBundles || []).find((b) => b.bundlePath === bundlePath);
+  loadGraphAppIcon(scannedBundle || (bundlePath ? { name: bundlePath.split('/').pop().replace(/\.app$/, ''), bundlePath } : null));
+  scanViz.start(bundlePath ? bundlePath.split('/').pop().replace(/\.app$/, '') : 'Folder');
   document.getElementById('scan-metric-roots').textContent = '0';
   document.getElementById('scan-metric-count').textContent = '0';
   document.getElementById('scan-metric-bytes').textContent = '0 B';
@@ -658,6 +815,7 @@ async function executeScan({ bundlePath, workspacePath }) {
           }
           if (prog.currentPath) {
             document.getElementById('scan-current-path').textContent = prog.currentPath;
+            scanViz.visit(prog.currentPath, prog.discoveredArtifactCount);
           }
           document.getElementById('scan-metric-roots').textContent = String(prog.scannedLocationsCount);
           document.getElementById('scan-metric-count').textContent = String(prog.discoveredArtifactCount);
@@ -697,6 +855,7 @@ async function executeScan({ bundlePath, workspacePath }) {
     showToast(`Scan failed: ${err.message}`);
   } finally {
     pollingProgress = false;
+    scanViz.stop();
   }
 }
 
@@ -810,13 +969,22 @@ function showMapLevel(level) {
   loadGraphFromState(level);
   renderMapBreadcrumb();
   const center = uiState.nodes.find((n) => n.pinned);
-  if (center && level.id !== 'root') {
+  if (center && level.parentId) {
     renderNodeInspector(center, null);
   } else {
     document.getElementById('inspector-detail-content').classList.add('hidden');
     document.getElementById('inspector-empty-state').classList.remove('hidden');
   }
 }
+
+// Ways to split the scan at the top of the map (see GROUPINGS in src/graph/map-levels.js)
+const MAP_GROUPINGS = [
+  ['kind', 'Kind'],
+  ['risk', 'Cleanup risk'],
+  ['origin', 'Origin'],
+  ['age', 'Last change'],
+  ['type', 'File type']
+];
 
 function renderMapBreadcrumb() {
   const nav = document.getElementById('map-breadcrumb');
@@ -832,10 +1000,19 @@ function renderMapBreadcrumb() {
   nav.innerHTML = `
     ${level.parentId ? `<button class="crumb-up" type="button" data-level="${escapeHtml(level.parentId)}" title="Up one level (Esc)">←</button>` : ''}
     <div class="crumbs">${crumbs}</div>
-    ${level.note ? `<span class="crumb-note">${escapeHtml(level.note)}</span>` : '<span class="crumb-note">Click a kind, session or folder to open it.</span>'}
+    ${level.note ? `<span class="crumb-note">${escapeHtml(level.note)}</span>` : '<span class="crumb-note">Click a mark to open it.</span>'}
+    <label class="map-group-by">
+      <span>Group by</span>
+      <select id="map-group-by" class="filter-select">
+        ${MAP_GROUPINGS.map(([value, label]) => `<option value="${value}"${level.grouping === value ? ' selected' : ''}>${label}</option>`).join('')}
+      </select>
+    </label>
   `;
   nav.querySelectorAll('[data-level]').forEach((btn) => {
     btn.addEventListener('click', () => loadMapLevel(btn.dataset.level));
+  });
+  nav.querySelector('#map-group-by').addEventListener('change', (e) => {
+    loadMapLevel(e.target.value === 'kind' ? 'root' : `root:${e.target.value}`);
   });
 }
 
@@ -847,9 +1024,24 @@ function loadGraphFromState(graphData) {
     vy: 0
   }));
   uiState.edges = graphData.edges.map((e) => ({ ...e }));
-  // Fit the whole map into view once the layout has settled, unless the user moves it first
-  uiState.fitCameraAtTick = uiState.animTick + 150;
-  uiState.layoutSettlesAtTick = uiState.animTick + 420;
+  // A level arrives already laid out. Its marks grow out of the middle one, then rest.
+  const origin = uiState.nodes.find((n) => n.pinned) || { x: 0, y: 0 };
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const now = performance.now();
+  uiState.nodes.forEach((n, i) => {
+    n.toX = n.x;
+    n.toY = n.y;
+    n.enterStart = now + (n.pinned ? 0 : 60 + Math.min(i, 30) * 14);
+    n.enter = reduceMotion || n.pinned ? 1 : 0;
+    if (!reduceMotion && !n.pinned) {
+      n.x = origin.x;
+      n.y = origin.y;
+    }
+  });
+  uiState.enterUntil = reduceMotion ? 0 : now + 60 + 30 * 14 + ENTER_MS;
+  fitCameraToGraph();
+  uiState.fitCameraAtTick = null;
+  uiState.layoutSettlesAtTick = uiState.animTick;
 
   const canvas = document.getElementById('knowledge-graph-canvas');
   if (canvas) {
@@ -860,7 +1052,27 @@ function loadGraphFromState(graphData) {
 // The application's own icon for its node on the map, when the bundle has a readable one.
 function loadGraphAppIcon(app) {
   uiState.appIconImage = null;
-  if (!app || !app.bundlePath || app.isDemoFixture) return;
+  uiState.appLogoImage = null;
+  if (!app) return;
+  // A known logo, tinted to sit on the ink disc, in case the app's own icon cannot be read
+  const logo = Icons.logoForApp(app);
+  if (logo) {
+    const logoImg = new Image();
+    logoImg.addEventListener('load', () => {
+      const tinted = document.createElement('canvas');
+      tinted.width = 128;
+      tinted.height = 128;
+      const tctx = tinted.getContext('2d');
+      tctx.drawImage(logoImg, 0, 0, 128, 128);
+      tctx.globalCompositeOperation = 'source-in';
+      tctx.fillStyle = themeColors().surface;
+      tctx.fillRect(0, 0, 128, 128);
+      uiState.appLogoImage = tinted;
+      uiState.lastDrawnSignature = null;
+    });
+    logoImg.src = `/logos/${logo}.svg`;
+  }
+  if (!app.bundlePath || app.isDemoFixture) return;
   const img = new Image();
   img.addEventListener('load', () => {
     uiState.appIconImage = img;
@@ -991,10 +1203,13 @@ function fitCameraToGraph() {
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const n of nodes) {
-    minX = Math.min(minX, n.x - n.radius);
-    maxX = Math.max(maxX, n.x + n.radius);
-    minY = Math.min(minY, n.y - n.radius);
-    maxY = Math.max(maxY, n.y + n.radius + 30);
+    // Marks that are still animating in are measured where they will come to rest
+    const x = n.toX ?? n.x;
+    const y = n.toY ?? n.y;
+    minX = Math.min(minX, x - n.radius - 60);
+    maxX = Math.max(maxX, x + n.radius + 60);
+    minY = Math.min(minY, y - n.radius - 40);
+    maxY = Math.max(maxY, y + n.radius + 46);
   }
   const scale = Math.min(
     (rect.width - 96) / Math.max(1, maxX - minX),
@@ -1007,6 +1222,22 @@ function fitCameraToGraph() {
     x: -((minX + maxX) / 2) * fitted,
     y: -((minY + maxY) / 2) * fitted - 10
   };
+}
+
+const ENTER_MS = 420;
+
+// Moves entering marks from the middle to their place with an ease-out.
+function stepEntrance() {
+  const now = performance.now();
+  for (const n of uiState.nodes) {
+    if (n.enter >= 1 || n.toX === undefined) continue;
+    const t = Math.max(0, Math.min(1, (now - n.enterStart) / ENTER_MS));
+    const eased = 1 - Math.pow(1 - t, 3);
+    const origin = uiState.nodes.find((m) => m.pinned) || { x: 0, y: 0 };
+    n.enter = eased;
+    n.x = origin.x + (n.toX - origin.x) * eased;
+    n.y = origin.y + (n.toY - origin.y) * eased;
+  }
 }
 
 const MIN_ZOOM = 0.05;
@@ -1033,7 +1264,8 @@ function mapSignature() {
     uiState.focusMode,
     canvas ? `${canvas.width}x${canvas.height}` : '',
     cachedThemeColors ? 1 : 0,
-    uiState.appIconImage ? 1 : 0
+    uiState.appIconImage ? 1 : 0,
+    uiState.appLogoImage ? 1 : 0
   ].join('|');
 }
 
@@ -1046,8 +1278,12 @@ function renderGraphCanvas() {
   if (uiState.activeTab === 'graph' && uiState.nodes.length > 0) {
     // The layout runs until it has settled, then rests; dragging a mark wakes it up. A map
     // at rest is only redrawn when something it shows has changed.
-    const moving = uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick;
-    if (moving) {
+    const entering = performance.now() < (uiState.enterUntil || 0);
+    if (entering) {
+      stepEntrance();
+    }
+    const moving = entering || uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick;
+    if (!entering && (uiState.draggingNode || uiState.animTick < uiState.layoutSettlesAtTick)) {
       stepGraphPhysics();
     }
     const signature = mapSignature();
@@ -1105,7 +1341,8 @@ function drawGraph() {
     const isDimmed = highlightedEdges && !isHighlighted;
 
     ctx.save();
-    ctx.globalAlpha = isDimmed ? 0.1 : isHighlighted ? 1 : 0.4;
+    ctx.globalAlpha =
+      (isDimmed ? 0.1 : isHighlighted ? 1 : 0.4) * Math.min(source.enter ?? 1, target.enter ?? 1);
     ctx.strokeStyle = isHighlighted ? colors.ink : colors.ink3;
     ctx.lineWidth = isHighlighted ? 1.6 : 1;
     ctx.setLineDash(
@@ -1147,7 +1384,7 @@ function drawGraph() {
     const r = Math.max(node.radius, minScreenRadius / uiState.camera.scale);
 
     ctx.save();
-    ctx.globalAlpha = isDimmed ? 0.15 : 1;
+    ctx.globalAlpha = (isDimmed ? 0.15 : 1) * (node.enter ?? 1);
 
     if (isSelected) {
       ctx.beginPath();
@@ -1208,6 +1445,9 @@ function drawGraph() {
       if (isApp && uiState.appIconImage) {
         const side = r * 2.1;
         ctx.drawImage(uiState.appIconImage, node.x - side / 2, node.y - side / 2, side, side);
+      } else if (isApp && uiState.appLogoImage) {
+        const side = r * 1.15;
+        ctx.drawImage(uiState.appLogoImage, node.x - side / 2, node.y - side / 2, side, side);
       } else {
         const glyphColor = isFile
           ? glyphColorOnRisk(node.riskCategory)
@@ -1234,16 +1474,33 @@ function drawGraph() {
       ctx.font = `${node.nodeType === 'AI_APPLICATION' ? '600 ' : ''}${labelPx}px -apple-system, sans-serif`;
       ctx.fillStyle = isStructural || isSelected ? colors.ink : colors.ink2;
       ctx.textAlign = 'center';
-      ctx.fillText(node.label, node.x, node.y + r + 3 + labelPx);
-      // Kinds, sessions and folders also show how much they hold
-      if (node.metadata?.summary && (isStructural || isSelected)) {
+      const summary = !isFile ? node.metadata?.summary : null;
+      // Kinds, sessions and folders carry a thin bar with their share of each risk level
+      const barGap = summary ? 9 / uiState.camera.scale : 0;
+      if (summary && summary.artifactCount > 0) {
+        const px = 1 / uiState.camera.scale;
+        const barWidth = Math.max(r * 2, 44 * px);
+        const barHeight = 3 * px;
+        let x = node.x - barWidth / 2;
+        const y = node.y + r + 5 * px;
+        for (const risk of ['LOW', 'REVIEW', 'HIGH', 'PROTECTED']) {
+          const share = (summary.riskCounts?.[risk] || 0) / summary.artifactCount;
+          if (share <= 0) continue;
+          ctx.fillStyle = colors[risk];
+          ctx.fillRect(x, y, Math.max(px, barWidth * share - px), barHeight);
+          x += barWidth * share;
+        }
+      }
+      ctx.fillStyle = isStructural || isSelected ? colors.ink : colors.ink2;
+      ctx.fillText(node.label, node.x, node.y + r + 3 + labelPx + barGap);
+      if (summary && (isStructural || isSelected)) {
         const metaPx = 10 / uiState.camera.scale;
         ctx.font = `${metaPx}px -apple-system, sans-serif`;
         ctx.fillStyle = colors.ink3;
         ctx.fillText(
-          `${Number(node.metadata.summary.artifactCount).toLocaleString()} files · ${formatBytes(node.metadata.summary.bytes)}`,
+          `${Number(summary.artifactCount).toLocaleString()} files · ${formatBytes(summary.bytes)}`,
           node.x,
-          node.y + r + 5 + labelPx + metaPx
+          node.y + r + 5 + labelPx + metaPx + barGap
         );
       }
     }
@@ -2244,7 +2501,7 @@ function openSettingsModal() {
         <input type="checkbox" id="settings-update-check" />
         <span>Check for new versions</span>
       </label>
-      <p class="inspector-note">The check asks GitHub for the latest release number. It is the only time the app uses the network, and it sends nothing about you or your files. Nothing is downloaded automatically.</p>
+      <p class="inspector-note">The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.</p>
     </div>
   `;
   modal.classList.remove('hidden');
@@ -2282,11 +2539,73 @@ function renderUpdatePill() {
   const update = uiState.update;
   if (!pill) return;
   if (update && update.enabled && update.updateAvailable) {
-    pill.textContent = `Update available: ${update.latestVersion}`;
-    pill.title = `You have ${update.currentVersion}. Open the download page.`;
+    const phase = update.install?.phase;
+    const canInstall = Boolean(update.install?.ok);
+    pill.disabled = phase === 'downloading' || phase === 'verifying' || phase === 'restarting';
+    pill.textContent =
+      phase === 'downloading'
+        ? `Downloading ${update.latestVersion}…`
+        : phase === 'verifying'
+          ? 'Checking the download…'
+          : phase === 'restarting'
+            ? 'Restarting…'
+            : uiState.updateArmed
+              ? `Install ${update.latestVersion} and restart?`
+              : `Update available: ${update.latestVersion}`;
+    pill.title = canInstall
+      ? `You have ${update.currentVersion}. Click to download, check and install the new version.`
+      : `You have ${update.currentVersion}. Open the download page.`;
+    pill.classList.toggle('armed', Boolean(uiState.updateArmed));
     pill.classList.remove('hidden');
   } else {
     pill.classList.add('hidden');
+  }
+}
+
+// The update button: the first click asks, the second installs. A copy that cannot replace
+// itself (run from the disk image, or in a folder it cannot write to) opens the download page.
+async function installOrOpenUpdate() {
+  const update = uiState.update;
+  if (!update?.install?.ok) {
+    openSystemTarget('update:latest');
+    return;
+  }
+  if (!uiState.updateArmed) {
+    uiState.updateArmed = true;
+    renderUpdatePill();
+    setTimeout(() => {
+      if (uiState.updateArmed) {
+        uiState.updateArmed = false;
+        renderUpdatePill();
+      }
+    }, 8000);
+    return;
+  }
+  uiState.updateArmed = false;
+  uiState.update = { ...update, install: { ...update.install, phase: 'downloading' } };
+  renderUpdatePill();
+  const poll = setInterval(async () => {
+    try {
+      const res = await apiRequest('/api/update');
+      if (res.update.install?.phase && res.update.install.phase !== 'idle') {
+        uiState.update = res.update;
+        renderUpdatePill();
+      }
+    } catch {
+      // The backend stops while the app restarts
+    }
+  }, 500);
+  try {
+    await apiRequest('/api/update/install', 'POST', {});
+    uiState.update = { ...uiState.update, install: { ...update.install, phase: 'restarting' } };
+    renderUpdatePill();
+    showToast(`Installing ${update.latestVersion}. Artifact Atlas will reopen in a moment.`);
+  } catch (err) {
+    clearInterval(poll);
+    uiState.update = { ...update, install: { ...update.install, phase: 'failed' } };
+    renderUpdatePill();
+    showToast(`Could not install the update (${err.message}). Opening the download page instead.`);
+    openSystemTarget('update:latest');
   }
 }
 
@@ -2302,9 +2621,7 @@ async function checkForAppUpdate() {
 
 window.addEventListener('DOMContentLoaded', () => {
   initApp();
-  document.getElementById('update-available-btn').addEventListener('click', () => {
-    openSystemTarget('update:latest');
-  });
+  document.getElementById('update-available-btn').addEventListener('click', installOrOpenUpdate);
   checkForAppUpdate();
   // A long-running window checks again a few times a day
   setInterval(checkForAppUpdate, 6 * 60 * 60 * 1000);

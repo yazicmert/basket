@@ -70,6 +70,18 @@ test('readAppIconPng reads the icon named by Info.plist and stays inside the bun
     assert.deepEqual(readAppIconPng(withExtension), fakePng('app'));
 
     assert.equal(readAppIconPng(makeBundle(root, 'NoIcon')), null);
+
+    // Info.plist does not name the icon, but the bundle ships one under a usual name
+    const unnamed = makeBundle(root, 'Unnamed');
+    fs.writeFileSync(path.join(unnamed, 'Contents', 'Resources', 'electron.icns'), icns);
+    assert.deepEqual(readAppIconPng(unnamed), fakePng('app'));
+    // ...or as the only .icns in Resources
+    const lone = makeBundle(root, 'Lone');
+    fs.writeFileSync(path.join(lone, 'Contents', 'Resources', 'Something.icns'), icns);
+    assert.deepEqual(readAppIconPng(lone), fakePng('app'));
+    // Several unnamed candidates are ambiguous, so none is used
+    fs.writeFileSync(path.join(lone, 'Contents', 'Resources', 'Other.icns'), icns);
+    assert.equal(readAppIconPng(lone), null);
     assert.equal(readAppIconPng(path.join(root, 'Missing.app')), null);
     assert.equal(readAppIconPng(root), null);
 
@@ -144,6 +156,14 @@ test('every artifact type has its own icon, and the site copy matches the app co
   assert.equal(icons.forApp({ adapterId: 'codex-cli', name: 'Codex CLI' }), 'braces');
   assert.equal(icons.forApp({ adapterId: 'claude-code', name: 'Claude Code' }), 'terminal');
   assert.equal(icons.forApp({ name: 'NebulaSketch' }), 'app');
+  // Known applications have a logo file to fall back on, in the app and on the site
+  for (const [name, logo] of [['Claude', 'claudecode'], ['Cursor', 'cursor'], ['Ollama', 'ollama'], ['Zed', 'zedindustries']]) {
+    assert.equal(icons.logoForApp({ name }), logo);
+    assert.ok(fs.existsSync(path.resolve('src', 'ui', 'public', 'logos', `${logo}.svg`)), `${logo}.svg in the app`);
+    assert.ok(fs.existsSync(path.resolve('site', 'logos', `${logo}.svg`)), `${logo}.svg on the site`);
+  }
+  assert.equal(icons.logoForApp({ name: 'NebulaSketch' }), null);
+  assert.equal(icons.logoForApp({ name: 'Zedd Player' }), null);
   assert.match(icons.svg('log', 16), /^<svg[^>]+viewBox="0 0 24 24"/);
 
   assert.equal(

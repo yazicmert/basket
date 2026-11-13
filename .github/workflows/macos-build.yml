@@ -39,10 +39,12 @@ jobs:
       - name: Run Portable Core & Loopback Security Tests
         run: npm test
 
-  # Experimental: shows how far the portable core is from running on Windows. It does not
-  # gate merges; Windows is not a supported platform yet.
+  # Experimental: shows how far the portable core is from running on Windows, which is not a
+  # supported platform yet. It runs only when this workflow is started by hand, so pushes and
+  # pull requests are not marked as failing by a platform that is known not to pass.
   portable-core-windows:
     name: Portable Core Tests (Windows, experimental)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     continue-on-error: true
     steps:
@@ -62,7 +64,7 @@ jobs:
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
-      APP_VERSION: "0.4.4"
+      APP_VERSION: "0.5.0"
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Checkout Repository
@@ -93,6 +95,9 @@ jobs:
 
       - name: Verify Mounted DMG & Read-Only End-to-End Workflow
         run: ./scripts/verify-macos-bundle.sh
+
+      - name: Verify In-Place Update (Stage, Check, Swap)
+        run: ./scripts/test-self-update-macos.sh
 
       - name: Upload ArtifactAtlas-macOS.dmg Artifact
         uses: actions/upload-artifact@v4

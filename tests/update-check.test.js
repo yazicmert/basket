@@ -127,3 +127,146 @@ test('update endpoint: cached, switchable, persisted, and the open target is all
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---------- In-place update ----------
+
+const selfUpdate = await import('../src/platform/self-update.js');
+const cryptoMod = await import('node:crypto');
+
+function downloadResponse(body, { url, status = 200 } = {}) {
+  const buf = Buffer.from(body);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    url,
+    headers: { get: (name) => (name.toLowerCase() === 'content-length' ? String(buf.length) : null) },
+    text: async () => buf.toString('utf8'),
+    body: (async function* () {
+      yield buf.subarray(0, Math.ceil(buf.length / 2));
+      yield buf.subarray(Math.ceil(buf.length / 2));
+    })()
+  };
+}
+
+test('updater: release URLs, digest parsing and where the app can replace itself', () => {
+  assert.deepEqual(selfUpdate.releaseAssetUrls('v0.5.0'), {
+    zipUrl: 'https://github.com/yazicmert/basket/releases/download/v0.5.0/ArtifactAtlas-macOS.zip',
+    sumsUrl: 'https://github.com/yazicmert/basket/releases/download/v0.5.0/SHA256SUMS.txt'
+  });
+  assert.equal(selfUpdate.releaseAssetUrls('../../evil'), null);
+
+  const digest = 'a'.repeat(64);
+  const sums = `${'b'.repeat(64)}  ArtifactAtlas-macOS.dmg\n${digest}  ArtifactAtlas-macOS.zip\n`;
+  assert.equal(selfUpdate.digestFromSums(sums, 'ArtifactAtlas-macOS.zip'), digest);
+  assert.equal(selfUpdate.digestFromSums(sums, 'Other.zip'), null);
+  assert.equal(selfUpdate.digestFromSums('not a sums file', 'ArtifactAtlas-macOS.zip'), null);
+
+  const inBundle = '/Applications/ArtifactAtlas.app/Contents/Resources/app/src/ui/server.js';
+  assert.equal(selfUpdate.findRunningAppBundle(inBundle), '/Applications/ArtifactAtlas.app');
+  assert.equal(selfUpdate.findRunningAppBundle('/home/user/basket/src/ui/server.js'), null);
+
+  const can = (appBundlePath, platform = 'darwin') => selfUpdate.canInstallInPlace({ appBundlePath, platform }).reason;
+  assert.equal(can(null), 'NOT_PACKAGED');
+  assert.equal(can('/Applications/ArtifactAtlas.app', 'linux'), 'NOT_MACOS');
+  assert.equal(can('/Volumes/Artifact Atlas/ArtifactAtlas.app'), 'RUNNING_FROM_DISK_IMAGE');
+  assert.equal(can('/private/var/folders/x/AppTranslocation/ABC/d/ArtifactAtlas.app'), 'TRANSLOCATED');
+  assert.equal(can('/nonexistent-dir/ArtifactAtlas.app'), 'FOLDER_NOT_WRITABLE');
+});
+
+test('updater: a download is kept only when it matches the published digest and comes from GitHub', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-selfupdate-'));
+  const zipBytes = Buffer.from('pretend this is the release zip '.repeat(200));
+  const goodDigest = cryptoMod.createHash('sha256').update(zipBytes).digest('hex');
+  const requested = [];
+  const fetchWith = (sumsDigest, finalHost = 'release-assets.githubusercontent.com') => async (url, init) => {
+    requested.push({ url, init });
+    return url.endsWith('SHA256SUMS.txt')
+      ? downloadResponse(`${sumsDigest}  ArtifactAtlas-macOS.zip\n`, { url })
+      : downloadResponse(zipBytes, { url: `https://${finalHost}/some/object` });
+  };
+  try {
+    const zipPath = await selfUpdate.downloadVerifiedRelease({
+      version: '0.5.0',
+      stagingDir: path.join(root, 'ok'),
+      fetchImpl: fetchWith(goodDigest)
+    });
+    assert.deepEqual(fs.readFileSync(zipPath), zipBytes);
+    assert.ok(requested.every((r) => r.url.startsWith('https://github.com/yazicmert/basket/releases/download/v0.5.0/')));
+    assert.ok(requested.every((r) => r.init.body === undefined), 'nothing is sent');
+
+    await assert.rejects(
+      selfUpdate.downloadVerifiedRelease({ version: '0.5.0', stagingDir: path.join(root, 'bad'), fetchImpl: fetchWith('c'.repeat(64)) }),
+      /UPDATE_DIGEST_MISMATCH/
+    );
+    assert.equal(fs.existsSync(path.join(root, 'bad', 'ArtifactAtlas-macOS.zip')), false, 'a mismatching download is removed');
+
+    await assert.rejects(
+      selfUpdate.downloadVerifiedRelease({ version: '0.5.0', stagingDir: path.join(root, 'host'), fetchImpl: fetchWith(goodDigest, 'evil.example') }),
+      /UPDATE_HOST_NOT_ALLOWED/
+    );
+    await assert.rejects(
+      selfUpdate.downloadVerifiedRelease({ version: '0.5.0', stagingDir: path.join(root, 'nosum'), fetchImpl: async (url) => downloadResponse('nothing useful', { url }) }),
+      /UPDATE_DIGEST_MISSING/
+    );
+    await assert.rejects(
+      selfUpdate.downloadVerifiedRelease({ version: 'latest', stagingDir: path.join(root, 'v'), fetchImpl: fetchWith(goodDigest) }),
+      /UPDATE_VERSION_INVALID/
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('updater: a copy that cannot replace itself reports why, and the install route refuses', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-install-'));
+  let requests = 0;
+  const atlas = createAtlasServer({
+    sandboxRoot: path.join(root, 'sandbox'),
+    dataDir: root,
+    appVersion: '0.4.2',
+    appBundlePath: null,
+    updateFetch: async () => {
+      requests += 1;
+      return releaseResponse({ tag_name: 'v0.6.0' });
+    }
+  });
+  await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+  const call = async (urlPath, method) => {
+    const res = await fetch(`http://127.0.0.1:${atlas.server.address().port}${urlPath}`, {
+      method,
+      headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' },
+      body: method === 'POST' ? '{}' : undefined
+    });
+    return { status: res.status, data: await res.json() };
+  };
+  try {
+    const status = (await call('/api/update', 'GET')).data.update;
+    assert.equal(status.updateAvailable, true);
+    assert.equal(status.install.ok, false);
+    assert.equal(status.install.phase, 'idle');
+
+    const install = await call('/api/update/install', 'POST');
+    assert.equal(install.status, 409);
+    assert.equal(install.data.ok, false);
+    assert.equal(requests, 1, 'nothing is downloaded when the copy cannot be replaced');
+    assert.equal((await call('/api/update/install', 'GET')).status, 404);
+  } finally {
+    await atlas.shutdown();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('updater: the swap helper refuses unexpected paths and keeps the previous version until done', () => {
+  const script = selfUpdate.swapScript();
+  assert.match(script, /case "\$APP" in \*\/ArtifactAtlas\.app\) ;; \*\) echo "refusing/);
+  assert.match(script, /case "\$NEW" in "\$STAGING"\/\*\/ArtifactAtlas\.app\) ;;/);
+  // The old bundle is moved aside before the copy and restored if the copy fails
+  assert.ok(script.indexOf('mv "$APP" "$BACKUP"') < script.indexOf('ditto "$NEW" "$APP"'));
+  assert.match(script, /copy failed, restoring the previous version[\s\S]*mv "\$BACKUP" "\$APP"/);
+  // Every rm stays inside the staging folder or is the half-copied app being replaced
+  const removals = script.match(/rm -rf [^\n;]+/g) || [];
+  assert.ok(removals.length > 0);
+  for (const line of removals) {
+    assert.ok(/^rm -rf ("\$STAGING\/[^"]+"( |$))+$/.test(line) || line === 'rm -rf "$APP"', line);
+  }
+});
