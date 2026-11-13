@@ -23,8 +23,9 @@
 7. **Never Scan the Real Home Folder Without Consent**:
    - The UI server serves sandbox sample data until the user grants the `home-folder-scan` consent; the consent is persisted and revocable. Probing permission status must never trigger a macOS prompt or read file contents.
 
-8. **One Network Request Only**:
-   - The app's only outbound request is the new-version check in `src/platform/update-check.js` (GitHub's latest-release endpoint). It must carry no body and no user, machine or file data, stay switchable in Settings, and never download or install anything. Do not add other network calls.
+8. **Network Use Is Limited to Updates**:
+   - The app's only outbound requests are the new-version check in `src/platform/update-check.js` (GitHub's latest-release endpoint) and, only after the user clicks the update button, the download of that release in `src/platform/self-update.js`. No request may carry user, machine or file data. The check stays switchable in Settings. Do not add other network calls.
+   - An update is installed only when its ZIP matches the SHA-256 published with the release, the unpacked bundle has this app's bundle identifier and the expected version, and `codesign --verify` passes. The swap keeps the previous bundle until the new one is in place and restores it on failure. Never install silently.
 
 ## 2. Project Layout
 

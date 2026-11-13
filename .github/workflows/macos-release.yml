@@ -99,6 +99,9 @@ jobs:
       - name: Verify Mounted DMG & Read-Only End-to-End Workflow
         run: ./scripts/verify-macos-bundle.sh
 
+      - name: Verify In-Place Update (Stage, Check, Swap)
+        run: ./scripts/test-self-update-macos.sh
+
       - name: Publish Verified Assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

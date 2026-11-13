@@ -13,6 +13,14 @@ import { findKnownAppProfile } from '../discovery/app-footprint.js';
 import { readAppIconPng } from '../discovery/app-icon.js';
 import { buildMapLevel, levelArtifactIds } from '../graph/map-levels.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
+import {
+  findRunningAppBundle,
+  canInstallInPlace,
+  downloadVerifiedRelease,
+  stageVerifiedBundle,
+  launchSwap,
+  createStagingDir
+} from '../platform/self-update.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -123,7 +131,7 @@ export function createAtlasServer(options = {}) {
   let cachedUpdate = null;
   const updateStatus = async ({ force = false } = {}) => {
     if (!settings.updateCheckEnabled) {
-      return { enabled: false, currentVersion: appVersion, updateAvailable: false };
+      return { enabled: false, currentVersion: appVersion, updateAvailable: false, install: installStatus() };
     }
     const fresh =
       cachedUpdate && Date.now() - Date.parse(cachedUpdate.checkedAt) < UPDATE_CHECK_INTERVAL_MS;
@@ -133,7 +141,50 @@ export function createAtlasServer(options = {}) {
         fetchImpl: options.updateFetch || globalThis.fetch
       });
     }
-    return { enabled: true, ...cachedUpdate };
+    return { enabled: true, ...cachedUpdate, install: installStatus() };
+  };
+
+  // In-place update. Only a packaged copy in a writable folder can replace itself; any
+  // other copy is sent to the download page instead.
+  const appBundlePath =
+    options.appBundlePath !== undefined
+      ? options.appBundlePath
+      : findRunningAppBundle(fileURLToPath(import.meta.url));
+  const installState = { phase: 'idle', error: null, received: 0, total: 0 };
+  const installStatus = () => ({
+    ...canInstallInPlace({ appBundlePath, platform }),
+    phase: installState.phase,
+    error: installState.error,
+    received: installState.received,
+    total: installState.total
+  });
+  const installUpdate = async () => {
+    const possible = canInstallInPlace({ appBundlePath, platform });
+    if (!possible.ok) throw new Error(possible.reason);
+    if (installState.phase !== 'idle' && installState.phase !== 'failed') throw new Error('UPDATE_ALREADY_RUNNING');
+    const status = await updateStatus({ force: true });
+    if (!status.updateAvailable) throw new Error('NO_UPDATE_AVAILABLE');
+
+    const stagingDir = createStagingDir();
+    try {
+      Object.assign(installState, { phase: 'downloading', error: null, received: 0, total: 0 });
+      const zipPath = await downloadVerifiedRelease({
+        version: status.latestVersion,
+        stagingDir,
+        fetchImpl: options.updateFetch || globalThis.fetch,
+        onProgress: (p) => Object.assign(installState, p)
+      });
+      installState.phase = 'verifying';
+      const stagedBundle = stageVerifiedBundle({ zipPath, stagingDir, expectedVersion: status.latestVersion });
+      installState.phase = 'restarting';
+      // The helper stops the app (this backend's parent), swaps the bundle and reopens it
+      launchSwap({ appBundlePath, stagedBundle, appPid: options.appPid || process.ppid, stagingDir });
+      return { version: status.latestVersion };
+    } catch (err) {
+      Object.assign(installState, { phase: 'failed', error: err.message });
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      throw err;
+    }
   };
 
   const services = new Map();
@@ -611,6 +662,15 @@ export function createAtlasServer(options = {}) {
           ok: true,
           update: await updateStatus({ force: Boolean(body.checkNow) })
         });
+      }
+
+      if (url.pathname === '/api/update/install' && req.method === 'POST') {
+        try {
+          const result = await installUpdate();
+          return sendJson(res, 200, { ok: true, restarting: true, ...result });
+        } catch (err) {
+          return sendJson(res, 409, { ok: false, error: err.message, update: await updateStatus() });
+        }
       }
 
       if (url.pathname === '/api/system/open' && req.method === 'POST') {

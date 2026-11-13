@@ -16,6 +16,7 @@ import { summarizeRisk } from './graph-engine.js';
  *   group:<id>                one kind of file (caches, logs, ...), by folder
  *   session:<id>              the files one session wrote or is linked to, by folder
  *   dir:<scope>::<path>       one folder inside a kind, a session, or the whole scan (scope "all")
+ *   type:<scope>::<path>::<t> the files of one type directly inside a folder that holds many
  *
  * Levels only describe the scan. Cleanup still moves files one by one.
  */
@@ -23,6 +24,17 @@ import { summarizeRisk } from './graph-engine.js';
 export const LEVEL_MAX_FOLDERS = 24;
 export const LEVEL_MAX_FILES = 36;
 export const LEVEL_MAX_SESSIONS = 40;
+/** A folder with more direct files than this shows its largest few and bundles the rest by type. */
+export const LEVEL_FILES_BEFORE_BUNDLING = 12;
+export const LEVEL_MAX_TYPE_BUNDLES = 14;
+
+/** What a file "is" for bundling: its extension, or a short word for files without one. */
+export function fileTypeOf(art) {
+  const name = String(art.name || '');
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot === name.length - 1 || name.length - dot > 12) return 'no extension';
+  return name.slice(dot).toLowerCase();
+}
 const RING = 250;
 
 const dirOf = (a) => {
@@ -207,6 +219,14 @@ export function parseLevelId(levelId) {
   if (id === 'root' || id === 'sessions') return { kind: id };
   if (id.startsWith('group:')) return { kind: 'scope', scope: id };
   if (id.startsWith('session:')) return { kind: 'scope', scope: id };
+  if (id.startsWith('type:')) {
+    const first = id.indexOf('::');
+    const last = id.lastIndexOf('::');
+    if (first < 0 || last <= first) return null;
+    const dir = id.slice(first + 2, last);
+    if (!dir.startsWith('/')) return null;
+    return { kind: 'type', scope: id.slice(5, first), dir, type: id.slice(last + 2) };
+  }
   if (id.startsWith('dir:')) {
     const sep = id.indexOf('::');
     if (sep < 0) return null;
@@ -232,6 +252,11 @@ export function levelArtifactIds(state, levelId) {
   const scoped = scopeFiles(ix, state, parsed.scope);
   if (!scoped) return null;
   if (parsed.kind === 'scope') return scoped.files.map((a) => a.id);
+  if (parsed.kind === 'type') {
+    return scoped.files
+      .filter((a) => dirOf(a) === parsed.dir && fileTypeOf(a) === parsed.type)
+      .map((a) => a.id);
+  }
   return scoped.files.filter((a) => isWithin(dirOf(a), parsed.dir)).map((a) => a.id);
 }
 
@@ -329,6 +354,35 @@ export function buildMapLevel(state, levelId = 'root') {
         : [rootCrumb, { id: parsed.scope, title: scopeTitle(state, parsed.scope, scoped) }];
 
   const base = compress(scoped.files, commonDir(scoped.files));
+
+  // One type of file inside one folder
+  if (parsed.kind === 'type') {
+    const ofType = scoped.files
+      .filter((a) => dirOf(a) === parsed.dir && fileTypeOf(a) === parsed.type)
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
+    if (ofType.length === 0) return null;
+    const folderLevelId = parsed.dir === base.prefix ? scopeLevelId : `dir:${parsed.scope}::${parsed.dir}`;
+    const label = parsed.type === 'no extension' ? 'Files without an extension' : `${parsed.type} files`;
+    const center = summaryNode({ id: levelId, nodeType: NodeType.FOLDER, label, summary: summarize(ofType), extra: { path: parsed.dir, fileType: parsed.type } });
+    const shown = ofType.slice(0, LEVEL_MAX_FILES).map(fileNode);
+    if (scoped.links) for (const node of shown) node.linkConfidence = scoped.links.get(node.id);
+    const crumbs = [...scopeCrumbs];
+    if (folderLevelId !== scopeLevelId) {
+      crumbs.push({ id: folderLevelId, title: parsed.dir.slice(base.prefix === '/' ? 1 : base.prefix.length + 1) });
+    }
+    crumbs.push({ id: levelId, title: label });
+    return finish({
+      id: levelId,
+      title: label,
+      breadcrumb: crumbs,
+      parentId: folderLevelId,
+      center,
+      children: shown,
+      note: ofType.length > shown.length ? `Showing the ${shown.length} largest of ${ofType.length.toLocaleString('en-US')} ${label.toLowerCase()}.` : null,
+      path: parsed.dir
+    });
+  }
+
   const level =
     parsed.kind === 'scope'
       ? base
@@ -364,7 +418,32 @@ export function buildMapLevel(state, levelId = 'root') {
     .sort((a, b) => b.sizeBytes - a.sizeBytes);
   const shownFolders = folderNodes.slice(0, LEVEL_MAX_FOLDERS);
   const directSorted = [...level.direct].sort((a, b) => b.sizeBytes - a.sizeBytes);
-  const shownFiles = directSorted.slice(0, LEVEL_MAX_FILES).map(fileNode);
+  // A folder with many files shows its largest few and bundles the rest by type
+  const bundling = directSorted.length > LEVEL_MAX_FILES;
+  const shownFiles = directSorted.slice(0, bundling ? LEVEL_FILES_BEFORE_BUNDLING : LEVEL_MAX_FILES).map(fileNode);
+  const bundleNodes = [];
+  if (bundling) {
+    const byType = new Map();
+    for (const art of directSorted) {
+      const type = fileTypeOf(art);
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(art);
+    }
+    for (const [type, files] of byType) {
+      bundleNodes.push(
+        summaryNode({
+          id: `type:${parsed.scope}::${level.prefix}::${type}`,
+          nodeType: NodeType.FOLDER,
+          label: type === 'no extension' ? 'No extension' : `${type} files`,
+          summary: summarize(files),
+          drillId: `type:${parsed.scope}::${level.prefix}::${type}`,
+          extra: { path: level.prefix, fileType: type, isTypeBundle: true }
+        })
+      );
+    }
+    bundleNodes.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    bundleNodes.splice(LEVEL_MAX_TYPE_BUNDLES);
+  }
   if (scoped.links) {
     for (const node of shownFiles) node.linkConfidence = scoped.links.get(node.id);
   }
@@ -373,8 +452,8 @@ export function buildMapLevel(state, levelId = 'root') {
   if (folderNodes.length > shownFolders.length) {
     notes.push(`Showing the ${shownFolders.length} largest of ${folderNodes.length} folders.`);
   }
-  if (directSorted.length > shownFiles.length) {
-    notes.push(`Showing the ${shownFiles.length} largest of ${directSorted.length.toLocaleString('en-US')} files directly in this folder.`);
+  if (bundling) {
+    notes.push(`${directSorted.length.toLocaleString('en-US')} files directly in this folder: the ${shownFiles.length} largest, and all of them grouped by type.`);
   }
 
   // Up: the nearest ancestor that is its own level
@@ -406,7 +485,7 @@ export function buildMapLevel(state, levelId = 'root') {
     breadcrumb,
     parentId,
     center,
-    children: [...shownFolders, ...shownFiles],
+    children: [...shownFolders, ...bundleNodes, ...shownFiles],
     note: notes.join(' ') || null,
     path: level.prefix
   });

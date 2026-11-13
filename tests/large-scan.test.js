@@ -292,9 +292,17 @@ test('map levels: few marks per level, folders open into their contents, and eve
   // A big folder shows its largest files and says how many there are
   const data = buildMapLevel(state, folders.find((n) => n.label === 'Cache_Data').drillId);
   const files = data.nodes.filter((n) => n.nodeType === 'ARTIFACT');
-  assert.ok(files.length > 0 && files.length <= 36);
+  assert.equal(files.length, 12, 'a crowded folder shows its largest few');
   assert.ok(data.nodes.length <= 61);
-  assert.match(data.note, /largest of 3,000 files/);
+  assert.match(data.note, /3,000 files directly in this folder/);
+  // ...and bundles all of its files by type; a bundle opens on its largest files
+  const bundles = data.nodes.filter((n) => n.metadata.isTypeBundle);
+  assert.deepEqual(bundles.map((n) => n.label), ['No extension']);
+  assert.equal(bundles[0].metadata.summary.artifactCount, 3000);
+  const bundle = buildMapLevel(state, bundles[0].drillId);
+  assert.equal(bundle.parentId, data.id);
+  assert.equal(bundle.nodes.filter((n) => n.nodeType === 'ARTIFACT').length, 36);
+  assert.equal(levelArtifactIds(state, bundles[0].drillId).length, 3000);
   assert.equal(data.parentId, 'group:grp_cache');
   assert.equal(data.breadcrumb.at(-1).title, 'Cache_Data');
   assert.equal(files[0].metadata.sizeBytes, 100 + 2999, 'largest first');
@@ -310,6 +318,7 @@ test('map levels: few marks per level, folders open into their contents, and eve
   assert.equal(session.edges[0].confidence, 'VERIFIED');
 
   assert.equal(buildMapLevel(state, 'dir:all::relative/path'), null);
+  assert.equal(buildMapLevel(state, 'type:all::relative::.log'), null);
   assert.equal(buildMapLevel(state, 'group:missing'), null);
 });
 
