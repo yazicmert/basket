@@ -55,12 +55,12 @@ function safeWalkJsonlFiles(rootDir, maxDepth = 5, currentDepth = 0) {
 }
 
 /**
- * 1. Claude Code & Claude Desktop Adapter
+ * 1. Claude Code adapter: the Claude Code CLI and the Code view of the Claude desktop app
  */
 export class ClaudeCodeAdapter {
   constructor() {
     this.id = 'claude-code';
-    this.displayName = 'Claude Code / Claude Desktop';
+    this.displayName = 'Claude Code (CLI and the Claude app)';
     this.isSpecializedAIAdapter = true;
   }
 
@@ -518,12 +518,13 @@ export class CursorAdapter {
 }
 
 /**
- * 3. Codex CLI Adapter
+ * 3. Codex adapter: the Codex CLI and the Codex view of the ChatGPT desktop app, which
+ * replaced the separate Codex app in July 2026. Both keep their records in ~/.codex.
  */
 export class CodexAdapter {
   constructor() {
     this.id = 'codex-cli';
-    this.displayName = 'Codex CLI';
+    this.displayName = 'Codex (CLI and the ChatGPT app)';
     this.isSpecializedAIAdapter = true;
   }
 

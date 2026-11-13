@@ -484,3 +484,31 @@ test('F1. Search looks through every listed file, with the risk and origin filte
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('A1. The ChatGPT app that hosts Codex is listed once and traced; ChatGPT Classic is not given Codex sessions', async () => {
+  for (const [bundleId, expected] of [
+    ['com.openai.codex', { names: ['ChatGPT'], adapter: 'codex-cli' }],
+    ['com.openai.chat', { names: ['ChatGPT', 'Codex'], adapter: 'generic-macos-app' }]
+  ]) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-oai-')));
+    const home = path.join(root, 'home');
+    const apps = path.join(root, 'Applications');
+    const write = (p, c = 'x') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+    write(path.join(apps, 'ChatGPT.app', 'Contents', 'Info.plist'), `<plist><dict><key>CFBundleName</key><string>ChatGPT</string><key>CFBundleIdentifier</key><string>${bundleId}</string></dict></plist>`);
+    write(path.join(home, '.codex', 'sessions', '2026', '11', '01', 'rollout-x.jsonl'), JSON.stringify({ session_id: 's1', cwd: home, timestamp: '2026-11-01T10:00:00Z', type: 'message' }) + '\n');
+    const atlas = createAtlasServer({ dataDir: path.join(root, 'data'), liveHomeDir: home, platform: 'darwin', applicationDirs: [apps] });
+    try {
+      await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+      const api = async (route, body) =>
+        (await fetch(`http://127.0.0.1:${atlas.server.address().port}${route}`, { method: body ? 'POST' : 'GET', headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+      await api('/api/permissions/home-folder-scan', { granted: true });
+      const boot = await api('/api/bootstrap');
+      assert.deepEqual(boot.availableBundles.map((b) => b.name), expected.names, bundleId);
+      const scan = await api('/api/scan/start', { bundlePath: path.join(apps, 'ChatGPT.app') });
+      assert.equal(scan.state.application.adapterId, expected.adapter, bundleId);
+    } finally {
+      await atlas.shutdown();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});

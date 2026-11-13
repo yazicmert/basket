@@ -97,6 +97,10 @@ export const KNOWN_APP_PROFILES = [
     id: 'codex',
     ai: true,
     bundleIdPrefixes: ['com.openai.codex'],
+    // The Codex app became the new ChatGPT desktop app in July 2026 (Chat, Work and Codex in
+    // one app); the Codex CLI is separate. Both keep their sessions in ~/.codex. An app is
+    // matched to this profile by its bundle identifier or the name Codex, never by the name
+    // ChatGPT alone, which ChatGPT Classic also uses.
     names: ['codex', 'codex cli'],
     extraLocations: ['.codex']
   },
@@ -104,15 +108,18 @@ export const KNOWN_APP_PROFILES = [
     id: 'chatgpt',
     ai: true,
     bundleIdPrefixes: ['com.openai.chat'],
-    names: ['chatgpt'],
+    // ChatGPT Classic: the earlier ChatGPT desktop app, renamed in July 2026
+    names: ['chatgpt', 'chatgpt classic'],
     extraLocations: []
   },
   {
     id: 'windsurf',
     ai: true,
     bundleIdPrefixes: ['com.exafunction.windsurf'],
-    names: ['windsurf'],
-    extraLocations: ['.codeium', '.windsurf']
+    // Renamed Devin Desktop (Devin.app) in June 2026. It writes new data under Devin paths and
+    // still reads the Windsurf and Codeium ones, which old installs keep.
+    names: ['windsurf', 'devin', 'devin desktop'],
+    extraLocations: ['.codeium', '.windsurf', '.devin']
   },
   {
     id: 'vscode',
@@ -164,7 +171,16 @@ export function profileLocations(profile, isWindowsLayout) {
 
 /** "lm studio" -> "LM Studio"-like display name for a known application. */
 export function profileDisplayName(profile) {
-  const special = { chatgpt: 'ChatGPT', lmstudio: 'LM Studio', gpt4all: 'GPT4All', vscode: 'Visual Studio Code', copilot: 'GitHub Copilot' };
+  const special = {
+    claude: 'Claude Code',
+    chatgpt: 'ChatGPT',
+    codex: 'Codex',
+    windsurf: 'Devin Desktop (Windsurf)',
+    lmstudio: 'LM Studio',
+    gpt4all: 'GPT4All',
+    vscode: 'Visual Studio Code',
+    copilot: 'GitHub Copilot'
+  };
   return special[profile.id] || profile.names[0].replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 

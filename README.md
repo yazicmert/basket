@@ -4,7 +4,7 @@
 
 Artifact Atlas shows what an application left on your Mac or PC: caches, logs, models, session records and the files its AI sessions wrote. It links each file to the session and tool call that produced it where a record exists, says how safe it is to remove, and moves what you choose into a Quarantine you can restore from. Nothing is deleted permanently, nothing leaves your computer, and the applications you scan are never started.
 
-Session-level tracing works for **Claude Code**, **Cursor** and **Codex CLI**. Any other application can be scanned too; its files are attributed to the application, not to a session.
+Session-level tracing works for **Claude Code** (the CLI, and the Code view of the Claude app): each file a session wrote is linked to the session and the tool call that wrote it. For **Cursor** and **Codex** (the CLI, and the Codex view of the ChatGPT desktop app, which replaced the separate Codex app in July 2026) sessions are listed with their starting prompt, but linking their files to tool calls is not yet supported for their current record formats. Any other application can be scanned too; its files are attributed to the application, not to a session. Windsurf, renamed Devin Desktop, is found under both names.
 
 **Website:** [yazicmert.github.io/basket](https://yazicmert.github.io/basket/) · **Downloads:** [latest release](https://github.com/yazicmert/basket/releases/latest)
 
