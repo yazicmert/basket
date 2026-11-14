@@ -9,7 +9,10 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Dist = Join-Path $Root 'dist'
 $Node = Join-Path $Dist 'ArtifactAtlas\runtime\node.exe'
 $Version = (Get-Content (Join-Path $Dist 'ArtifactAtlas\app\package.json') -Raw | ConvertFrom-Json).version
-$Work = Join-Path ([System.IO.Path]::GetTempPath()) ('Atlas Update ' + [System.Guid]::NewGuid().ToString('N'))
+# A folder name with Turkish letters and spaces, as under a user name such as "Muhammet Yildiz"
+# with dotless i: built from character codes, since Windows PowerShell 5.1 reads this file as ANSI
+$Turkish = 'G' + [char]0x00FC + 'ncelleme ' + [char]0x0131 + [char]0x015F + [char]0x011F + [char]0x00E7 + [char]0x00F6
+$Work = Join-Path ([System.IO.Path]::GetTempPath()) ('Atlas ' + $Turkish + ' ' + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Write-Host "PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition)), version under test $Version"
 
@@ -35,7 +38,7 @@ import { stageVerifiedWindowsPackage, launchWindowsSwap } from '$Src';
 const [zip, staging, install, pid, version] = process.argv.slice(2);
 let refused = false;
 try { stageVerifiedWindowsPackage({ zipPath: zip, stagingDir: staging, expectedVersion: '99.0.0' }); }
-catch (err) { refused = /UPDATE_VERSION_MISMATCH/.test(err.message); }
+catch (err) { refused = /UPDATE_VERSION_MISMATCH/.test(err.message); if (!refused) console.error(err.message); }
 if (!refused) { console.error('a wrong version was not refused'); process.exit(1); }
 const staged = stageVerifiedWindowsPackage({ zipPath: zip, stagingDir: staging, expectedVersion: version });
 console.log('staged', staged);

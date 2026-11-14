@@ -1,73 +1,90 @@
-<div align="center">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/mark-dark.svg" />
+    <img src=".github/assets/mark-light.svg" width="72" height="72" alt="Artifact Atlas" />
+  </picture>
+</p>
 
-<img src="site/favicon.svg" width="56" height="56" alt="" />
+<h1 align="center">Artifact Atlas</h1>
 
-# Artifact Atlas
+<p align="center">
+  <strong>Know which AI session made a file before you delete it.</strong><br />
+  See everything Claude Code, Cursor, Codex and other AI apps leave on your Mac or PC,<br />
+  traced to the prompt that made it, and remove the leftovers safely.
+</p>
 
-**Know which AI session made a file before you delete it.**
+<p align="center">
+  <a href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg"><strong>Download for macOS</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-Windows.zip"><strong>Download for Windows</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://yazicmert.github.io/basket/">Website</a>
+</p>
 
-[Website](https://yazicmert.github.io/basket/) · [Download for macOS](https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg) · [Download for Windows](https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-Windows.zip) · [Releases](https://github.com/yazicmert/basket/releases)
+<p align="center">
+  <a href="https://github.com/yazicmert/basket/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/yazicmert/basket?style=flat-square&label=release&color=1b1b1a" /></a>
+  <img alt="macOS 14+ and Windows 10/11" src="https://img.shields.io/badge/macOS%2014%2B%20%C2%B7%20Windows%2010%2F11-1b1b1a?style=flat-square" />
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1b1b1a?style=flat-square" /></a>
+</p>
 
-<img src="site/screenshot.png" width="860" alt="Artifact Atlas: one AI session, named by the prompt that started it, with what that prompt left behind." />
+<br />
 
-</div>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/app-map-dark.png" />
+  <img src=".github/assets/app-map-light.png" alt="Artifact Atlas showing what Claude Code left on disk: kinds of files around the app, sessions named by their prompts, and the scan's totals by place, origin and cleanup risk." />
+</picture>
 
----
+<br />
 
-AI coding tools leave far more on disk than the code you asked for: installs, caches, logs, screenshots, worktrees and their own records of every session. Artifact Atlas finds all of it, traces each file to the session and prompt that made it, tells you how safe it is to remove, and moves what you choose into a Quarantine you can restore from.
+## Why
 
-## What it does
+AI coding tools leave far more on disk than the code you asked for: installs, caches, logs, screenshots, worktrees and a record of every session. Most of it is never cleaned up, and nothing tells you which conversation made what. Artifact Atlas does.
 
-- **Traces files to prompts.** For Claude Code, each file a session wrote is linked to that session and its tool call. Cursor and Codex sessions are listed with their starting prompt. Any other app is found by its own data folders.
-- **Shows what a prompt cost.** Each session shows what it left beyond its output, in files and bytes.
-- **Rates every file.** Safe to remove, review first, high risk or protected, judged by where a file lives and how it is used, never by its extension alone.
-- **Cleans up safely.** Files go to a Quarantine first. Only files that have waited 30 days are deleted, after you confirm the list.
-- **Keeps an eye on growth.** The Insights tab shows what changed since the last scan, worktrees, build outputs and identical files, and exports a report.
+## What you get
 
-## Install
-
-| | |
+|  |  |
 |---|---|
-| **macOS** 14+, Apple silicon | Download the [disk image](https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg), drag the app into Applications, and on first launch choose **Open Anyway** in System Settings → Privacy & Security. |
-| **Windows** 10 or 11 | Download the [ZIP](https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-Windows.zip), extract it and start `ArtifactAtlas.exe`. At *Windows protected your PC*, choose **More info**, then **Run anyway**. Nothing is installed. |
-
-Builds are not yet notarized or signed with a certificate, hence the extra step. Each release lists the SHA-256 of every download in `SHA256SUMS.txt`. The app updates itself in place when you click its update button, on both systems.
+| **Every file, traced to its prompt** | Claude Code files are linked to the session and the tool call that wrote them. Cursor and Codex sessions show the prompt that started them. Any other app is found by its own data folders. |
+| **What each prompt cost** | Each session shows what it left behind beyond the work it delivered, in files and bytes. |
+| **A risk for every file** | Safe to remove, review first, high risk or protected, judged by where a file lives and how it is used. Never by its extension alone. |
+| **Cleanup you can undo** | Files go to a Quarantine first and can be put back. Only files that waited 30 days are deleted, after you confirm the list. |
+| **Insights over time** | What changed since the last scan, worktrees, build outputs, identical files, and a report you can keep. |
 
 ## Private by design
 
-- **Reads, never runs.** Apps are identified from their metadata; nothing you scan is started.
-- **Asks first.** Nothing on your disk is read until you allow it, and you choose what a scan counts. See [permissions](https://yazicmert.github.io/basket/permissions/).
-- **Stays on your computer.** No account, no telemetry. The only network use is the update check, which you can turn off, and the download you click.
-- **Never stores conversations.** A session's prompt is read from its own record when you open it, and never kept.
-- **Never guesses a link.** A file is tied to a session only when the session's record names it.
+Artifact Atlas runs on your computer and reads nothing until you allow it. It never starts the apps it scans, never stores your conversations, and never ties a file to a session on a guess. There is no account and no telemetry; the only network use is the update check, which you can turn off. Read the [privacy policy](https://yazicmert.github.io/basket/legal/privacy/) and what each [permission](https://yazicmert.github.io/basket/permissions/) allows.
 
-[Privacy](https://yazicmert.github.io/basket/legal/privacy/) · [Terms](https://yazicmert.github.io/basket/legal/terms/) · [Notices](https://yazicmert.github.io/basket/legal/notices/)
+## Install
+
+**macOS** 14 or later, Apple silicon. Open the [disk image](https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg), drag the app into Applications, and on first launch choose **Open Anyway** in System Settings → Privacy & Security.
+
+**Windows** 10 or 11. Extract the [ZIP](https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-Windows.zip) and start `ArtifactAtlas.exe`. At *Windows protected your PC*, choose **More info**, then **Run anyway**. Nothing is installed.
+
+The builds are not yet notarized or signed with a certificate, which is why each system asks once. Every release lists the SHA-256 of its downloads, and the app updates itself in place when you click its update button.
 
 ## Run from source
 
-Requires Node.js 22.13 or newer. There are no npm dependencies.
+Node.js 22.13 or newer, no dependencies.
 
 ```bash
-git clone https://github.com/yazicmert/basket.git
-cd basket
-npm start    # opens the interface on http://127.0.0.1:4310
+git clone https://github.com/yazicmert/basket.git && cd basket
+npm start    # the interface on http://127.0.0.1:4310
 npm test     # runs on Linux, macOS and Windows
 ```
 
-The command line can also review, quarantine and restore files: `node src/cli.js quarantine <file> --app <app>` prints a review and a confirmation token, and `node src/cli.js restore --list` lists the Quarantine.
-
 <details>
-<summary><strong>Building the apps</strong></summary>
+<summary>Command line and building the apps</summary>
+<br />
 
-**macOS** (14+, Xcode with Swift 5.10+)
+**Command line.** `node src/cli.js quarantine <file> --app <app>` prints a review and a confirmation token; run it again with `--confirm <token>` to move the file. `node src/cli.js restore --list` lists the Quarantine.
+
+**macOS** (14 or later, Xcode with Swift 5.10+)
 
 ```bash
 swift test
-npm run package:macos   # app, DMG, ZIP and SHA256SUMS.txt in dist/
-npm run verify:macos    # mounts the DMG and checks it end to end
+npm run package:macos   # app, disk image, ZIP and SHA256SUMS.txt in dist/
+npm run verify:macos    # mounts the disk image and checks it end to end
 ```
-
-With `APPLE_DEVELOPER_ID_APPLICATION`, `APPLE_ID`, `APPLE_TEAM_ID` and `APPLE_APP_SPECIFIC_PASSWORD` set, the build is signed with the Hardened Runtime and notarized.
 
 **Windows** (10 or 11, nothing extra installed)
 
@@ -76,16 +93,14 @@ With `APPLE_DEVELOPER_ID_APPLICATION`, `APPLE_ID`, `APPLE_TEAM_ID` and `APPLE_AP
 ./scripts/verify-windows-bundle.ps1  # extracts the ZIP and checks it end to end
 ```
 
-**CI.** [`macos-build.yml`](.github/workflows/macos-build.yml) tests on Linux, Windows and macOS and builds both apps, including the in-place update on each system. [`macos-release.yml`](.github/workflows/macos-release.yml) publishes a release by hand. [`pages.yml`](.github/workflows/pages.yml) publishes the website.
+Continuous integration tests every change on Linux, Windows and macOS, including the in-place update on each system.
 
 </details>
 
-## Learn more
+## More
 
-- [Architecture](ARCHITECTURE.md): how scanning, provenance, classification and the Quarantine work
-- [Roadmap](ROADMAP.md)
-- [Rules for contributors and coding agents](AGENTS.md)
+[Architecture](ARCHITECTURE.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Terms](https://yazicmert.github.io/basket/legal/terms/)
 
----
+<br />
 
-<div align="center"><sub>MIT licensed · Not affiliated with the makers of the apps it scans.</sub></div>
+<p align="center"><sub>MIT licensed · Not affiliated with the makers of the apps it scans.</sub></p>

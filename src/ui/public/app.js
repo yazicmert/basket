@@ -1726,7 +1726,7 @@ function drawGraph() {
         ctx.font = `${metaPx}px -apple-system, sans-serif`;
         ctx.fillStyle = colors.ink3;
         ctx.fillText(
-          `${Number(summary.artifactCount).toLocaleString()} files · ${formatBytes(summary.bytes)}`,
+          `${pluralize(Number(summary.artifactCount), 'file')} · ${formatBytes(summary.bytes)}`,
           node.x,
           node.y + r + 5 + labelPx + metaPx + barGap
         );

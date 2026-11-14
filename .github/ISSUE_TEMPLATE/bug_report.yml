@@ -1,0 +1,36 @@
+name: Something is wrong
+description: The app shows an error, gets something wrong, or does not start.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting. A few details help find the cause quickly. Please leave out personal file names you would rather not share.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in Settings, under Updates.
+      placeholder: "0.9.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      description: The exact text of any message, or a screenshot. For an update that did not finish, the reason the app shows on its next start.
