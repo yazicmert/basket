@@ -247,6 +247,8 @@ export class Scanner {
         mode: lstat.mode,
         createdAt: lstat.birthtime ? lstat.birthtime.toISOString() : lstat.ctime.toISOString(),
         modifiedAt: lstat.mtime.toISOString(),
+        // Only used to rule a file out of "unused": not every system keeps it up to date
+        accessedAt: lstat.atime ? lstat.atime.toISOString() : null,
         mtimeMs: lstat.mtimeMs
       });
     };

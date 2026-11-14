@@ -160,7 +160,10 @@ export function createAtlasServer(options = {}) {
             ? { version: raw.pendingUpdate.version, stagingDir: raw.pendingUpdate.stagingDir }
             : null,
         scanPermissionsReviewedAt:
-          typeof raw.scanPermissionsReviewedAt === 'string' ? raw.scanPermissionsReviewedAt : null
+          typeof raw.scanPermissionsReviewedAt === 'string' ? raw.scanPermissionsReviewedAt : null,
+        // What the last scheduled deletion did, told once on the next start
+        lastScheduledDeletion:
+          raw.lastScheduledDeletion && typeof raw.lastScheduledDeletion.at === 'string' ? raw.lastScheduledDeletion : null
       };
     } catch {
       return {
@@ -169,7 +172,8 @@ export function createAtlasServer(options = {}) {
         updateCheckEnabled: true,
         scanScope: normalizeScanScope(null),
         pendingUpdate: null,
-        scanPermissionsReviewedAt: null
+        scanPermissionsReviewedAt: null,
+        lastScheduledDeletion: null
       };
     }
   };
@@ -552,6 +556,49 @@ export function createAtlasServer(options = {}) {
     return null;
   };
 
+  // Deletions the user scheduled with the unused-files cleanup: checked shortly after start and
+  // every hour while the app is open, for every vault in use (see runScheduledDeletions)
+  const clock = options.now || (() => Date.now());
+  const runScheduledDeletions = async () => {
+    const total = { deleted: 0, freedBytes: 0, neededAgain: 0 };
+    for (const service of services.values()) {
+      try {
+        const r = await service.cleanupEngine.runScheduledDeletions({ now: clock() });
+        total.deleted += r.deleted;
+        total.freedBytes += r.freedBytes;
+        total.neededAgain += r.neededAgain;
+        if (r.deleted > 0) service.rebuildActiveGraph();
+      } catch {
+        // Tried again in an hour
+      }
+    }
+    if (total.deleted > 0 || total.neededAgain > 0) {
+      const prev = settings.lastScheduledDeletion || { deleted: 0, freedBytes: 0, neededAgain: 0 };
+      settings.lastScheduledDeletion = {
+        at: new Date(clock()).toISOString(),
+        deleted: prev.deleted + total.deleted,
+        freedBytes: prev.freedBytes + total.freedBytes,
+        neededAgain: prev.neededAgain + total.neededAgain
+      };
+      saveSettings();
+    }
+    return total;
+  };
+  const scheduledDeletionTimer = options.scheduledDeletions === false ? null : setTimeout(runScheduledDeletions, 5000);
+  const scheduledDeletionInterval = options.scheduledDeletions === false ? null : setInterval(runScheduledDeletions, 60 * 60 * 1000);
+  scheduledDeletionTimer?.unref?.();
+  scheduledDeletionInterval?.unref?.();
+  let unusedCleanupProgress = null;
+  // Told once: the first bootstrap after it happened gets it, then it is cleared
+  const takeScheduledDeletionNotice = () => {
+    const notice = settings.lastScheduledDeletion;
+    if (notice) {
+      settings.lastScheduledDeletion = null;
+      saveSettings();
+    }
+    return notice;
+  };
+
   // Files with identical content, searched only when the user asks (see identical-files.js)
   let copiesJob = null;
   const copiesStatus = () => {
@@ -811,6 +858,7 @@ export function createAtlasServer(options = {}) {
           ...permissionsPayload(),
           arch: process.arch,
           systemPicker: nativePicker,
+          lastScheduledDeletion: takeScheduledDeletionNotice(),
           isDemoEnvironment: activeService().activeState.isDemoEnvironment,
           homeDir: activeService().platformServices.homeDir,
           quarantineVaultLocation: activeService().cleanupEngine.quarantineRoot,
@@ -1173,6 +1221,36 @@ export function createAtlasServer(options = {}) {
         });
       }
 
+      // The unused-files cleanup: the list of safe files unused for N days, then the confirmed
+      // move, with their deletion date
+      if (url.pathname === '/api/cleanup/unused/prepare' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, cleanup: activeService().prepareUnusedCleanup({ minDays: body.minDays, now: clock() }) });
+      }
+      if (url.pathname === '/api/cleanup/unused' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        try {
+          unusedCleanupProgress = { done: 0, total: 0 };
+          const result = await activeService().executeUnusedCleanup({ token: body.token, now: clock(), onProgress: (p) => (unusedCleanupProgress = p) });
+          return sendJson(res, 200, { ok: true, ...result, activeState: stateForClient(activeService().activeState) });
+        } catch (err) {
+          return sendJson(res, 409, { ok: false, error: err.message });
+        } finally {
+          unusedCleanupProgress = null;
+        }
+      }
+      if (url.pathname === '/api/cleanup/unused/progress' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, progress: unusedCleanupProgress });
+      }
+      if (url.pathname === '/api/quarantine/restore-batch' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const result = activeService().restoreQuarantineBatch({ batchId: String(body.batchId || '') });
+        return sendJson(res, 200, { ok: true, ...result, activeState: stateForClient(activeService().activeState) });
+      }
+      if (url.pathname === '/api/quarantine/run-scheduled' && req.method === 'POST' && options.allowManualScheduledRun) {
+        return sendJson(res, 200, { ok: true, result: await runScheduledDeletions() });
+      }
+
       // Emptying the Quarantine: first the list of what has waited long enough, then the
       // confirmed deletion of exactly that list
       if (url.pathname === '/api/quarantine/purge/prepare' && req.method === 'POST') {
@@ -1258,6 +1336,8 @@ export function createAtlasServer(options = {}) {
   });
 
   const shutdown = () => {
+    clearTimeout(scheduledDeletionTimer);
+    clearInterval(scheduledDeletionInterval);
     return new Promise((resolve) => {
       for (const svc of services.values()) {
         try {
@@ -1286,6 +1366,7 @@ export function createAtlasServer(options = {}) {
     },
     demoEnv,
     sessionToken,
-    shutdown
+    shutdown,
+    runScheduledDeletions
   };
 }

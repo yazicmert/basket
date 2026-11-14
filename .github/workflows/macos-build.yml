@@ -43,7 +43,7 @@ jobs:
     name: Test, Build & Verify ArtifactAtlas for Windows (.zip)
     runs-on: windows-latest
     env:
-      APP_VERSION: "0.9.1"
+      APP_VERSION: "0.10.0"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     env:
       TARGET_ARCH: ${{ inputs.target_arch || 'arm64' }}
-      APP_VERSION: "0.9.1"
+      APP_VERSION: "0.10.0"
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Checkout Repository

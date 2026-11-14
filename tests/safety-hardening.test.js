@@ -614,3 +614,105 @@ test('S9. Emptying the Quarantine: only after 30 days, only the confirmed list, 
     sandbox.cleanup();
   }
 });
+
+test('S10. Unused cleanup: safe files unused for 30 days are deleted after 7 days unless their app makes them again', async () => {
+  const sandbox = createTempSandbox();
+  try {
+    const demo = createDeterministicDemoEnvironment(sandbox.dir);
+    const service = new ArtifactAtlasService({
+      homeDir: demo.homeDir, platform: 'darwin',
+      dbPath: path.join(sandbox.dir, 'atlas.sqlite'),
+      quarantineRoot: path.join(sandbox.dir, 'quarantine-vault')
+    });
+    // Age every file of the sample by 60 days, then scan
+    const day = 24 * 60 * 60 * 1000;
+    const old = new Date(Date.now() - 60 * day);
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.isFile()) fs.utimesSync(p, old, old);
+      }
+    };
+    walk(demo.homeDir);
+    const state = await service.scanAndAnalyze({ bundlePath: demo.appBundles.claude.bundlePath });
+    const safe = state.artifacts.filter((a) => a.cleanupClassification === RiskCategory.LOW);
+    assert.ok(safe.length >= 2);
+
+    const now = Date.now();
+    const plan = service.prepareUnusedCleanup({ now });
+    assert.equal(plan.minDays, 30);
+    assert.equal(plan.count, safe.length, 'only safe files, all of them unused');
+    assert.equal(plan.purgeAt, new Date(now + 7 * day).toISOString());
+
+    // An ordinary review token cannot schedule a deletion
+    const review = service.prepareCleanupReview(safe.map((a) => a.id));
+    await assert.rejects(service.executeUnusedCleanup({ token: review.confirmationToken, now }), /CLEANUP_CONFIRMATION_EXPIRED/);
+    const again = service.prepareUnusedCleanup({ now });
+    const moved = await service.executeUnusedCleanup({ token: again.token, now });
+    assert.equal(moved.movedCount, safe.length);
+    const held = service.sqliteStore.listQuarantineEntries('QUARANTINED');
+    assert.ok(held.every((e) => e.autoPurgeAt === plan.purgeAt && e.scheduledBy === 'unused-cleanup'));
+
+    // One file is made again by its app; one has a schedule only in its row
+    const [recreated, tampered, ...rest] = held;
+    fs.mkdirSync(path.dirname(recreated.originalPath), { recursive: true });
+    fs.writeFileSync(recreated.originalPath, 'made again');
+    const manifest = JSON.parse(fs.readFileSync(tampered.manifestPath, 'utf8'));
+    fs.writeFileSync(tampered.manifestPath, JSON.stringify({ ...manifest, autoPurgeAt: null }));
+
+    // Day 6: nothing is deleted, but the recreated one is already known
+    const day6 = await service.cleanupEngine.runScheduledDeletions({ now: now + 6 * day });
+    assert.deepEqual([day6.deleted, day6.neededAgain], [0, 1]);
+    // Day 7: the rest is deleted; the recreated and the tampered ones stay
+    const day7 = await service.cleanupEngine.runScheduledDeletions({ now: now + 7 * day + 1000 });
+    assert.equal(day7.deleted, rest.length);
+    assert.equal(day7.skipped, 1);
+    const byId = new Map(service.sqliteStore.listQuarantineEntries().map((e) => [e.id, e]));
+    assert.equal(byId.get(recreated.id).status, 'QUARANTINED');
+    assert.equal(byId.get(recreated.id).autoPurgeAt, null);
+    assert.ok(byId.get(recreated.id).neededAgainAt);
+    assert.equal(fs.readFileSync(recreated.originalPath, 'utf8'), 'made again', 'the new file is never touched');
+    assert.equal(byId.get(tampered.id).status, 'QUARANTINED');
+    for (const e of rest) {
+      assert.equal(byId.get(e.id).status, 'PURGED');
+      assert.equal(fs.existsSync(e.quarantinePath), false);
+    }
+    // Later runs do not delete the kept ones
+    const day9 = await service.cleanupEngine.runScheduledDeletions({ now: now + 9 * day });
+    assert.equal(day9.deleted, 0);
+
+    // Put All Back: the recreated file's place is taken, so it stays; the other comes back
+    const back = service.restoreQuarantineBatch({ batchId: moved.batchId });
+    assert.deepEqual([back.restored, back.kept], [1, 1]);
+    assert.ok(fs.existsSync(tampered.originalPath));
+    const restored = service.sqliteStore.getQuarantineEntryById(tampered.id);
+    assert.equal(restored.status, 'RESTORED');
+    assert.equal(restored.autoPurgeAt, null, 'putting back cancels the schedule');
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test('S11. The unused cleanup leaves out files opened recently and files that are not safe', async () => {
+  const sandbox = createTempSandbox();
+  try {
+    const demo = createDeterministicDemoEnvironment(sandbox.dir);
+    const service = new ArtifactAtlasService({ homeDir: demo.homeDir, platform: 'darwin', dbPath: path.join(sandbox.dir, 'a.sqlite'), quarantineRoot: path.join(sandbox.dir, 'v') });
+    const state = await service.scanAndAnalyze({ bundlePath: demo.appBundles.claude.bundlePath });
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    for (const a of state.artifacts) {
+      a.modifiedAt = new Date(now - 100 * day).toISOString();
+      a.accessedAt = new Date(now - 100 * day).toISOString();
+    }
+    const safe = state.artifacts.filter((a) => a.cleanupClassification === RiskCategory.LOW);
+    safe[0].accessedAt = new Date(now - 2 * day).toISOString(); // opened two days ago
+    const plan = service.prepareUnusedCleanup({ now, minDays: 90 });
+    assert.equal(plan.minDays, 90);
+    assert.equal(plan.count, safe.length - 1);
+    assert.equal(service.prepareUnusedCleanup({ now, minDays: 7 }).minDays, 30, 'only the offered choices');
+  } finally {
+    sandbox.cleanup();
+  }
+});
