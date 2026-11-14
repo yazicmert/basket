@@ -1575,3 +1575,375 @@ button.crumb:hover {
   padding: 2px 8px;
   white-space: nowrap;
 }
+
+/* ---------- Show in Finder: the folders a selection is spread over ---------- */
+
+.reveal-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.reveal-menu-title,
+.reveal-menu-note {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.reveal-menu-row {
+  appearance: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.reveal-menu-row:hover,
+.reveal-menu-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.reveal-menu-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reveal-menu-meta {
+  flex: none;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.inspector-reveal-btn {
+  align-self: flex-start;
+}
+
+/* ---------- Worktrees and build outputs ---------- */
+
+.leftover-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.leftover-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.leftover-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.leftover-facts {
+  color: var(--ink-2);
+}
+.leftover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+/* ---------- Quarantine: summary and emptying ---------- */
+
+.quarantine-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.quarantine-summary strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.quarantine-conflict-selector #purge-open-btn {
+  margin-top: 10px;
+}
+.quarantine-row-card.is-purged {
+  opacity: 0.55;
+}
+.purge-total {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.purge-total-value {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.purge-total-meta {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.purge-warning {
+  margin: 12px 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--risk-high);
+  font-size: 13px;
+  color: var(--ink);
+}
+.purge-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 44vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+.purge-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.purge-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.purge-row-path {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.purge-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.purge-row-meta span {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.purge-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ---------- Diagnostics ---------- */
+
+.diagnostics-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+}
+.diagnostics-text {
+  width: 100%;
+  height: 200px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* ---------- Insights ---------- */
+
+#panel-insights {
+  padding: 24px 24px 96px;
+}
+.insights-wrap {
+  max-width: 880px;
+  margin: 0 auto;
+}
+.insights-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.insights-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.insight-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px 32px;
+}
+.insight-split > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .insight-split {
+    grid-template-columns: 1fr;
+  }
+}
+.insight-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  min-width: 0;
+}
+.insight-card-wide {
+  grid-column: 1 / -1;
+}
+.insight-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.insight-figure {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.insight-meta {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.insight-quiet {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.insight-subtitle {
+  margin-top: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.insight-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.insight-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.insight-num {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.insight-tag {
+  font-size: 10.5px;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+.insight-actions {
+  align-items: center;
+  margin-top: 6px;
+}
+.insight-card > .secondary-btn,
+.insight-card > .ghost-btn {
+  align-self: flex-start;
+}
+.insight-card > .link-btn {
+  align-self: flex-start;
+  font-size: 12.5px;
+}
+.sparkline {
+  display: block;
+  margin: 4px 0 2px;
+}
+.sparkline path {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.sparkline circle {
+  fill: var(--ink);
+}
+.progress-line {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+.progress-line span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.3s ease;
+}
+.command-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.command-text {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-size: 11.5px;
+}
+@media (max-width: 640px) {
+  .insights-head {
+    flex-direction: column;
+  }
+}
+.insight-link {
+  align-self: flex-start;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+.insight-split .insight-subtitle:first-child {
+  margin-top: 0;
+}

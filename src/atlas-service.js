@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { PlatformServices } from './platform/platform-services.js';
 import { AdapterRegistry } from './adapters/adapter-registry.js';
 import { ApplicationDiscovery } from './discovery/application-discovery.js';
@@ -8,12 +9,14 @@ import { ArtifactIndexer } from './indexer/artifact-indexer.js';
 import { ProvenanceEngine } from './provenance/provenance-engine.js';
 import { ClassificationEngine } from './classification/classification-engine.js';
 import { GraphEngine } from './graph/graph-engine.js';
-import { CleanupEngine } from './cleanup/cleanup-engine.js';
+import { CleanupEngine, PURGE_MIN_AGE_DAYS } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
 import { WRITE_OPERATION_TYPES } from './models/entities.js';
 import { normalizeScanScope } from './platform/permissions.js';
 import { readSessionFirstPrompt, promptExcerpt } from './provenance/session-prompt.js';
 import { computePromptCosts } from './graph/prompt-costs.js';
+import { summarizeScanForHistory, compareScans } from './graph/scan-history.js';
+import { sessionLabel } from './graph/report.js';
 
 // Upper bound on files in one scan. The map and the UI stay responsive well beyond this
 // because they work from summaries; the bound keeps memory and scan time predictable.
@@ -311,6 +314,25 @@ export class ArtifactAtlasService {
     // What each session left behind (numbers only)
     this.activeState.promptCosts = computePromptCosts(this.activeState);
 
+    // Compared with the previous scan of this application, then kept for the next one
+    const summary = summarizeScanForHistory(this.activeState);
+    // The newest earlier scan that counted the same things; else the newest, to say why not
+    const earlier = this.sqliteStore.listScanSummaries(summary.applicationId, 20).filter((s) => !s.cancelled);
+    const previous = earlier.find((s) => s.scope === summary.scope) || earlier[0] || null;
+    this.activeState.growth = { ...compareScans(previous, summary), history: [] };
+    // Names for the sessions that grew: their stored title, or their ID (never prompt text)
+    const sessionById = new Map((this.activeState.sessions || []).map((s) => [s.id, s]));
+    for (const s of this.activeState.growth.sessions || []) {
+      const session = sessionById.get(s.sessionId);
+      s.label = session ? sessionLabel(session) : 'Session';
+    }
+    if (scan.status !== 'CANCELLED') this.sqliteStore.saveScanSummary(summary);
+    this.activeState.growth.history = this.sqliteStore
+      .listScanSummaries(summary.applicationId, 12)
+      .filter((s) => s.scope === summary.scope)
+      .map((s) => ({ scannedAt: s.scannedAt, bytes: s.listedBytes + s.measuredBytes }))
+      .reverse();
+
     return this.activeState;
   }
 
@@ -553,6 +575,42 @@ export class ArtifactAtlasService {
     return {
       ...result,
       updatedGraph: this.activeState.graph,
+      quarantineEntries: this.quarantineEntriesWithSessions()
+    };
+  }
+
+  /**
+   * What "Empty Quarantine" would delete: entries held at least 30 days. The confirmation
+   * token is bound to exactly this list; anything that changes in between is not deleted.
+   */
+  preparePurge({ now = Date.now() } = {}) {
+    const entries = this.cleanupEngine.listPurgeableEntries({ now });
+    const ids = entries.map((e) => e.id).sort();
+    const token = ids.length > 0 ? `purge_${crypto.createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 24)}` : null;
+    this.pendingPurge = token ? { token, ids, preparedAt: now } : null;
+    // The largest are shown; the confirmation still covers exactly the whole list
+    const shown = [...entries].sort((a, b) => (b.payloadBytes || 0) - (a.payloadBytes || 0)).slice(0, 200);
+    return {
+      minAgeDays: PURGE_MIN_AGE_DAYS,
+      token,
+      count: entries.length,
+      totalBytes: entries.reduce((s, e) => s + (e.payloadBytes || 0), 0),
+      entries: shown.map((e) => ({ id: e.id, artifactName: e.artifactName, originalPath: e.originalPath, sizeBytes: e.payloadBytes, quarantinedAt: e.quarantinedAt }))
+    };
+  }
+
+  async purgeQuarantine({ token, now = Date.now() }) {
+    const pending = this.pendingPurge;
+    // One use, within ten minutes of the list the user saw
+    if (!pending || !token || token !== pending.token || now - pending.preparedAt > 10 * 60 * 1000) {
+      throw new Error('PURGE_CONFIRMATION_EXPIRED: Open the list again and confirm.');
+    }
+    this.pendingPurge = null;
+    const purged = await this.cleanupEngine.purgeEntries(pending.ids, { now });
+    return {
+      purgedCount: purged.length,
+      skippedCount: pending.ids.length - purged.length,
+      freedBytes: purged.reduce((s, p) => s + (p.sizeBytes || 0), 0),
       quarantineEntries: this.quarantineEntriesWithSessions()
     };
   }

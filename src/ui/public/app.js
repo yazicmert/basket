@@ -269,6 +269,7 @@ async function initApp() {
   initGraphCanvas();
 
   bindPermissionsEvents();
+  bindPurgeEvents();
 
   // Inside the macOS app (WKWebView) the real window controls overlap the top-left corner
   if (/AppleWebKit/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent)) {
@@ -2332,7 +2333,14 @@ function renderNodeInspector(node, trace) {
         }
       </div>
       ${
-        meta.measuredOnly
+        (isArtifact || meta.path || meta.measuredOnly) && !meta.session && node.nodeType !== 'AI_APPLICATION'
+          ? `<button id="node-reveal-btn" class="secondary-btn inspector-reveal-btn" type="button">Show in ${fileManagerName()}</button>`
+          : ''
+      }
+      ${
+        meta.measuredOnly && meta.pastLimit
+          ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}These files are past the scan's file limit: counted and sized by folder, but not listed, so they cannot be selected here. Show the folder to look at them, or scan a narrower set of folders.</div>`
+          : meta.measuredOnly
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
           : meta.summary && node.nodeType !== 'AI_APPLICATION' && !meta.cost
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
@@ -2385,6 +2393,11 @@ function renderNodeInspector(node, trace) {
     });
   }
 
+  const revealBtn = document.getElementById('node-reveal-btn');
+  if (revealBtn) {
+    revealBtn.addEventListener('click', () => revealById(node.id, node.label));
+  }
+
   const folderBtn = document.getElementById('select-level-files-btn');
   if (folderBtn) {
     folderBtn.addEventListener('click', async () => {
@@ -2398,6 +2411,381 @@ function renderNodeInspector(node, trace) {
         showToast(`Could not select files: ${err.message}`);
       }
     });
+  }
+}
+
+/* The folders a selection is spread over, largest first; each row opens its folder. */
+function openRevealMenu(anchor, reveal, onPick) {
+  closeRevealMenu();
+  const menu = document.createElement('div');
+  menu.id = 'reveal-menu';
+  menu.className = 'reveal-menu';
+  menu.setAttribute('role', 'menu');
+  const more = reveal.regionCount - reveal.regions.length;
+  menu.innerHTML = `
+    <div class="reveal-menu-title">${pluralize(reveal.totalCount, 'selected file')} in ${pluralize(reveal.regionCount, 'folder')}</div>
+    ${reveal.regions
+      .map(
+        (r, i) => `<button class="reveal-menu-row" type="button" role="menuitem" data-index="${i}">
+          <span class="reveal-menu-path mono">${escapeHtml(shortPath(r.path))}</span>
+          <span class="reveal-menu-meta">${pluralize(r.fileCount, 'file')} · ${formatBytes(r.bytes)}</span>
+        </button>`
+      )
+      .join('')}
+    ${more > 0 ? `<div class="reveal-menu-note">and ${pluralize(more, 'smaller folder')}</div>` : ''}`;
+  document.body.appendChild(menu);
+  const box = anchor.getBoundingClientRect();
+  const width = Math.min(440, window.innerWidth - 32);
+  menu.style.width = `${width}px`;
+  menu.style.left = `${Math.max(16, Math.min(box.left, window.innerWidth - width - 16))}px`;
+  menu.style.bottom = `${window.innerHeight - box.top + 8}px`;
+  menu.addEventListener('click', async (e) => {
+    const row = e.target.closest('.reveal-menu-row');
+    if (!row) return;
+    closeRevealMenu();
+    try {
+      await onPick(Number(row.dataset.index));
+    } catch (err) {
+      showToast(`Reveal failed: ${err.message}`);
+    }
+  });
+  menu.querySelector('.reveal-menu-row')?.focus();
+  setTimeout(() => document.addEventListener('mousedown', closeRevealMenuOutside), 0);
+  document.addEventListener('keydown', closeRevealMenuOnEscape);
+}
+function closeRevealMenuOutside(e) {
+  if (!e.target.closest('#reveal-menu')) closeRevealMenu();
+}
+function closeRevealMenuOnEscape(e) {
+  if (e.key === 'Escape') closeRevealMenu();
+}
+function closeRevealMenu() {
+  document.getElementById('reveal-menu')?.remove();
+  document.removeEventListener('mousedown', closeRevealMenuOutside);
+  document.removeEventListener('keydown', closeRevealMenuOnEscape);
+}
+
+/* Shows a mark, a worktree or a project in Finder / File Explorer by its id. */
+async function revealById(targetId, label) {
+  try {
+    const res = await apiRequest('/api/finder/reveal', 'POST', { targetId });
+    showToast(`Showing ${label} in ${fileManagerName()}.${res.commandPreview ? ` ${res.commandPreview}` : ''}`);
+  } catch (err) {
+    showToast(`Reveal failed: ${err.message}`);
+  }
+}
+
+/* =========================================================================
+   INSIGHTS: growth, worktrees, build outputs, identical files, report
+   ========================================================================= */
+
+const GROWTH_REASONS = {
+  FIRST_SCAN: 'This is the first scan of this app. The next one will show what changed.',
+  DIFFERENT_SCOPE: 'The last scan counted different folders (see Permissions), so the totals are not comparable.',
+  CANCELLED: 'This scan was stopped before the end.',
+  OTHER_APPLICATION: 'The last scan was of another app.'
+};
+
+// A title made up from the session's ID says nothing; the map names those by their prompt
+const MADE_UP_TITLE = /^(Claude|Cursor|Codex) Session [\w-]{1,12}$/;
+
+function signedBytes(bytes) {
+  if (!bytes) return 'No change';
+  return `${bytes > 0 ? '+' : '−'}${formatBytes(Math.abs(bytes))}`;
+}
+
+/* A small line of the totals of earlier comparable scans. Ink only: color means risk. */
+function sparklineSvg(points) {
+  if (!points || points.length < 2) return '';
+  const w = 220;
+  const h = 44;
+  const values = points.map((p) => p.bytes);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const xy = values.map((v, i) => [Math.round((i / (values.length - 1)) * (w - 4)) + 2, Math.round(h - 4 - ((v - min) / span) * (h - 8))]);
+  const d = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join(' ');
+  const [lx, ly] = xy[xy.length - 1];
+  return `<svg class="sparkline" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Total size over the last ${points.length} scans"><path d="${d}" /><circle cx="${lx}" cy="${ly}" r="2.5" /></svg>`;
+}
+
+function insightCard(title, body, { wide = false, id = '' } = {}) {
+  return `<section class="insight-card${wide ? ' insight-card-wide' : ''}"${id ? ` id="${id}"` : ''}><h3 class="insight-title">${escapeHtml(title)}</h3>${body}</section>`;
+}
+
+function growthCardHtml(growth) {
+  if (!growth) return '';
+  if (!growth.comparable) {
+    return insightCard('Since the last scan', `<p class="insight-quiet">${escapeHtml(GROWTH_REASONS[growth.reason] || 'Nothing to compare yet.')}</p>${sparklineSvg(growth.history)}`);
+  }
+  const kinds = (growth.kinds || [])
+    .slice(0, 4)
+    .map((k) => `<div class="insight-row"><span>${escapeHtml(formatArtifactTypeLabelClient(k.artifactType))}</span><span class="insight-num">${signedBytes(k.deltaBytes)}</span></div>`)
+    .join('');
+  const sessions = (growth.sessions || [])
+    .slice(0, 3)
+    .map((s) => `<div class="insight-row"><span class="insight-ellipsis">${escapeHtml(s.label || 'Session')}${s.isNew ? ' <span class="insight-tag">new</span>' : ''}</span><span class="insight-num">${signedBytes(s.deltaBytes)}</span></div>`)
+    .join('');
+  return insightCard(
+    'Since the last scan',
+    `<div class="insight-split">
+       <div>
+         <div class="insight-figure">${signedBytes(growth.deltaBytes)}</div>
+         <div class="insight-meta">since ${escapeHtml(formatDate(growth.previousScannedAt))}${growth.deltaFiles === null ? '' : ` · ${growth.deltaFiles >= 0 ? '+' : '−'}${Math.abs(growth.deltaFiles).toLocaleString()} files`}</div>
+         ${sparklineSvg(growth.history)}
+       </div>
+       <div>
+         ${kinds ? `<div class="insight-subtitle">By kind</div>${kinds}` : ''}
+         ${sessions ? `<div class="insight-subtitle">Sessions that grew</div>${sessions}` : ''}
+         ${
+           growth.totalsOnly
+             ? '<p class="insight-quiet">A scan reached the file limit, so only the total is compared. It is complete: files past the limit are measured. The breakdown by kind and session covers listed files only and is left out.</p>'
+             : !kinds && !sessions
+               ? '<p class="insight-quiet">Nothing was added or removed since then.</p>'
+               : ''
+         }
+       </div>
+     </div>`
+  );
+}
+
+function formatArtifactTypeLabelClient(type) {
+  return (
+    {
+      REGENERABLE_CACHE: 'Regenerable caches',
+      TEMP_FILE: 'Temporary files',
+      LOG: 'Diagnostic logs',
+      BUILD_OUTPUT: 'Build outputs',
+      DERIVED_DATA: 'Derived data',
+      SESSION_HISTORY: 'Session histories',
+      USER_CONTENT: 'Source & user content',
+      MODEL_DATA: 'Model weights & datasets',
+      CHECKPOINT: 'State checkpoints',
+      UNKNOWN: 'Unclassified'
+    }[type] || type
+  );
+}
+
+function worktreesCardHtml(data) {
+  if (!data || data.worktreeCount === 0) return '';
+  const atLeast = data.lowerBound ? 'at least ' : '';
+  const sessionsLine = (sessions) => {
+    const list = sessions || [];
+    if (list.length === 0) return '';
+    const titles = list.map((s) => s.title).filter((t) => t && !MADE_UP_TITLE.test(t));
+    if (titles.length === 0) return `${pluralize(list.length, 'session')} worked here.`;
+    return `Sessions: ${titles.slice(0, 2).map((t) => `“${t}”`).join(', ')}${list.length > 2 ? ` and ${list.length - 2} more` : ''}.`;
+  };
+  const gitLine = (w) => {
+    if (!w.isGitWorktree) return 'No longer a Git worktree.';
+    if (!w.git) return data.gitMetadataRead ? '' : 'Branch shown with Dependency and Git folders allowed.';
+    if (w.git.registered === false) return 'Git no longer lists it.';
+    if (!w.git.branch) return w.git.detached ? 'No branch (detached).' : '';
+    return `${w.git.branch} · ${w.git.branchExists ? 'branch still in the repository' : 'branch no longer in the repository'}.`;
+  };
+  const rows = data.worktrees
+    .map(
+      (w) => `<div class="leftover-row">
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(w.name)}</span><span class="insight-num">${atLeast}${formatBytes(w.bytes)}</span></div>
+        <div class="leftover-facts">${escapeHtml([`${pluralize(w.fileCount, 'file')}${w.newestChange ? `, changed ${formatDate(w.newestChange)}` : ''}.`, gitLine(w), sessionsLine(w.sessions)].filter(Boolean).join(' '))}</div>
+        <div class="leftover-actions">
+          <button class="link-btn" type="button" data-reveal="${escapeHtml(w.id)}" data-label="${escapeHtml(w.name)}">Show in ${fileManagerName()}</button>
+          ${w.buildOutputs.count > 0 ? `<button class="link-btn" type="button" data-select-build="${escapeHtml(w.id)}">Select build outputs · ${formatBytes(w.buildOutputs.bytes)}</button>` : ''}
+          ${w.removeCommand ? `<button class="link-btn" type="button" data-command="${escapeHtml(w.removeCommand)}">Git command to remove it</button>` : ''}
+        </div>
+        <div class="command-box hidden"></div>
+      </div>`
+    )
+    .join('');
+  return insightCard(
+    `Worktrees · ${data.worktreeCount}`,
+    `<p class="insight-quiet">Second copies of a project that sessions work in. Whether a branch was merged or has unsaved work can only be checked with Git, which this app never runs, so a worktree is never moved as a whole.</p>
+     ${rows}
+     ${data.worktreeCount > data.worktrees.length ? `<p class="insight-quiet">The ${data.worktrees.length} largest of ${data.worktreeCount}.</p>` : ''}`,
+    { wide: true }
+  );
+}
+
+function buildOutputsCardHtml(data) {
+  if (!data || data.buildProjectCount === 0) return '';
+  const rows = data.buildProjects
+    .map(
+      (b) => `<div class="leftover-row">
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(b.name)}</span><span class="insight-num">${formatBytes(b.bytes)}</span></div>
+        <div class="leftover-facts">${escapeHtml(`${pluralize(b.count, 'file')}. ${b.manifest ? `${b.manifest} next to it: usually rebuilt with ${b.rebuild}.` : 'No build file next to it; check how it was made first.'}`)}</div>
+        <div class="leftover-actions">
+          <button class="link-btn" type="button" data-reveal="${escapeHtml(b.id)}" data-label="${escapeHtml(b.name)}">Show in ${fileManagerName()}</button>
+          <button class="link-btn" type="button" data-select-build="${escapeHtml(b.id)}">Select for review</button>
+        </div>
+      </div>`
+    )
+    .join('');
+  return insightCard(`Build outputs · ${data.buildProjectCount} ${data.buildProjectCount === 1 ? 'project' : 'projects'}`, rows);
+}
+
+function copiesCardHtml(copies) {
+  const intro = '<p class="insight-quiet">Files with exactly the same content in different places. Listed files of 64 KB or more are compared by reading them; nothing is changed.</p>';
+  if (!copies || copies.status === 'idle' || copies.status === 'cancelled' || copies.status === 'failed') {
+    return insightCard(
+      'Identical files',
+      `${intro}${copies?.status === 'failed' ? '<p class="insight-quiet">The last search stopped with an error.</p>' : ''}<button id="copies-start-btn" class="secondary-btn" type="button">Find Identical Files</button>`
+    );
+  }
+  if (copies.status === 'running') {
+    const pct = copies.progress.totalBytes > 0 ? Math.min(100, Math.round((copies.progress.doneBytes / copies.progress.totalBytes) * 100)) : 0;
+    return insightCard(
+      'Identical files',
+      `${intro}<div class="progress-line" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
+       <div class="insight-meta">Comparing ${formatBytes(copies.progress.totalBytes)} of same-sized files · ${pct}%</div>
+       <button id="copies-cancel-btn" class="ghost-btn" type="button">Stop</button>`
+    );
+  }
+  const r = copies.result;
+  if (!r || r.groupCount === 0) {
+    return insightCard('Identical files', `<p class="insight-quiet">No two listed files of 64 KB or more have the same content.</p><button id="copies-start-btn" class="link-btn" type="button">Search again</button>`);
+  }
+  const groups = r.groups
+    .slice(0, 8)
+    .map((g) => {
+      const keeper = g.files.find((f) => f.id === g.keeperId);
+      return `<div class="leftover-row">
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(g.name)}</span><span class="insight-num">${g.files.length} × ${formatBytes(g.sizeBytes)}</span></div>
+        <div class="leftover-facts">Keeps <span class="mono">${escapeHtml(shortPath(keeper.path))}</span>${keeper.risk === 'PROTECTED' ? ' (protected)' : keeper.inProject ? ' (in a project)' : ' (the oldest)'}.</div>
+        <div class="leftover-actions"><button class="link-btn" type="button" data-select-copies="${escapeHtml(g.id)}">Select the other ${pluralize(g.files.length - 1, 'copy', 'copies')}</button></div>
+      </div>`;
+    })
+    .join('');
+  return insightCard(
+    'Identical files',
+    `<div class="insight-figure">${formatBytes(r.duplicateBytes)}</div>
+     <div class="insight-meta">in copies beyond one of each · ${pluralize(r.groupCount, 'group')}</div>
+     ${groups}
+     <div class="leftover-actions insight-actions">
+       <button class="secondary-btn" type="button" data-select-copies="*">Select All But One in Every Group</button>
+       <button id="copies-start-btn" class="link-btn" type="button">Search again</button>
+     </div>
+     <p class="insight-quiet">Whether a copy is still needed is your call: every selected file is reviewed before it moves, and protected copies are never selected.</p>`,
+    { wide: true }
+  );
+}
+
+function pastLimitCardHtml(scan) {
+  const o = scan?.overflow;
+  if (!o || !(o.fileCount > 0)) return '';
+  return insightCard(
+    'Past the file limit',
+    `<div class="insight-split">
+       <div>
+         <div class="insight-figure">${formatBytes(o.physicalBytes)}</div>
+         <div class="insight-meta">${pluralize(o.fileCount, 'file')} counted, not listed, so they cannot be selected</div>
+         <button class="link-btn insight-link" type="button" id="insights-open-overflow">Open on the map</button>
+       </div>
+       <div>
+         <div class="insight-subtitle">Largest folders</div>
+         ${(o.folders || [])
+           .slice(0, 5)
+           .map((f) => `<div class="insight-row"><span class="insight-ellipsis mono">${escapeHtml(shortPath(f.path))}</span><span class="insight-num">${formatBytes(f.physicalBytes)}</span></div>`)
+           .join('')}
+       </div>
+     </div>`
+  );
+}
+
+async function renderInsightsView() {
+  const body = document.getElementById('insights-body');
+  if (!body || !uiState.activeState?.scan) return;
+  const [leftovers, copies] = await Promise.all([
+    apiRequest('/api/project-leftovers', 'GET').then((r) => r.leftovers).catch(() => null),
+    apiRequest('/api/insights/copies', 'GET').then((r) => r.copies).catch(() => null)
+  ]);
+  const cards = [
+    growthCardHtml(uiState.activeState.growth),
+    pastLimitCardHtml(uiState.activeState.scan),
+    copiesCardHtml(copies),
+    worktreesCardHtml(leftovers),
+    buildOutputsCardHtml(leftovers)
+  ].filter(Boolean);
+  body.innerHTML = cards.join('') || '<p class="insight-quiet">Scan an app to see insights.</p>';
+  bindInsightsActions(body);
+  // While the search runs, refresh its card
+  clearTimeout(uiState.copiesPoll);
+  if (copies?.status === 'running' && uiState.activeTab === 'insights') {
+    uiState.copiesPoll = setTimeout(renderInsightsView, 800);
+  }
+}
+
+function bindInsightsActions(box) {
+  box.querySelectorAll('[data-reveal]').forEach((btn) => btn.addEventListener('click', () => revealById(btn.dataset.reveal, btn.dataset.label)));
+  box.querySelectorAll('[data-select-build]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      try {
+        const count = await selectByDescription({ kind: 'project-build', targetId: btn.dataset.selectBuild });
+        showToast(`Selected ${pluralize(count, 'build output')}. Each is checked in the review before it moves.`);
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
+      }
+    })
+  );
+  box.querySelectorAll('[data-select-copies]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      try {
+        const count = await selectByDescription({ kind: 'copies', groupId: btn.dataset.selectCopies });
+        showToast(count > 0 ? `Selected ${pluralize(count, 'copy', 'copies')}. Each is checked in the review before it moves.` : 'Nothing to select: the other copies are protected.');
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
+      }
+    })
+  );
+  // The command is shown as selectable text, and copied when the clipboard allows it
+  box.querySelectorAll('[data-command]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      const holder = btn.closest('.leftover-row').querySelector('.command-box');
+      holder.innerHTML = `<input class="command-text mono" readonly value="${escapeHtml(btn.dataset.command)}" aria-label="Git command" /><span class="insight-quiet">Run it in ${isWindows() ? 'a terminal' : 'Terminal'} when you are sure the worktree is no longer needed.</span>`;
+      holder.classList.remove('hidden');
+      const input = holder.querySelector('input');
+      input.focus();
+      input.select();
+      try {
+        await navigator.clipboard.writeText(btn.dataset.command);
+        showToast('Copied.');
+      } catch {
+        // Selected above, so the usual copy shortcut works
+      }
+    })
+  );
+  const start = box.querySelector('#copies-start-btn');
+  if (start) {
+    start.addEventListener('click', async () => {
+      await apiRequest('/api/insights/copies/start', 'POST', {});
+      renderInsightsView();
+    });
+  }
+  const cancel = box.querySelector('#copies-cancel-btn');
+  if (cancel) {
+    cancel.addEventListener('click', async () => {
+      await apiRequest('/api/insights/copies/cancel', 'POST', {});
+      setTimeout(renderInsightsView, 200);
+    });
+  }
+  const overflow = box.querySelector('#insights-open-overflow');
+  if (overflow) {
+    overflow.addEventListener('click', async () => {
+      uiState.switchTab('graph');
+      await loadMapLevel('overflow');
+    });
+  }
+}
+
+async function exportReport() {
+  const btn = document.getElementById('insights-report-btn');
+  btn.disabled = true;
+  try {
+    const res = await apiRequest('/api/report', 'POST', {});
+    showToast(`Report saved as a page and a spreadsheet file, and shown in ${fileManagerName()}: ${shortPath(res.htmlPath)}`, 6000);
+  } catch (err) {
+    showToast(`Could not write the report: ${err.message}`);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -2484,19 +2872,25 @@ function bindExplorerControls() {
     document.getElementById('tab-graph-btn').classList.toggle('active', tab === 'graph');
     document.getElementById('tab-treemap-btn').classList.toggle('active', tab === 'treemap');
     document.getElementById('tab-quarantine-btn').classList.toggle('active', tab === 'quarantine');
+    document.getElementById('tab-insights-btn').classList.toggle('active', tab === 'insights');
 
     document.getElementById('panel-graph').classList.toggle('hidden', tab !== 'graph');
+    document.getElementById('panel-insights').classList.toggle('hidden', tab !== 'insights');
     document.getElementById('panel-treemap').classList.toggle('hidden', tab !== 'treemap');
     document.getElementById('panel-quarantine').classList.toggle('hidden', tab !== 'quarantine');
 
     if (tab === 'graph') resizeCanvas();
     if (tab === 'treemap') renderTreemapView();
     if (tab === 'quarantine') renderQuarantineVaultView();
+    if (tab === 'insights') renderInsightsView();
   };
+  uiState.switchTab = switchTab;
 
   document.getElementById('tab-graph-btn').addEventListener('click', () => switchTab('graph'));
   document.getElementById('tab-treemap-btn').addEventListener('click', () => switchTab('treemap'));
   document.getElementById('tab-quarantine-btn').addEventListener('click', () => switchTab('quarantine'));
+  document.getElementById('tab-insights-btn').addEventListener('click', () => switchTab('insights'));
+  document.getElementById('insights-report-btn').addEventListener('click', exportReport);
 
   document.getElementById('graph-search-input').addEventListener('input', (e) => {
     uiState.searchQuery = e.target.value.trim();
@@ -2691,15 +3085,18 @@ function renderQuarantineVaultView() {
   if (!listEl) return;
 
   if (!uiState.quarantineEntries || uiState.quarantineEntries.length === 0) {
+    renderQuarantineSummary();
     listEl.innerHTML = `<div class="empty-note">Nothing in Quarantine. Select files on the map and choose Move to Quarantine.</div>`;
     return;
   }
 
   listEl.innerHTML = '';
+  renderQuarantineSummary();
   uiState.quarantineEntries.forEach((entry) => {
     const isHeld = entry.status === 'QUARANTINED';
+    const isPurged = entry.status === 'PURGED';
     const row = document.createElement('div');
-    row.className = 'quarantine-row-card';
+    row.className = `quarantine-row-card${isPurged ? ' is-purged' : ''}`;
     row.title = `SHA-256 ${entry.sha256 || 'not recorded'}`;
     row.innerHTML = `
       <div class="quarantine-row-main">
@@ -2709,7 +3106,9 @@ function renderQuarantineVaultView() {
           <span class="metric-label">${
             isHeld
               ? `Removed ${escapeHtml(formatDate(entry.quarantinedAt))}`
-              : `Restored ${escapeHtml(formatDate(entry.restoredAt))}`
+              : isPurged
+                ? `Emptied for good ${escapeHtml(formatDate(entry.purgedAt))}`
+                : `Restored ${escapeHtml(formatDate(entry.restoredAt))}`
           }</span>
         </div>
         <div class="quarantine-row-path mono">${escapeHtml(entry.originalPath)}</div>
@@ -2750,6 +3149,104 @@ function renderQuarantineVaultView() {
       }
     });
   });
+}
+
+/* What the Quarantine holds now, and what emptying it has freed so far. */
+function renderQuarantineSummary() {
+  const box = document.getElementById('quarantine-summary');
+  if (!box) return;
+  const entries = uiState.quarantineEntries || [];
+  const held = entries.filter((e) => e.status === 'QUARANTINED');
+  const purged = entries.filter((e) => e.status === 'PURGED');
+  const sum = (list) => list.reduce((s, e) => s + (e.sizeBytes || 0), 0);
+  box.innerHTML = held.length || purged.length
+    ? `${held.length ? `<span><strong>${formatBytes(sum(held))}</strong> held in ${pluralize(held.length, 'file')}</span>` : ''}${
+        purged.length ? `<span>${formatBytes(sum(purged))} freed by emptying</span>` : ''
+      }`
+    : '';
+}
+
+/* Emptying the Quarantine: the server lists what has waited 30 days and binds the
+   confirmation to exactly that list. */
+async function openPurgeModal() {
+  const modal = document.getElementById('purge-modal');
+  const body = document.getElementById('purge-modal-body');
+  const confirmBtn = document.getElementById('confirm-purge-btn');
+  let purge;
+  try {
+    purge = (await apiRequest('/api/quarantine/purge/prepare', 'POST', {})).purge;
+  } catch (err) {
+    showToast(`Could not list old files: ${err.message}`);
+    return;
+  }
+  uiState.pendingPurge = purge;
+  const held = (uiState.quarantineEntries || []).filter((e) => e.status === 'QUARANTINED');
+  if (purge.count === 0) {
+    const oldest = held.map((e) => Date.parse(e.quarantinedAt)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    const ready = oldest ? new Date(oldest + purge.minAgeDays * 86400000) : null;
+    body.innerHTML = `<div class="purge-empty">
+      <div class="purge-empty-title">Nothing has waited ${purge.minAgeDays} days yet</div>
+      <p class="inspector-note">${held.length > 0 && ready ? `The oldest file can be emptied from ${escapeHtml(formatDate(ready.toISOString()))}. Until then everything here can be put back.` : 'Files moved to Quarantine wait here first, so you can put them back.'}</p>
+    </div>`;
+    confirmBtn.classList.add('hidden');
+  } else {
+    body.innerHTML = `
+      <div class="purge-total">
+        <span class="purge-total-value">${formatBytes(purge.totalBytes)}</span>
+        <span class="purge-total-meta">${pluralize(purge.count, 'file')} that ${purge.count === 1 ? 'has' : 'have'} waited at least ${purge.minAgeDays} days</span>
+      </div>
+      <p class="purge-warning">These files are deleted for good and cannot be put back. Files that waited less than ${purge.minAgeDays} days stay in Quarantine.</p>
+      <div class="purge-list">
+        ${purge.entries
+          .map(
+            (e) => `<div class="purge-row">
+              <div class="purge-row-main"><strong>${escapeHtml(e.artifactName)}</strong><span class="mono purge-row-path">${escapeHtml(shortPath(e.originalPath))}</span></div>
+              <div class="purge-row-meta">${formatBytes(e.sizeBytes)}<span>Removed ${escapeHtml(formatDate(e.quarantinedAt))}</span></div>
+            </div>`
+          )
+          .join('')}
+      </div>
+      ${purge.count > purge.entries.length ? `<p class="inspector-note">The ${purge.entries.length} largest are listed; all ${purge.count.toLocaleString()} are deleted.</p>` : ''}`;
+    confirmBtn.classList.remove('hidden');
+    confirmBtn.textContent = `Delete ${pluralize(purge.count, 'File')} Permanently`;
+  }
+  modal.classList.remove('hidden');
+}
+
+function closePurgeModal() {
+  document.getElementById('purge-modal').classList.add('hidden');
+  uiState.pendingPurge = null;
+}
+
+async function confirmPurge() {
+  const purge = uiState.pendingPurge;
+  if (!purge || !purge.token) return;
+  const btn = document.getElementById('confirm-purge-btn');
+  btn.disabled = true;
+  try {
+    const res = await apiRequest('/api/quarantine/purge', 'POST', { token: purge.token });
+    uiState.quarantineEntries = res.quarantineEntries || [];
+    closePurgeModal();
+    renderQuarantineVaultView();
+    updateQuarantineCountPill();
+    showToast(
+      `Freed ${formatBytes(res.freedBytes)}: ${pluralize(res.purgedCount, 'file')} deleted for good.${
+        res.skippedCount > 0 ? ` ${pluralize(res.skippedCount, 'file')} changed since the list was shown and ${res.skippedCount === 1 ? 'was' : 'were'} kept.` : ''
+      }`
+    );
+  } catch (err) {
+    showToast(`Nothing was deleted: ${err.message.replace(/^PURGE_CONFIRMATION_EXPIRED: /, '')}`);
+    closePurgeModal();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function bindPurgeEvents() {
+  document.getElementById('purge-open-btn').addEventListener('click', openPurgeModal);
+  document.getElementById('close-purge-modal-btn').addEventListener('click', closePurgeModal);
+  document.getElementById('cancel-purge-modal-btn').addEventListener('click', closePurgeModal);
+  document.getElementById('confirm-purge-btn').addEventListener('click', confirmPurge);
 }
 
 function updateQuarantineCountPill() {
@@ -2819,19 +3316,24 @@ function bindContextualToolbarEvents() {
 
   document.getElementById('ctx-reveal-finder-btn').addEventListener('click', async () => {
     if (uiState.selectedArtifactIds.size === 0) return;
+    const button = document.getElementById('ctx-reveal-finder-btn');
     try {
-      const res = await apiRequest('/api/finder/reveal', 'POST', {
-        artifactIds: Array.from(uiState.selectedArtifactIds)
-      });
-      const r = res.reveal;
-      let message;
-      if (!r || r.kind === 'file') {
-        message = `Showing ${selectionSummary.firstName || baseName(res.path)} in ${fileManagerName()}.`;
-      } else if (r.fileCount === r.totalCount) {
-        message = `Opened ${shortPath(r.path)}, the folder that holds all ${pluralize(r.totalCount, 'selected file')}.`;
-      } else {
-        message = `The selection is spread over ${pluralize(r.folderCount, 'folder')}. Opened ${shortPath(r.path)}, which holds ${pluralize(r.fileCount, 'file')} (${formatBytes(r.bytes)} of ${formatBytes(r.totalBytes)}).`;
+      const artifactIds = Array.from(uiState.selectedArtifactIds);
+      const res = await apiRequest('/api/finder/reveal', 'POST', { artifactIds });
+      if (res.chooseRegion) {
+        // Spread over several folders: the user picks which one to open
+        openRevealMenu(button, res.reveal, async (index) => {
+          const opened = await apiRequest('/api/finder/reveal', 'POST', { artifactIds, region: index });
+          const region = res.reveal.regions[index];
+          showToast(`Opened ${shortPath(region.path)}: ${pluralize(region.fileCount, 'selected file')}, ${formatBytes(region.bytes)}.${opened.commandPreview ? ` ${opened.commandPreview}` : ''}`);
+        });
+        return;
       }
+      const r = res.reveal;
+      const message =
+        !r || r.kind === 'file'
+          ? `Showing ${selectionSummary.firstName || baseName(res.path)} in ${fileManagerName()}.`
+          : `Opened ${shortPath(r.path)}, the folder that holds all ${pluralize(r.totalCount, 'selected file')}.`;
       showToast(res.commandPreview ? `${message} ${res.commandPreview}` : message);
     } catch (err) {
       showToast(`Reveal failed: ${err.message}`);
@@ -3052,7 +3554,7 @@ function openSettingsModal() {
       <div class="kv-item"><span class="kv-key">Home folder</span><span class="kv-val mono">${escapeHtml(boot.homeDir || '')}</span></div>
       <div class="kv-item"><span class="kv-key">Quarantine folder</span><span class="kv-val mono">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
     </div>
-    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back.</p>
+    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back; after 30 days you can empty them to free the space.</p>
     <div class="inspector-section">
       <div class="inspector-section-title">Updates</div>
       <div class="kv-list">
@@ -3065,8 +3567,49 @@ function openSettingsModal() {
       </label>
       <p class="inspector-note">The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.</p>
     </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">Help support more apps</div>
+      <p class="inspector-note">Collects where the largest unclassified files are, and the layout of Cursor's and Codex's records: field names and types only, never a prompt, a reply or a value. Nothing is sent; you copy it and share it if you want to.</p>
+      <button id="settings-diagnostics-btn" class="secondary-btn" type="button">Collect Diagnostics</button>
+      <div id="settings-diagnostics" class="diagnostics-box hidden">
+        <textarea id="settings-diagnostics-text" class="diagnostics-text mono" readonly spellcheck="false" aria-label="Diagnostics"></textarea>
+        <button id="settings-diagnostics-copy" class="secondary-btn" type="button">Copy</button>
+      </div>
+    </div>
   `;
   modal.classList.remove('hidden');
+
+  document.getElementById('settings-diagnostics-btn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Collecting…';
+    try {
+      const res = await apiRequest('/api/diagnostics', 'POST', {});
+      const area = document.getElementById('settings-diagnostics-text');
+      area.value = res.text;
+      document.getElementById('settings-diagnostics').classList.remove('hidden');
+      area.focus();
+      area.select();
+      btn.textContent = 'Collect Again';
+    } catch (err) {
+      showToast(`Could not collect diagnostics: ${err.message}`);
+      btn.textContent = 'Collect Diagnostics';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById('settings-diagnostics-copy').addEventListener('click', async () => {
+    const area = document.getElementById('settings-diagnostics-text');
+    area.focus();
+    area.select();
+    try {
+      await navigator.clipboard.writeText(area.value);
+      showToast('Copied.');
+    } catch {
+      // The text is selected, so the usual copy shortcut works
+      showToast(`Selected. Press ${isWindows() ? 'Ctrl' : '⌘'}+C to copy.`);
+    }
+  });
 
   const checkbox = document.getElementById('settings-update-check');
   const showUpdate = (update) => {

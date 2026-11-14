@@ -18,6 +18,11 @@ import { findKnownAppProfile, findStorePackageProfile, listKnownApplicationsWith
 import { listStartMenuApplications, listStoreApplications } from '../discovery/windows-apps.js';
 import { PICK_KINDS, pickWithWindowsDialog } from '../platform/windows-picker.js';
 import { chooseRevealTarget } from '../graph/reveal-target.js';
+import { summarizeProjectLeftovers, projectBuildOutputIds } from '../graph/project-leftovers.js';
+import { findIdenticalFiles, copiesToSelect } from '../graph/identical-files.js';
+import { reportData, reportHtml, reportCsv } from '../graph/report.js';
+import { buildDiagnostics } from '../discovery/diagnostics.js';
+import { fromPathKey } from '../platform/path-keys.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
 /**
@@ -501,7 +506,8 @@ export function createAtlasServer(options = {}) {
         : state.scan,
       graph,
       isDemoEnvironment: state.isDemoEnvironment,
-      promptCosts: state.promptCosts || null
+      promptCosts: state.promptCosts || null,
+      growth: state.growth || null
     };
   };
 
@@ -521,6 +527,18 @@ export function createAtlasServer(options = {}) {
     if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
       return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
     }
+    // All copies but one of a group of identical files (never the kept one, never protected)
+    if (body.kind === 'copies' && typeof body.groupId === 'string') {
+      const result = copiesJob && copiesJob.scanId === state.scan?.id ? copiesJob.result : null;
+      const groups = (result?.groups || []).filter((g) => body.groupId === '*' || g.id === body.groupId);
+      return groups.flatMap((g) => copiesToSelect(g, state));
+    }
+    // The build outputs of one listed worktree or project
+    if (body.kind === 'project-build' && typeof body.targetId === 'string') {
+      const leftovers = projectLeftovers(state);
+      const row = [...(leftovers?.worktrees || []), ...(leftovers?.buildProjects || [])].find((r) => r.id === body.targetId);
+      return row ? projectBuildOutputIds(state, row.path) : [];
+    }
     if (body.kind === 'search') {
       if (!String(body.query || '').trim() && (body.risk || 'ALL') === 'ALL' && (body.origin || 'ALL') === 'ALL') return [];
       return searchFiles(state, body).ids;
@@ -530,6 +548,72 @@ export function createAtlasServer(options = {}) {
       if (!cell) return [];
       const liveIds = new Set(live.map((a) => a.id));
       return (cell.artifactIds || []).filter((id) => liveIds.has(id));
+    }
+    return null;
+  };
+
+  // Files with identical content, searched only when the user asks (see identical-files.js)
+  let copiesJob = null;
+  const copiesStatus = () => {
+    const state = activeService().activeState;
+    if (!copiesJob || copiesJob.scanId !== state?.scan?.id) return { status: 'idle' };
+    const { controller, ...rest } = copiesJob;
+    return rest;
+  };
+  const startCopies = () => {
+    const state = activeService().activeState;
+    if (!state?.scan) return { status: 'idle' };
+    if (copiesJob && copiesJob.scanId === state.scan.id && copiesJob.status === 'running') return copiesStatus();
+    const controller = new AbortController();
+    copiesJob = { scanId: state.scan.id, status: 'running', progress: { doneBytes: 0, totalBytes: 0 }, result: null, controller };
+    const job = copiesJob;
+    findIdenticalFiles(state, { signal: controller.signal, onProgress: (p) => (job.progress = p) })
+      .then((result) => Object.assign(job, { status: 'done', result }))
+      .catch((err) => Object.assign(job, { status: err.message === 'CANCELLED' ? 'cancelled' : 'failed', error: err.message }));
+    return copiesStatus();
+  };
+
+  // Worktrees and build outputs of this scan (see project-leftovers.js), worked out once per scan
+  let leftoversCache = { scanId: null, value: null };
+  const projectLeftovers = (state) => {
+    const scanId = state?.scan?.id || null;
+    if (!state || !state.scan) return null;
+    if (leftoversCache.scanId !== scanId || leftoversCache.quarantinedCount !== quarantinedCountOf(state)) {
+      leftoversCache = {
+        scanId,
+        quarantinedCount: quarantinedCountOf(state),
+        value: summarizeProjectLeftovers(state, { readGitMetadata: Boolean(state.scan.scope?.dependencyFolders) })
+      };
+    }
+    return leftoversCache.value;
+  };
+  const quarantinedCountOf = (state) => (state.artifacts || []).reduce((n, a) => n + (a.quarantined ? 1 : 0), 0);
+
+  // The folder or file behind a mark of the map, a worktree or a project. Only places the scan
+  // listed can be shown; the client never names a path here.
+  const revealPathForId = (state, id) => {
+    if (!state) return null;
+    const live = (state.artifacts || []).filter((a) => !a.quarantined);
+    const art = live.find((a) => a.id === id);
+    if (art) return art.canonicalPath;
+    const leftovers = projectLeftovers(state);
+    const listed = [...(leftovers?.worktrees || []), ...(leftovers?.buildProjects || [])].find((r) => r.id === id);
+    if (listed) return listed.path;
+    const dir = /^(?:dir|type):.*?::(\/[^]*?)(?:::[^:]*)?$/.exec(id);
+    if (dir) {
+      const folder = fromPathKey(dir[1]);
+      const hasFiles = live.some((a) => a.canonicalPath === folder || a.canonicalPath.startsWith(folder.endsWith(path.sep) ? folder : folder + path.sep));
+      return hasFiles ? folder : null;
+    }
+    const pastLimit = /^overflow-folder:(.+)$/.exec(id);
+    if (pastLimit) {
+      return (state.scan?.overflow?.folders || []).some((f) => f.path === pastLimit[1]) ? pastLimit[1] : null;
+    }
+    const measured = /^measured(?:-folder|-project)?:(.+)$/.exec(id);
+    if (measured) {
+      const p = measured[1];
+      const known = (state.scan?.bulkFolders || []).some((f) => f.path === p || f.projectRoot === p);
+      return known ? p : null;
     }
     return null;
   };
@@ -562,7 +646,8 @@ export function createAtlasServer(options = {}) {
       reveal: withReveal
         ? chooseRevealTarget(files, {
             homeDir: activeService().platformServices.homeDir,
-            pathApi: activeService().platformServices.platform === 'win32' ? path.win32 : path.posix
+            // Paths on disk follow the system this runs on, whatever layout the home folder has
+            pathApi: path
           })
         : undefined
     };
@@ -948,17 +1033,75 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, { ok: true, ...activeService().describeNodePrompts(body.nodeId) });
       }
 
+      // Diagnostics the user can copy to help support more applications; made on request,
+      // never sent anywhere (see src/discovery/diagnostics.js)
+      if (url.pathname === '/api/diagnostics' && req.method === 'POST') {
+        const service = activeService();
+        const text = buildDiagnostics({
+          state: service.activeState,
+          homeDir: service.platformServices.homeDir,
+          platform: service.platformServices.platform,
+          appVersion
+        });
+        return sendJson(res, 200, { ok: true, text });
+      }
+
+      // A report of this scan, written to the data folder and shown in Finder / File Explorer
+      if (url.pathname === '/api/report' && req.method === 'POST') {
+        const state = activeService().activeState;
+        if (!state?.scan) return sendJson(res, 409, { ok: false, error: 'NO_SCAN' });
+        const data = reportData(state, { leftovers: projectLeftovers(state), copies: copiesJob?.scanId === state.scan.id ? copiesJob.result : null });
+        const dir = path.join(defaultBaseDir, 'reports');
+        fs.mkdirSync(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const base = `${String(data.application).replace(/[^\w.-]+/g, '-').slice(0, 40)}-${stamp}`;
+        const htmlPath = path.join(dir, `${base}.html`);
+        const csvPath = path.join(dir, `${base}.csv`);
+        fs.writeFileSync(htmlPath, reportHtml(data, { appVersion }));
+        fs.writeFileSync(csvPath, reportCsv(data));
+        const shown = await activeService().platformServices.revealInFinder(htmlPath, { simulate: Boolean(options.simulateSystemOpen) });
+        return sendJson(res, 200, { ok: true, htmlPath, csvPath, shown: shown.ok });
+      }
+
+      if (url.pathname === '/api/insights/copies' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, copies: copiesStatus() });
+      }
+      if (url.pathname === '/api/insights/copies/start' && req.method === 'POST') {
+        return sendJson(res, 200, { ok: true, copies: startCopies() });
+      }
+      if (url.pathname === '/api/insights/copies/cancel' && req.method === 'POST') {
+        if (copiesJob?.status === 'running') copiesJob.controller.abort();
+        return sendJson(res, 200, { ok: true });
+      }
+
+      if (url.pathname === '/api/project-leftovers' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, leftovers: projectLeftovers(activeService().activeState) });
+      }
+
       if (url.pathname === '/api/finder/reveal' && req.method === 'POST') {
         const body = await readJsonBody(req);
         // A selection is revealed by what the summary chose for it (a file or a folder)
-        let target = body.path;
+        // Only places the server listed can be shown; a path sent by the window is never opened
+        let target = null;
         let reveal = null;
         if (Array.isArray(body.artifactIds)) {
           reveal = summarizeSelection(activeService().activeState, body.artifactIds, { withReveal: true }).reveal;
           if (!reveal) return sendJson(res, 404, { ok: false, error: 'NOTHING_SELECTED' });
-          target = reveal.path;
+          // A region is chosen by its place in the list the server worked out, not by a path
+          const index = Number.isInteger(body.region) ? body.region : 0;
+          if (!reveal.regions[index]) return sendJson(res, 400, { ok: false, error: 'UNKNOWN_REGION' });
+          target = reveal.regions[index].path;
+          // With several regions and none chosen, only the list is sent back to choose from
+          if (reveal.regionCount > 1 && !Number.isInteger(body.region)) {
+            return sendJson(res, 200, { ok: true, chooseRegion: true, reveal });
+          }
+        } else if (typeof body.targetId === 'string') {
+          target = revealPathForId(activeService().activeState, body.targetId);
+          if (!target) return sendJson(res, 404, { ok: false, error: 'UNKNOWN_TARGET' });
+        } else {
+          return sendJson(res, 400, { ok: false, error: 'NOTHING_TO_SHOW' });
         }
-        const result = await activeService().platformServices.revealInFinder(target);
+        const result = await activeService().platformServices.revealInFinder(target, { simulate: Boolean(options.simulateSystemOpen) });
         return sendJson(res, result.ok ? 200 : 404, { ...result, reveal });
       }
 
@@ -1028,6 +1171,21 @@ export function createAtlasServer(options = {}) {
           updatedGraph: undefined,
           activeState: stateForClient(activeService().activeState)
         });
+      }
+
+      // Emptying the Quarantine: first the list of what has waited long enough, then the
+      // confirmed deletion of exactly that list
+      if (url.pathname === '/api/quarantine/purge/prepare' && req.method === 'POST') {
+        return sendJson(res, 200, { ok: true, purge: activeService().preparePurge() });
+      }
+      if (url.pathname === '/api/quarantine/purge' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        try {
+          const result = await activeService().purgeQuarantine({ token: body.token });
+          return sendJson(res, 200, { ok: true, ...result });
+        } catch (err) {
+          return sendJson(res, 409, { ok: false, error: err.message });
+        }
       }
 
       if (url.pathname === '/api/cleanup/restore' && req.method === 'POST') {

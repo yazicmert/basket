@@ -16,20 +16,21 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=12" />
+<link rel="stylesheet" href="style.css?v=14" />
 </head>
 <body>
 <div class="topbar">
   <div class="topbar-inner">
-    <a class="wordmark" href="./">
+    <a class="wordmark" href="./" aria-label="Artifact Atlas home">
       <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
         <line x1="5" y1="14" x2="10" y2="5" /><line x1="5" y1="14" x2="15.5" y2="12" stroke-dasharray="2.2 1.8" />
         <circle cx="5" cy="14" r="3" fill="currentColor" /><circle cx="10" cy="5" r="2" fill="var(--surface)" /><circle cx="15.5" cy="12" r="2" fill="var(--surface)" />
       </svg>
-      Artifact Atlas
+      <span class="wordmark-name">Artifact Atlas</span>
     </a>
     <nav class="topnav" aria-label="Site">
       <a class="optional" href="#how-links-are-known">How it works</a>
+      <a class="optional" href="#insights">Insights</a>
       <a class="optional" href="#supported">Supported apps</a>
       <a class="optional" href="#install">Install</a>
       <a href="permissions/">Permissions</a>
@@ -46,7 +47,7 @@
       Artifact Atlas maps the files that Claude Code, Cursor, Codex and other AI apps leave on your Mac or PC
       to the sessions and tool calls that produced them, names each session by the prompt that started it,
       and shows what that prompt cost beyond its output. Cleanup moves files into a quarantine you can
-      restore from. Nothing is deleted permanently.
+      restore from; a file is deleted for good only after 30 days there and your confirmation.
     </p>
     <div class="actions">
       <a class="btn primary" href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg">Download for macOS</a>
@@ -138,8 +139,8 @@
     <h2>What it guarantees</h2>
     <div class="spec-body">
       <div class="principles">
-        <div><h3>Never deletes permanently</h3>
-          <p>Cleanup moves files into a Quarantine Vault with a SHA-256 digest and a manifest written before the move. Anything can be restored, and restoring never overwrites another file.</p></div>
+        <div><h3>Quarantine before anything is deleted</h3>
+          <p>Cleanup moves files into a Quarantine Vault with a SHA-256 digest and a manifest written before the move, and restoring never overwrites another file. To free the space, Empty Old Files deletes only files that have waited 30 days, from a list you confirm.</p></div>
         <div><h3>Reads, never runs</h3>
           <p>Apps are identified from static metadata: the bundle's Info.plist on macOS, the shortcut or program name on Windows. Scanned applications are never executed, and symlinks are never followed outside the folders you authorized.</p></div>
         <div><h3>Keeps conversations private</h3>
@@ -160,6 +161,26 @@
           <p>When a new version is out, a button appears in the title bar. The app keeps checking while it is open. On macOS one confirmation downloads the new version, checks it against its published SHA-256 and restarts into it, without a trip to the download page; a copy opened from the disk image is installed into Applications. On Windows the same button downloads the new version, checks its SHA-256, name and version, and restarts into it.</p></div>
         <div><h3>Shows real disk usage</h3>
           <p>Sizes are physical. Hardlinked files are counted once, your project folders are counted separately from the app's own data, and anything that could not be read is reported, so you can tell why a total is what it is.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="spec" id="insights">
+    <h2>After the scan <small>The Insights tab</small></h2>
+    <div class="spec-body">
+      <div class="principles">
+        <div><h3>What changed since last time</h3>
+          <p>Each scan is compared with the last one of the same app that counted the same folders: how much it grew, in which kinds of files and in which sessions. When the two scans counted different things, it says so instead of guessing.</p></div>
+        <div><h3>Worktrees and build outputs</h3>
+          <p>Second copies of a project that sessions work in are listed with their size, their sessions and their branch. Build outputs are grouped by project, with the build file that remakes them. Their build outputs can be reviewed for removal; a worktree itself is removed with the Git command the app shows you.</p></div>
+        <div><h3>Identical files, when you ask</h3>
+          <p>Files with exactly the same content in different places, compared by reading them. You choose which copies go; a protected copy is always kept, and every file is reviewed first.</p></div>
+        <div><h3>Space you get back</h3>
+          <p>Quarantine keeps files on the same disk so they can be put back. After 30 days, Empty Old Files deletes exactly the list you confirm, and the space is free.</p></div>
+        <div><h3>Show in Finder that knows where to go</h3>
+          <p>One file is selected in its folder. A selection spread over many folders lists them with their sizes, and you open the one you want. Every folder on the map can be shown too.</p></div>
+        <div><h3>A report you can keep</h3>
+          <p>Export Report writes a page and a spreadsheet file of the scan to your computer: what each session left behind, by kind and by risk. Prompts are never included.</p></div>
       </div>
     </div>
   </section>
@@ -334,7 +355,8 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js?v=12" defer></script>
-<script src="demo.js?v=12" defer></script>
+<script src="icons.js?v=14" defer></script>
+<script src="demo.js?v=14" defer></script>
+<script src="header.js?v=14" defer></script>
 </body>
 </html>

@@ -551,3 +551,66 @@ test('S9. CLI quarantine/restore: two-step confirmation, persistent vault across
     sandbox.cleanup();
   }
 });
+
+test('S9. Emptying the Quarantine: only after 30 days, only the confirmed list, only real payloads in the vault', async () => {
+  const sandbox = createTempSandbox();
+  try {
+    const { service, lowRiskCache } = await createScannedDemoService(sandbox.dir);
+    const result = quarantineArtifact(service, lowRiskCache);
+    const entry = result.quarantinedEntries ? result.quarantinedEntries[0] : service.quarantineEntriesWithSessions()[0];
+    const day = 24 * 60 * 60 * 1000;
+    const heldAt = Date.parse(entry.quarantinedAt);
+
+    // Too early: nothing may be emptied, and there is nothing to confirm
+    const early = service.preparePurge({ now: heldAt + 29 * day });
+    assert.equal(early.entries.length, 0);
+    assert.equal(early.token, null);
+
+    // A confirmation is bound to the list and used once
+    const later = heldAt + 31 * day;
+    const list = service.preparePurge({ now: later });
+    assert.equal(list.entries.length, 1);
+    assert.equal(list.count, 1);
+    assert.equal(list.minAgeDays, 30);
+    await assert.rejects(service.purgeQuarantine({ token: 'purge_wrong', now: later }), /PURGE_CONFIRMATION_EXPIRED/);
+    await assert.rejects(service.purgeQuarantine({ token: list.token, now: later + 11 * 60 * 1000 }), /PURGE_CONFIRMATION_EXPIRED/);
+
+    // A manifest whose date differs from the database is skipped
+    const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8'));
+    fs.writeFileSync(entry.manifestPath, JSON.stringify({ ...manifest, quarantinedAt: '2000-01-01T00:00:00.000Z' }));
+    assert.equal(service.preparePurge({ now: later }).entries.length, 0);
+    fs.writeFileSync(entry.manifestPath, JSON.stringify(manifest));
+
+    // A payload replaced by a symlink is never followed or deleted
+    const outside = path.join(sandbox.dir, 'outside.txt');
+    fs.writeFileSync(outside, 'keep me');
+    const saved = fs.readFileSync(entry.quarantinePath);
+    fs.rmSync(entry.quarantinePath);
+    let linked = true;
+    try {
+      fs.symlinkSync(outside, entry.quarantinePath);
+    } catch {
+      linked = false; // Windows without the symlink privilege
+    }
+    if (linked) assert.equal(service.preparePurge({ now: later }).entries.length, 0);
+    fs.rmSync(entry.quarantinePath, { force: true });
+    fs.writeFileSync(entry.quarantinePath, saved);
+
+    const confirmed = service.preparePurge({ now: later });
+    const done = await service.purgeQuarantine({ token: confirmed.token, now: later });
+    assert.equal(done.purgedCount, 1);
+    assert.equal(done.freedBytes, saved.length);
+    assert.equal(fs.existsSync(entry.quarantinePath), false);
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'keep me');
+    // The record stays, marked as emptied; it cannot be put back or emptied twice
+    const after = service.quarantineEntriesWithSessions().find((e) => e.id === entry.id);
+    assert.equal(after.status, 'PURGED');
+    assert.ok(after.purgedAt);
+    assert.equal(JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8')).status, 'PURGED');
+    assert.throws(() => service.restoreQuarantineEntry({ entryId: entry.id }), /cannot be restored/);
+    assert.equal(service.preparePurge({ now: later }).entries.length, 0);
+    await assert.rejects(service.purgeQuarantine({ token: confirmed.token, now: later }), /PURGE_CONFIRMATION_EXPIRED/);
+  } finally {
+    sandbox.cleanup();
+  }
+});

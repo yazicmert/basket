@@ -211,6 +211,27 @@ const MIGRATIONS = [
     sql: `
       ALTER TABLE quarantine_entries ADD COLUMN session_ids TEXT NOT NULL DEFAULT '[]';
     `
+  },
+  {
+    version: 5,
+    name: '005_quarantine_purged_at',
+    sql: `
+      ALTER TABLE quarantine_entries ADD COLUMN purged_at TEXT;
+    `
+  },
+  {
+    version: 6,
+    name: '006_scan_history',
+    // Numbers, IDs and worktree paths only (see src/graph/scan-history.js); never conversation text
+    sql: `
+      CREATE TABLE IF NOT EXISTS scan_history (
+        scan_id TEXT PRIMARY KEY,
+        application_id TEXT NOT NULL,
+        scanned_at TEXT NOT NULL,
+        summary_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_scan_history_app ON scan_history(application_id, scanned_at);
+    `
   }
 ];
 
@@ -543,9 +564,30 @@ export class SQLiteStore {
     }
   }
 
+  /** Several entries in one transaction (emptying the Quarantine can touch thousands). */
+  saveQuarantineEntries(entries) {
+    this.db.exec('BEGIN TRANSACTION;');
+    try {
+      for (const entry of entries) this.writeQuarantineEntry(entry);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
   saveQuarantineEntry(entry) {
     this.db.exec('BEGIN TRANSACTION;');
     try {
+      this.writeQuarantineEntry(entry);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  writeQuarantineEntry(entry) {
       this.db
         .prepare(`
           INSERT OR REPLACE INTO quarantine_entries (
@@ -553,8 +595,8 @@ export class SQLiteStore {
             original_path, quarantine_path, manifest_path, size_bytes,
             original_mode, original_mtime_ms, original_inode_key, sha256,
             risk_category, artifact_type, provenance_confidence, reason,
-            quarantined_at, restored_at, status, session_ids
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            quarantined_at, restored_at, status, session_ids, purged_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           entry.id,
@@ -577,18 +619,14 @@ export class SQLiteStore {
           entry.quarantinedAt,
           entry.restoredAt,
           entry.status,
-          JSON.stringify(Array.isArray(entry.sessionIds) ? entry.sessionIds : [])
+          JSON.stringify(Array.isArray(entry.sessionIds) ? entry.sessionIds : []),
+          entry.purgedAt || null
         );
 
       this.db
         .prepare('UPDATE artifacts SET quarantined = ? WHERE id = ?')
-        .run(entry.status === 'QUARANTINED' ? 1 : 0, entry.artifactId);
-
-      this.db.exec('COMMIT;');
-    } catch (err) {
-      this.db.exec('ROLLBACK;');
-      throw err;
-    }
+        // A file emptied from the Quarantine is gone, so it stays out of the scan as well
+        .run(entry.status === 'QUARANTINED' || entry.status === 'PURGED' ? 1 : 0, entry.artifactId);
   }
 
   listQuarantineEntries(statusFilter = null) {
@@ -618,9 +656,38 @@ export class SQLiteStore {
       reason: r.reason,
       quarantinedAt: r.quarantined_at,
       restoredAt: r.restored_at,
+      purgedAt: r.purged_at || null,
       status: r.status,
       sessionIds: parseIdList(r.session_ids)
     }));
+  }
+
+  saveScanSummary(summary) {
+    if (!summary.scanId || !summary.applicationId) return;
+    this.db
+      .prepare('INSERT OR REPLACE INTO scan_history (scan_id, application_id, scanned_at, summary_json) VALUES (?, ?, ?, ?)')
+      .run(summary.scanId, summary.applicationId, summary.scannedAt, JSON.stringify(summary));
+    // Keep the last 50 scans of each application
+    this.db
+      .prepare(
+        'DELETE FROM scan_history WHERE application_id = ? AND scan_id NOT IN (SELECT scan_id FROM scan_history WHERE application_id = ? ORDER BY scanned_at DESC LIMIT 50)'
+      )
+      .run(summary.applicationId, summary.applicationId);
+  }
+
+  /** Summaries of earlier scans of an application, newest first. */
+  listScanSummaries(applicationId, limit = 50) {
+    return this.db
+      .prepare('SELECT summary_json FROM scan_history WHERE application_id = ? ORDER BY scanned_at DESC LIMIT ?')
+      .all(applicationId, limit)
+      .map((r) => {
+        try {
+          return JSON.parse(r.summary_json);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
   }
 
   getQuarantineEntryById(entryId) {

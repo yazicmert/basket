@@ -351,7 +351,7 @@ function scopeTitle(state, scope, scoped) {
 /** Parses a level id. Returns null for anything that is not a level. */
 export function parseLevelId(levelId) {
   const id = String(levelId || 'root');
-  if (id === 'root' || id === 'sessions' || id === 'measured') return { kind: id };
+  if (id === 'root' || id === 'sessions' || id === 'measured' || id === 'overflow') return { kind: id };
   if (id.startsWith('measured:')) return { kind: 'measured', project: id.slice(9) };
   if (id.startsWith('root:')) return GROUPINGS[id.slice(5)] ? { kind: 'grouping', grouping: id.slice(5) } : null;
   if (id.startsWith('bucket:')) return { kind: 'scope', scope: id };
@@ -383,7 +383,7 @@ export function levelArtifactIds(state, levelId) {
   const ix = indexState(state);
   if (parsed.kind === 'root' || parsed.kind === 'grouping') return ix.live.map((a) => a.id);
   // Measured folders are never files that can be selected
-  if (parsed.kind === 'measured') return [];
+  if (parsed.kind === 'measured' || parsed.kind === 'overflow') return [];
   if (parsed.kind === 'sessions') {
     const ids = new Set();
     for (const links of ix.sessionLinks.values()) for (const id of links.keys()) ids.add(id);
@@ -451,11 +451,16 @@ export function buildMapLevel(state, levelId = 'root') {
     }
     const measuredMark = measuredRootNode(state);
     if (measuredMark) children.push(measuredMark);
+    const overflowMark = overflowRootNode(state);
+    if (overflowMark) children.push(overflowMark);
     return finish({ id: 'root', title: rootCrumb.title, breadcrumb: [rootCrumb], parentId: null, center, children });
   }
 
   if (parsed.kind === 'measured') {
     return buildMeasuredLevel(state, parsed, rootCrumb);
+  }
+  if (parsed.kind === 'overflow') {
+    return buildOverflowLevel(state, rootCrumb);
   }
 
   if (parsed.kind === 'grouping') {
@@ -739,6 +744,55 @@ function buildMeasuredLevel(state, parsed, rootCrumb) {
     children: shown,
     note: children.length > shown.length ? `${note} Showing the ${shown.length} largest of ${children.length}.` : note
   });
+}
+
+/* Files past the file limit: measured and totalled by folder, never listed or selectable. */
+const OVERFLOW_NOTE = 'Past the file limit: these files are counted and sized by folder, but not listed, so they cannot be selected. Open the folder to see them.';
+
+function overflowNode({ id, label, folders, drillId = null, extra = {} }) {
+  const fileCount = folders.reduce((n, f) => n + f.fileCount, 0);
+  const node = summaryNode({
+    id,
+    nodeType: NodeType.FOLDER,
+    label,
+    summary: { artifactCount: fileCount, bytes: folders.reduce((n, f) => n + f.physicalBytes, 0), riskCounts: {}, riskCategory: RiskCategory.REVIEW },
+    drillId,
+    extra: { measuredOnly: true, pastLimit: true, ...extra }
+  });
+  node.measuredOnly = true;
+  return node;
+}
+
+function overflowRootNode(state) {
+  const overflow = state.scan?.overflow;
+  if (!overflow || !(overflow.fileCount > 0)) return null;
+  // The total covers every file past the limit, also those beyond the folders kept
+  const all = [{ fileCount: overflow.fileCount, physicalBytes: overflow.physicalBytes }];
+  return overflowNode({ id: 'overflow', label: 'Past the file limit (measured)', folders: all, drillId: (overflow.folders || []).length ? 'overflow' : null });
+}
+
+function buildOverflowLevel(state, rootCrumb) {
+  const overflow = state.scan?.overflow;
+  const folders = overflow?.folders || [];
+  if (folders.length === 0) return null;
+  const children = folders
+    .map((f) => overflowNode({ id: `overflow-folder:${f.path}`, label: shortFolderLabel(f.path), folders: [f], extra: { path: toPathKey(f.path) } }))
+    .slice(0, LEVEL_MAX_SESSIONS);
+  return finish({
+    id: 'overflow',
+    title: 'Past the file limit',
+    breadcrumb: [rootCrumb, { id: 'overflow', title: 'Past the file limit' }],
+    parentId: 'root',
+    center: overflowNode({ id: 'overflow-center', label: 'Past the file limit', folders: [{ fileCount: overflow.fileCount, physicalBytes: overflow.physicalBytes }] }),
+    children,
+    note: folders.length > children.length ? `${OVERFLOW_NOTE} Showing the ${children.length} largest of ${folders.length} folders.` : OVERFLOW_NOTE
+  });
+}
+
+/** The last two folder names, enough to tell folders apart on the map. */
+function shortFolderLabel(folderPath) {
+  const parts = folderPath.split(/[\\/]/).filter(Boolean);
+  return parts.slice(-2).join('/') || folderPath;
 }
 
 function finish({ id, title, breadcrumb, parentId, center, children, note = null, path = null, grouping = null }) {
