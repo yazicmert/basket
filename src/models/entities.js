@@ -193,6 +193,7 @@ export function createArtifactModel(fields) {
     mode: Number(fields.mode || 0),
     createdAt: fields.createdAt || null,
     modifiedAt: fields.modifiedAt || null,
+    accessedAt: fields.accessedAt || null,
     mtimeMs: Number(fields.mtimeMs || 0),
     artifactType: fields.artifactType || ArtifactType.UNKNOWN,
     applicationId: fields.applicationId || null,
@@ -284,6 +285,11 @@ export function createQuarantineEntryModel(fields) {
     restoredAt: fields.restoredAt || null,
     // Set when the user emptied it from the Quarantine after the waiting period
     purgedAt: fields.purgedAt || null,
+    // Set only by the unused-files cleanup the user confirmed: deleted at this time unless the
+    // app made the file again first (neededAgainAt), see CleanupEngine.runScheduledDeletions
+    autoPurgeAt: fields.autoPurgeAt || null,
+    scheduledBy: fields.scheduledBy || null,
+    neededAgainAt: fields.neededAgainAt || null,
     status: fields.status || 'QUARANTINED' // PENDING | QUARANTINED | RESTORED | PURGED
   };
 }

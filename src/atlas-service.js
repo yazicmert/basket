@@ -9,7 +9,11 @@ import { ArtifactIndexer } from './indexer/artifact-indexer.js';
 import { ProvenanceEngine } from './provenance/provenance-engine.js';
 import { ClassificationEngine } from './classification/classification-engine.js';
 import { GraphEngine } from './graph/graph-engine.js';
-import { CleanupEngine, PURGE_MIN_AGE_DAYS } from './cleanup/cleanup-engine.js';
+import { CleanupEngine, PURGE_MIN_AGE_DAYS, SCHEDULED_DELETION_DAYS } from './cleanup/cleanup-engine.js';
+
+/** How long a safe file must have gone unused to be offered by the unused-files cleanup. */
+export const UNUSED_DEFAULT_DAYS = 30;
+export const UNUSED_DAY_CHOICES = [30, 90, 180];
 import { SQLiteStore } from './persistence/sqlite-store.js';
 import { WRITE_OPERATION_TYPES } from './models/entities.js';
 import { normalizeScanScope } from './platform/permissions.js';
@@ -613,6 +617,104 @@ export class ArtifactAtlasService {
       freedBytes: purged.reduce((s, p) => s + (p.sizeBytes || 0), 0),
       quarantineEntries: this.quarantineEntriesWithSessions()
     };
+  }
+
+  /**
+   * Safe files that have not been used for minDays: marked safe to remove, not changed for
+   * that long, and not opened for that long where the system records it (an access time only
+   * rules a file out, never in). The confirmation is bound to this exact list and the date
+   * they will be deleted.
+   */
+  prepareUnusedCleanup({ minDays = UNUSED_DEFAULT_DAYS, now = Date.now() } = {}) {
+    const days = UNUSED_DAY_CHOICES.includes(Number(minDays)) ? Number(minDays) : UNUSED_DEFAULT_DAYS;
+    const cutoff = now - days * 86400000;
+    const candidates = (this.activeState.artifacts || []).filter((a) => {
+      if (a.quarantined || a.cleanupClassification !== 'LOW') return false;
+      const changed = Date.parse(a.modifiedAt || '');
+      if (!Number.isFinite(changed) || changed > cutoff) return false;
+      const opened = Date.parse(a.accessedAt || '');
+      return !(Number.isFinite(opened) && opened > cutoff);
+    });
+    const purgeAt = new Date(now + SCHEDULED_DELETION_DAYS * 86400000).toISOString();
+    const ids = candidates.map((a) => a.id).sort();
+    const token = ids.length
+      ? `unused_${crypto.createHash('sha256').update(`${purgeAt}\n${ids.join('\n')}`).digest('hex').slice(0, 24)}`
+      : null;
+    this.pendingUnusedCleanup = token ? { token, ids, purgeAt, preparedAt: now } : null;
+    const byKind = new Map();
+    let bytes = 0;
+    for (const a of candidates) {
+      const k = byKind.get(a.artifactType) || { artifactType: a.artifactType, count: 0, bytes: 0 };
+      k.count += 1;
+      k.bytes += a.sizeBytes || 0;
+      byKind.set(a.artifactType, k);
+      bytes += a.sizeBytes || 0;
+    }
+    return {
+      minDays: days,
+      dayChoices: UNUSED_DAY_CHOICES,
+      deleteAfterDays: SCHEDULED_DELETION_DAYS,
+      purgeAt,
+      token,
+      count: candidates.length,
+      bytes,
+      kinds: [...byKind.values()].sort((a, b) => b.bytes - a.bytes)
+    };
+  }
+
+  /** Moves the confirmed list to the Quarantine, to be deleted on its date unless made again. */
+  async executeUnusedCleanup({ token, now = Date.now(), onProgress } = {}) {
+    const pending = this.pendingUnusedCleanup;
+    if (!pending || !token || token !== pending.token || now - pending.preparedAt > 10 * 60 * 1000) {
+      throw new Error('CLEANUP_CONFIRMATION_EXPIRED: Open the list again and confirm.');
+    }
+    this.pendingUnusedCleanup = null;
+    const wanted = new Set(pending.ids);
+    const selected = this.activeState.artifacts.filter((a) => wanted.has(a.id) && !a.quarantined);
+    // The cleanup review still checks every file (running sessions, changed files, …)
+    const review = this.cleanupEngine.prepareCleanupReview({
+      artifacts: selected,
+      authorizedRoots: this.activeState.authorizedRoots,
+      selectionSize: selected.length
+    });
+    const result = await this.cleanupEngine.executeQuarantineAsync(
+      {
+        artifacts: selected,
+        authorizedRoots: this.activeState.authorizedRoots,
+        confirmationToken: review.confirmationToken,
+        selectionSize: selected.length,
+        schedule: { purgeAt: pending.purgeAt }
+      },
+      { onProgress }
+    );
+    this.rebuildActiveGraph();
+    return {
+      batchId: result.batchId,
+      purgeAt: pending.purgeAt,
+      movedCount: result.quarantinedEntries.length,
+      movedBytes: result.quarantinedEntries.reduce((s, e) => s + (e.sizeBytes || 0), 0),
+      blockedCount: result.blockedItems.length,
+      quarantineEntries: this.quarantineEntriesWithSessions()
+    };
+  }
+
+  /** Puts back every file of one cleanup that is still held; files whose place is taken stay. */
+  restoreQuarantineBatch({ batchId }) {
+    const entries = this.sqliteStore.listQuarantineEntries('QUARANTINED').filter((e) => e.batchId === batchId);
+    let restored = 0;
+    let kept = 0;
+    for (const entry of entries) {
+      try {
+        const result = this.cleanupEngine.restoreQuarantineEntry({ entryId: entry.id, conflictStrategy: 'FAIL_IF_EXISTS' });
+        const art = this.activeState.artifacts.find((a) => a.id === entry.artifactId);
+        if (art && result.restoredToPath === art.canonicalPath) art.quarantined = false;
+        restored += 1;
+      } catch {
+        kept += 1;
+      }
+    }
+    this.rebuildActiveGraph();
+    return { restored, kept, quarantineEntries: this.quarantineEntriesWithSessions() };
   }
 
   rebuildActiveGraph() {

@@ -232,6 +232,15 @@ const MIGRATIONS = [
       );
       CREATE INDEX IF NOT EXISTS idx_scan_history_app ON scan_history(application_id, scanned_at);
     `
+  },
+  {
+    version: 7,
+    name: '007_quarantine_schedule',
+    sql: `
+      ALTER TABLE quarantine_entries ADD COLUMN auto_purge_at TEXT;
+      ALTER TABLE quarantine_entries ADD COLUMN scheduled_by TEXT;
+      ALTER TABLE quarantine_entries ADD COLUMN needed_again_at TEXT;
+    `
   }
 ];
 
@@ -242,6 +251,36 @@ function parseIdList(raw) {
   } catch {
     return [];
   }
+}
+
+function quarantineRowToEntry(r) {
+  return {
+      schemaVersion: r.schema_version,
+      id: r.id,
+      batchId: r.batch_id,
+      artifactId: r.artifact_id,
+      artifactName: r.artifact_name,
+      originalPath: r.original_path,
+      quarantinePath: r.quarantine_path,
+      manifestPath: r.manifest_path,
+      sizeBytes: r.size_bytes,
+      originalMode: r.original_mode,
+      originalMtimeMs: r.original_mtime_ms,
+      originalInodeKey: r.original_inode_key,
+      sha256: r.sha256,
+      riskCategory: r.risk_category,
+      artifactType: r.artifact_type,
+      provenanceConfidence: r.provenance_confidence,
+      reason: r.reason,
+      quarantinedAt: r.quarantined_at,
+      restoredAt: r.restored_at,
+      purgedAt: r.purged_at || null,
+      autoPurgeAt: r.auto_purge_at || null,
+      scheduledBy: r.scheduled_by || null,
+      neededAgainAt: r.needed_again_at || null,
+      status: r.status,
+      sessionIds: parseIdList(r.session_ids)
+  };
 }
 
 export class SQLiteStore {
@@ -595,8 +634,9 @@ export class SQLiteStore {
             original_path, quarantine_path, manifest_path, size_bytes,
             original_mode, original_mtime_ms, original_inode_key, sha256,
             risk_category, artifact_type, provenance_confidence, reason,
-            quarantined_at, restored_at, status, session_ids, purged_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            quarantined_at, restored_at, status, session_ids, purged_at,
+            auto_purge_at, scheduled_by, needed_again_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           entry.id,
@@ -620,7 +660,10 @@ export class SQLiteStore {
           entry.restoredAt,
           entry.status,
           JSON.stringify(Array.isArray(entry.sessionIds) ? entry.sessionIds : []),
-          entry.purgedAt || null
+          entry.purgedAt || null,
+          entry.autoPurgeAt || null,
+          entry.scheduledBy || null,
+          entry.neededAgainAt || null
         );
 
       this.db
@@ -636,30 +679,7 @@ export class SQLiteStore {
           .all(statusFilter)
       : this.db.prepare('SELECT * FROM quarantine_entries ORDER BY quarantined_at DESC').all();
 
-    return rows.map((r) => ({
-      schemaVersion: r.schema_version,
-      id: r.id,
-      batchId: r.batch_id,
-      artifactId: r.artifact_id,
-      artifactName: r.artifact_name,
-      originalPath: r.original_path,
-      quarantinePath: r.quarantine_path,
-      manifestPath: r.manifest_path,
-      sizeBytes: r.size_bytes,
-      originalMode: r.original_mode,
-      originalMtimeMs: r.original_mtime_ms,
-      originalInodeKey: r.original_inode_key,
-      sha256: r.sha256,
-      riskCategory: r.risk_category,
-      artifactType: r.artifact_type,
-      provenanceConfidence: r.provenance_confidence,
-      reason: r.reason,
-      quarantinedAt: r.quarantined_at,
-      restoredAt: r.restored_at,
-      purgedAt: r.purged_at || null,
-      status: r.status,
-      sessionIds: parseIdList(r.session_ids)
-    }));
+    return rows.map(quarantineRowToEntry);
   }
 
   saveScanSummary(summary) {
@@ -691,8 +711,8 @@ export class SQLiteStore {
   }
 
   getQuarantineEntryById(entryId) {
-    const all = this.listQuarantineEntries();
-    return all.find((e) => e.id === entryId) || null;
+    const row = this.db.prepare('SELECT * FROM quarantine_entries WHERE id = ?').get(entryId);
+    return row ? quarantineRowToEntry(row) : null;
   }
 
   close() {

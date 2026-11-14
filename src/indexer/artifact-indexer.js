@@ -50,6 +50,7 @@ export class ArtifactIndexer {
         mode: entry.mode,
         createdAt: entry.createdAt,
         modifiedAt: entry.modifiedAt,
+        accessedAt: entry.accessedAt || null,
         mtimeMs: entry.mtimeMs,
         applicationId,
         workspaceId: matchedWorkspace ? matchedWorkspace.id : null,

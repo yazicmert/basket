@@ -327,12 +327,43 @@ export class CleanupEngine {
    * Moves verified artifacts into the managed Quarantine Vault after re-running all 10 safety checks
    * and validating the explicit confirmation token.
    */
-  executeQuarantine({
+  executeQuarantine(args) {
+    const begun = this.beginQuarantine(args);
+    if (begun.result) return begun.result;
+    const steps = this.quarantineSteps(begun);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return step.value;
+  }
+
+  /**
+   * The same as executeQuarantine, in batches with a pause between them so the app stays
+   * responsive while tens of thousands of files move. onProgress gets { done, total }.
+   */
+  async executeQuarantineAsync(args, { onProgress = () => {}, batchSize = 200 } = {}) {
+    const begun = this.beginQuarantine(args);
+    if (begun.result) return begun.result;
+    const steps = this.quarantineSteps(begun);
+    let step = steps.next();
+    let n = 0;
+    while (!step.done) {
+      if (++n % batchSize === 0) {
+        onProgress(step.value);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      step = steps.next();
+    }
+    return step.value;
+  }
+
+  /** The review and the confirmation, before anything moves. */
+  beginQuarantine({
     artifacts = [],
     authorizedRoots = [],
     confirmationToken = null,
     allowHighRiskSingleOverride = false,
-    selectionSize = null
+    selectionSize = null,
+    schedule = null
   }) {
     const review = this.prepareCleanupReview({
       artifacts,
@@ -348,13 +379,13 @@ export class CleanupEngine {
     }
 
     if (review.eligibleItems.length === 0) {
-      return {
-        batchId: null,
-        quarantinedEntries: [],
-        blockedItems: review.blockedItems
-      };
+      return { result: { batchId: null, quarantinedEntries: [], blockedItems: review.blockedItems } };
     }
+    return { review, artifacts, authorizedRoots, schedule };
+  }
 
+  /** Moves the reviewed files one by one, yielding after each. Records are saved in groups. */
+  *quarantineSteps({ review, artifacts, authorizedRoots, schedule }) {
     const batchId = `qbatch_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const batchDir = path.join(this.quarantineRoot, 'batches', batchId);
     fs.mkdirSync(batchDir, { recursive: true });
@@ -363,10 +394,30 @@ export class CleanupEngine {
     const quarantinedEntries = [];
     const runtimeBlocked = [...review.blockedItems];
     const batchManifestPath = path.join(batchDir, 'batch-manifest.json');
+    let unsaved = [];
+    const save = () => {
+      if (this.sqliteStore && unsaved.length > 0) this.sqliteStore.saveQuarantineEntries(unsaved);
+      unsaved = [];
+    };
+    const total = review.eligibleItems.length;
+    let done = 0;
 
     try {
       for (const item of review.eligibleItems) {
+        done += 1;
         const artifact = artifactById.get(item.artifactId);
+        // Only safe files may be scheduled for deletion
+        if (schedule && artifact.cleanupClassification !== RiskCategory.LOW) {
+          runtimeBlocked.push({
+            artifactId: artifact.id,
+            name: artifact.name,
+            canonicalPath: artifact.canonicalPath,
+            code: 'NOT_SAFE_FOR_SCHEDULED_DELETION',
+            reasons: ['Only files marked safe to remove can be deleted on a schedule.']
+          });
+          yield { done, total };
+          continue;
+        }
         // Re-run preflight right before atomic move (TOCTOU guard)
         const finalCheck = this.verifyArtifactPreFlight(artifact, authorizedRoots);
         if (!finalCheck.valid) {
@@ -377,6 +428,7 @@ export class CleanupEngine {
             code: finalCheck.code,
             reasons: finalCheck.issues
           });
+          yield { done, total };
           continue;
         }
 
@@ -385,6 +437,7 @@ export class CleanupEngine {
             batchId,
             batchDir,
             sourcePath: artifact.canonicalPath,
+            deferSave: true,
             fields: {
               artifactId: artifact.id,
               artifactName: artifact.name,
@@ -397,12 +450,16 @@ export class CleanupEngine {
               provenanceConfidence: artifact.provenanceConfidence,
               // The sessions it belonged to (IDs only), so Quarantine can name them later
               sessionIds: artifact.sessionIds || [],
-              reason: artifact.cleanupExplanation
+              reason: artifact.cleanupExplanation,
+              ...(schedule ? { autoPurgeAt: schedule.purgeAt, scheduledBy: SCHEDULED_BY_UNUSED_CLEANUP } : {})
             }
           });
           artifact.quarantined = true;
           quarantinedEntries.push(entryModel);
+          unsaved.push(entryModel);
+          if (unsaved.length >= 500) save();
         } catch (err) {
+          // A file another program holds open (Windows) or that changed is left where it is
           runtimeBlocked.push({
             artifactId: artifact.id,
             name: artifact.name,
@@ -411,8 +468,10 @@ export class CleanupEngine {
             reasons: [`File was left in place; move into quarantine failed (${err.code || err.message}).`]
           });
         }
+        yield { done, total };
       }
     } finally {
+      save();
       // Always write the batch summary, even when an item failed mid-batch
       fs.writeFileSync(
         batchManifestPath,
@@ -420,6 +479,7 @@ export class CleanupEngine {
           {
             batchId,
             createdAt: new Date().toISOString(),
+            ...(schedule ? { autoPurgeAt: schedule.purgeAt, scheduledBy: SCHEDULED_BY_UNUSED_CLEANUP } : {}),
             entries: quarantinedEntries
           },
           null,
@@ -444,7 +504,7 @@ export class CleanupEngine {
    * A payload therefore never exists in the vault without its recovery descriptor. If the move
    * fails the source is untouched and the empty entry directory is removed.
    */
-  moveIntoVault({ batchId, batchDir, sourcePath, fields }) {
+  moveIntoVault({ batchId, batchDir, sourcePath, fields, deferSave = false }) {
     const entryId = stableId('qent', `${batchId}:${sourcePath}`);
     const entryDir = path.join(batchDir, entryId);
     fs.mkdirSync(entryDir, { recursive: true });
@@ -476,8 +536,9 @@ export class CleanupEngine {
     }
 
     entryModel.status = 'QUARANTINED';
-    writeFileDurable(manifestPath, JSON.stringify(entryModel, null, 2));
-    if (this.sqliteStore) {
+    // The durable PENDING manifest above already protects the move; this only updates it
+    fs.writeFileSync(manifestPath, JSON.stringify(entryModel, null, 2));
+    if (this.sqliteStore && !deferSave) {
       this.sqliteStore.saveQuarantineEntry(entryModel);
     }
     return entryModel;
@@ -670,6 +731,7 @@ export class CleanupEngine {
 
     entry.status = 'RESTORED';
     entry.restoredAt = new Date().toISOString();
+    entry.autoPurgeAt = null;
     if (fs.existsSync(entry.manifestPath)) {
       fs.writeFileSync(entry.manifestPath, JSON.stringify(entry, null, 2), 'utf8');
     }
@@ -692,6 +754,107 @@ export class CleanupEngine {
    * with the same date in SQLite and in the manifest, and a payload that is a regular file
    * inside the vault at the place the vault layout gives it. Stored paths are never used.
    */
+  /**
+   * The vault's own place for an entry's payload, if it is a regular file inside the vault and
+   * its manifest agrees with the row; else null. Stored paths are never used.
+   */
+  checkVaultEntry(entry, vaultReal) {
+    if (!/^[A-Za-z0-9_-]+$/.test(String(entry.id)) || !/^[A-Za-z0-9_-]+$/.test(String(entry.batchId))) return null;
+    const entryDir = path.join(this.quarantineRoot, 'batches', entry.batchId, entry.id);
+    const manifestPath = path.join(entryDir, 'manifest.json');
+    let manifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    } catch {
+      return null;
+    }
+    if (manifest.id !== entry.id || manifest.status !== 'QUARANTINED' || manifest.quarantinedAt !== entry.quarantinedAt) return null;
+    const payload = path.join(entryDir, 'payload');
+    const st = fs.lstatSync(payload, { throwIfNoEntry: false });
+    if (!st || !st.isFile()) return null;
+    let payloadReal;
+    try {
+      payloadReal = fs.realpathSync(payload);
+    } catch {
+      return null;
+    }
+    if (!payloadReal.startsWith(vaultReal + path.sep)) return null;
+    return { manifest, manifestPath, payloadPath: payload, payloadBytes: st.size };
+  }
+
+  /**
+   * Runs the deletions the user scheduled with the unused-files cleanup. An entry is deleted
+   * only when the row and the manifest agree on the schedule, the due time has passed, the
+   * file was marked safe in both, and the payload passes the vault checks. If something is at
+   * the file's original place again, the app made it again: the schedule is cancelled and the
+   * entry stays in the Quarantine (it can then only be emptied the manual way). Due or not,
+   * every scheduled entry is checked for that, so the window can say so early.
+   */
+  async runScheduledDeletions({ now = Date.now() } = {}) {
+    const summary = { deleted: 0, freedBytes: 0, neededAgain: 0, skipped: 0 };
+    if (!this.sqliteStore) return summary;
+    let vaultReal;
+    try {
+      vaultReal = fs.realpathSync(this.quarantineRoot);
+    } catch {
+      return summary;
+    }
+    const scheduled = this.sqliteStore
+      .listQuarantineEntries('QUARANTINED')
+      .filter((e) => e.scheduledBy === SCHEDULED_BY_UNUSED_CLEANUP && e.autoPurgeAt && !e.neededAgainAt);
+    const nowIso = new Date(now).toISOString();
+    let changed = [];
+    const flush = () => {
+      if (changed.length) this.sqliteStore.saveQuarantineEntries(changed);
+      changed = [];
+    };
+    let n = 0;
+    for (const entry of scheduled) {
+      if (++n % 200 === 0) {
+        flush();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      // Made again by its app: keep it, and stop the schedule
+      if (entry.originalPath && fs.lstatSync(entry.originalPath, { throwIfNoEntry: false })) {
+        const updated = { ...entry, neededAgainAt: nowIso, autoPurgeAt: null };
+        try {
+          const manifestPath = path.join(this.quarantineRoot, 'batches', entry.batchId, entry.id, 'manifest.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, neededAgainAt: nowIso, autoPurgeAt: null }, null, 2));
+        } catch {
+          // The row below records it
+        }
+        changed.push(updated);
+        summary.neededAgain += 1;
+        continue;
+      }
+      const due = Date.parse(entry.autoPurgeAt);
+      if (!Number.isFinite(due) || due > now) continue;
+      const checked = this.checkVaultEntry(entry, vaultReal);
+      if (
+        !checked ||
+        checked.manifest.autoPurgeAt !== entry.autoPurgeAt ||
+        checked.manifest.scheduledBy !== SCHEDULED_BY_UNUSED_CLEANUP ||
+        entry.riskCategory !== RiskCategory.LOW ||
+        checked.manifest.riskCategory !== RiskCategory.LOW
+      ) {
+        summary.skipped += 1;
+        continue;
+      }
+      fs.unlinkSync(checked.payloadPath);
+      try {
+        fs.writeFileSync(checked.manifestPath, JSON.stringify({ ...checked.manifest, status: 'PURGED', purgedAt: nowIso }, null, 2));
+      } catch {
+        // The row below records it
+      }
+      changed.push({ ...entry, status: 'PURGED', purgedAt: nowIso });
+      summary.deleted += 1;
+      summary.freedBytes += checked.payloadBytes;
+    }
+    flush();
+    return summary;
+  }
+
   listPurgeableEntries({ now = Date.now() } = {}) {
     if (!this.sqliteStore) return [];
     const minAge = PURGE_MIN_AGE_DAYS * 24 * 60 * 60 * 1000;
@@ -767,6 +930,10 @@ export class CleanupEngine {
 
 /** How long a file waits in the Quarantine before it may be emptied (with the user's confirmation). */
 export const PURGE_MIN_AGE_DAYS = 30;
+
+/** Unused safe files moved by the cleanup the user confirmed are deleted after this many days. */
+export const SCHEDULED_DELETION_DAYS = 7;
+export const SCHEDULED_BY_UNUSED_CLEANUP = 'unused-cleanup';
 
 /**
  * Writes a file and fsyncs it so the recovery descriptor survives a crash right after the move.
