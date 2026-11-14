@@ -38,7 +38,7 @@ catch (err) { refused = /UPDATE_VERSION_MISMATCH/.test(err.message); }
 if (!refused) { console.error('a wrong version was not refused'); process.exit(1); }
 const staged = stageVerifiedWindowsPackage({ zipPath: zip, stagingDir: staging, expectedVersion: version });
 console.log('staged', staged);
-launchWindowsSwap({ installDir: install, stagedDir: staged, appPid: Number(pid), stagingDir: staging, relaunch: false });
+await launchWindowsSwap({ installDir: install, stagedDir: staged, appPid: Number(pid), stagingDir: staging, relaunch: false });
 "@ | Set-Content -LiteralPath $Runner -Encoding UTF8
   & $Node $Runner (Join-Path $Staging 'ArtifactAtlas-Windows.zip') $Staging $Install $Fake.Id $Version
   if ($LASTEXITCODE -ne 0) { throw "staging failed ($LASTEXITCODE)" }

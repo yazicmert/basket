@@ -175,7 +175,7 @@ exit $Status
 }
 
 /** Starts the swap helper detached from this process, which is about to be stopped. */
-export function launchWindowsSwap({ installDir, stagedDir, appPid, stagingDir, relaunch = true, runningDir = null }) {
+export async function launchWindowsSwap({ installDir, stagedDir, appPid, stagingDir, relaunch = true, runningDir = null, startTimeoutMs = 20000 }) {
   const scriptPath = path.join(stagingDir, 'swap.ps1');
   // A byte-order mark keeps Windows PowerShell 5.1 reading the script as UTF-8
   fs.writeFileSync(scriptPath, '\ufeff' + windowsSwapScript(), 'utf8');
@@ -189,9 +189,32 @@ export function launchWindowsSwap({ installDir, stagedDir, appPid, stagingDir, r
       '-InstallDir', installDir, '-StagedDir', stagedDir, '-AppPid', String(appPid), '-Staging', stagingDir,
       '-Relaunch', relaunch ? '1' : '0', '-RunningDir', runningDir || installDir
     ],
-    { detached: true, stdio: ['ignore', output, output], windowsHide: true }
+    // Not detached: a process without a console of its own may never start PowerShell. On
+    // Windows a child keeps running when its parent exits, so the helper outlives the app.
+    { stdio: ['ignore', output, output], windowsHide: true }
   );
   fs.closeSync(output);
   child.unref();
-  return scriptPath;
+  // The app quits only once the helper has said it started
+  const log = path.join(stagingDir, 'update.log');
+  let exited = null;
+  child.on('exit', (code) => { exited = code; });
+  child.on('error', () => { exited = -1; });
+  const deadline = Date.now() + startTimeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (fs.readFileSync(log, 'utf8').includes('update started')) return scriptPath;
+    } catch {
+      // Not written yet
+    }
+    if (exited !== null) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  let said = '';
+  try {
+    said = fs.readFileSync(path.join(stagingDir, 'helper-output.txt'), 'utf8').trim().slice(0, 300);
+  } catch {
+    said = '';
+  }
+  throw new Error(`UPDATE_HELPER_DID_NOT_START${said ? `: ${said}` : ''}`);
 }

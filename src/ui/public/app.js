@@ -2818,17 +2818,21 @@ function bindContextualToolbarEvents() {
   });
 
   document.getElementById('ctx-reveal-finder-btn').addEventListener('click', async () => {
-    const firstId = Array.from(uiState.selectedArtifactIds)[0];
-    if (!firstId || !selectionSummary.firstPath) return;
+    if (uiState.selectedArtifactIds.size === 0) return;
     try {
       const res = await apiRequest('/api/finder/reveal', 'POST', {
-        path: selectionSummary.firstPath
+        artifactIds: Array.from(uiState.selectedArtifactIds)
       });
-      showToast(
-        res.commandPreview
-          ? `Show in ${fileManagerName()}: ${res.commandPreview}`
-          : `Showing ${selectionSummary.firstName} in ${fileManagerName()}`
-      );
+      const r = res.reveal || selectionSummary.reveal;
+      let message;
+      if (!r || r.kind === 'file') {
+        message = `Showing ${selectionSummary.firstName || baseName(res.path)} in ${fileManagerName()}.`;
+      } else if (r.fileCount === r.totalCount) {
+        message = `Opened ${shortPath(r.path)}, the folder that holds all ${pluralize(r.totalCount, 'selected file')}.`;
+      } else {
+        message = `The selection is spread over ${pluralize(r.folderCount, 'folder')}. Opened ${shortPath(r.path)}, which holds ${pluralize(r.fileCount, 'file')} (${formatBytes(r.bytes)} of ${formatBytes(r.totalBytes)}).`;
+      }
+      showToast(res.commandPreview ? `${message} ${res.commandPreview}` : message);
     } catch (err) {
       showToast(`Reveal failed: ${err.message}`);
     }

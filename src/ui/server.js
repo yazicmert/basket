@@ -17,6 +17,7 @@ import {
 import { findKnownAppProfile, findStorePackageProfile, listKnownApplicationsWithData, profileDisplayName } from '../discovery/app-footprint.js';
 import { listStartMenuApplications, listStoreApplications } from '../discovery/windows-apps.js';
 import { PICK_KINDS, pickWithWindowsDialog } from '../platform/windows-picker.js';
+import { chooseRevealTarget } from '../graph/reveal-target.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
 /**
@@ -267,7 +268,7 @@ export function createAtlasServer(options = {}) {
       settings.pendingUpdate = { version: status.latestVersion, stagingDir };
       saveSettings();
       if (isWindowsUpdate) {
-        launchWindowsSwap({
+        await launchWindowsSwap({
           installDir: possible.targetPath,
           runningDir: appBundlePath,
           stagedDir: staged,
@@ -535,10 +536,12 @@ export function createAtlasServer(options = {}) {
     let count = 0;
     let physicalBytes = 0;
     let first = null;
+    const files = [];
     for (const art of state.artifacts || []) {
       if (!wanted.has(art.id) || art.quarantined) continue;
       count += 1;
       if (!first) first = art;
+      files.push({ path: art.canonicalPath, bytes: art.sizeBytes || 0 });
       const key = art.physicalInodeKey || art.canonicalPath;
       if (!seenInodes.has(key)) {
         seenInodes.add(key);
@@ -549,7 +552,12 @@ export function createAtlasServer(options = {}) {
       count,
       physicalBytes,
       firstName: first ? first.name : null,
-      firstPath: first ? first.canonicalPath : null
+      firstPath: first ? first.canonicalPath : null,
+      // What Show in Finder / File Explorer opens: the file, or the folder of the selection
+      reveal: chooseRevealTarget(files, {
+        homeDir: activeService().platformServices.homeDir,
+        pathApi: activeService().platformServices.platform === 'win32' ? path.win32 : path.posix
+      })
     };
   };
 
@@ -935,8 +943,16 @@ export function createAtlasServer(options = {}) {
 
       if (url.pathname === '/api/finder/reveal' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const result = await activeService().platformServices.revealInFinder(body.path);
-        return sendJson(res, result.ok ? 200 : 404, result);
+        // A selection is revealed by what the summary chose for it (a file or a folder)
+        let target = body.path;
+        let reveal = null;
+        if (Array.isArray(body.artifactIds)) {
+          reveal = summarizeSelection(activeService().activeState, body.artifactIds).reveal;
+          if (!reveal) return sendJson(res, 404, { ok: false, error: 'NOTHING_SELECTED' });
+          target = reveal.path;
+        }
+        const result = await activeService().platformServices.revealInFinder(target);
+        return sendJson(res, result.ok ? 200 : 404, { ...result, reveal });
       }
 
       if (url.pathname === '/api/selection/resolve' && req.method === 'POST') {
