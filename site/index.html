@@ -16,7 +16,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=20" />
+<link rel="stylesheet" href="style.css?v=21" />
 </head>
 <body>
 <div class="topbar">
@@ -32,7 +32,7 @@
       <a class="optional" href="#how-links-are-known">How it works</a>
       <a class="optional" href="#insights">Insights</a>
       <a class="optional" href="#supported">Supported apps</a>
-      <a class="optional" href="#install">Install</a>
+      <a class="optional" href="#install">Download</a>
       <a href="permissions/">Permissions</a>
       <a href="https://github.com/yazicmert/basket">GitHub</a>
     </nav>
@@ -274,61 +274,58 @@
   </section>
 
   <section class="spec" id="install">
-    <h2>Install</h2>
+    <h2>Install <small>Free, open source</small></h2>
     <div class="spec-body">
-      <h3 class="platform">macOS <span>14 or later, Apple silicon</span></h3>
-      <ol class="steps">
-        <li><div>Download <code>ArtifactAtlas-macOS.dmg</code> and open it.</div></li>
-        <li><div>Drag <strong>ArtifactAtlas.app</strong> into <strong>Applications</strong>.</div></li>
-        <li><div>Open it once. When macOS stops it, open <strong>System Settings → Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>.</div></li>
-      </ol>
-      <div class="callout">
-        <p><strong>Not yet notarized by Apple</strong>, so the first launch needs that step. Or, in Terminal:</p>
-        <pre>xattr -dr com.apple.quarantine /Applications/ArtifactAtlas.app</pre>
-        <p>Each download’s SHA-256 is in <code>SHA256SUMS.txt</code> on the <a href="https://github.com/yazicmert/basket/releases/latest">release page</a>.</p>
+      <div class="install-cards">
+        <div class="install-card">
+          <div class="install-os"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.8-1.7 0-3.3 1-4.1 2.5-1.8 3.1-.5 7.6 1.3 10.1.8 1.2 1.8 2.6 3.1 2.5 1.3 0 1.7-.8 3.3-.8 1.5 0 2 .8 3.3.8 1.4 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.6-1-2.6-4.3zM14 5.4c.7-.8 1.2-2 1-3.2-1 .1-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.2-.5 2.9-1.3z" fill="currentColor"/></svg><div><h3>macOS</h3><span>14 or later, Apple silicon</span></div></div>
+          <ol class="install-steps">
+            <li>Open the disk image and drag <strong>ArtifactAtlas</strong> into Applications.</li>
+            <li>On first launch, choose <strong>Open Anyway</strong> in System Settings → Privacy &amp; Security.</li>
+          </ol>
+          <p class="install-note">Not yet notarized by Apple, hence the extra step. Or run <code>xattr -dr com.apple.quarantine /Applications/ArtifactAtlas.app</code>.</p>
+          <a class="btn primary install-btn" href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg">Download for macOS</a>
+        </div>
+        <div class="install-card">
+          <div class="install-os"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3v-6zm0 13l7.5 1v-7H3v6zm8.5 1.2L21 21v-8.5h-9.5v7.2zm0-15.4v7.2H21V3l-9.5 1.3z" fill="currentColor"/></svg><div><h3>Windows</h3><span>10 or 11, 64-bit</span></div></div>
+          <ol class="install-steps">
+            <li>Extract the ZIP and start <strong>ArtifactAtlas.exe</strong>. Nothing is installed.</li>
+            <li>At <em>Windows protected your PC</em>, choose <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+          </ol>
+          <p class="install-note">Not yet signed with a certificate, hence the warning. No administrator rights needed.</p>
+          <a class="btn primary install-btn" href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-Windows.zip">Download for Windows</a>
+        </div>
       </div>
-
-      <h3 class="platform" id="install-windows">Windows <span>10 or 11, 64-bit</span></h3>
-      <ol class="steps">
-        <li><div>Download <code>ArtifactAtlas-Windows.zip</code> and extract it.</div></li>
-        <li><div>Start <strong>ArtifactAtlas.exe</strong>. At <em>Windows protected your PC</em>, click <strong>More info</strong>, then <strong>Run anyway</strong>.</div></li>
-      </ol>
-      <div class="callout">
-        <p><strong>Not yet signed with a certificate</strong>, so Windows asks before the first start. Nothing is installed and no administrator rights are needed.</p>
-      </div>
+      <p class="install-foot">Checksums for every download are on the <a href="https://github.com/yazicmert/basket/releases/latest">release page</a>. Prefer to build it yourself? <a href="https://github.com/yazicmert/basket#run-from-source">Run from source</a>.</p>
     </div>
   </section>
 
-  <section class="spec" id="source">
-    <h2>Run from source</h2>
-    <div class="spec-body">
-      <pre>git clone https://github.com/yazicmert/basket.git
-cd basket
-npm start        <span class="c"># opens the local UI on http://127.0.0.1:4310</span>
-npm test</pre>
-      <p class="note">Requires Node.js 22.13 or newer. No npm dependencies.</p>
+  <section class="closing">
+    <h2>See what your AI apps left behind.</h2>
+    <p>One scan, every file traced to the prompt that made it. Nothing leaves your computer.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg">Download for macOS</a>
+      <a class="btn primary" href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-Windows.zip">Download for Windows</a>
     </div>
   </section>
 </main>
 
 <footer>
-  <div class="footer-inner">
-    <span>Artifact Atlas · MIT licensed</span>
-    <nav aria-label="Project">
-      <a href="permissions/">Permissions</a>
-      <a href="https://github.com/yazicmert/basket/blob/main/ARCHITECTURE.md">Architecture</a>
-      <a href="https://github.com/yazicmert/basket/blob/main/ROADMAP.md">Roadmap</a>
-      <a href="https://github.com/yazicmert/basket">Source on GitHub</a>
-      <a href="legal/privacy/">Privacy</a>
-      <a href="legal/terms/">Terms</a>
-      <a href="legal/notices/">Notices</a>
-    </nav>
+  <div class="footer-inner footer-rich">
+    <div class="footer-brand">
+      <span class="footer-mark"><svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="5" y1="14" x2="10" y2="5" /><line x1="5" y1="14" x2="15.5" y2="12" stroke-dasharray="2.2 1.8" /><circle cx="5" cy="14" r="3" fill="currentColor" /><circle cx="10" cy="5" r="2" fill="var(--surface)" /><circle cx="15.5" cy="12" r="2" fill="var(--surface)" /></svg>Artifact Atlas</span>
+      <p>Know which AI session made a file before you delete it.</p>
+    </div>
+    <nav aria-label="Product"><h3>Product</h3><a href="#install">Download</a><a href="#insights">Insights</a><a href="#supported">Supported apps</a><a href="permissions/">Permissions</a></nav>
+    <nav aria-label="Project"><h3>Project</h3><a href="https://github.com/yazicmert/basket">Source on GitHub</a><a href="https://github.com/yazicmert/basket/releases">Releases</a><a href="https://github.com/yazicmert/basket/blob/main/ARCHITECTURE.md">Architecture</a><a href="https://github.com/yazicmert/basket/blob/main/ROADMAP.md">Roadmap</a></nav>
+    <nav aria-label="Legal"><h3>Legal</h3><a href="legal/privacy/">Privacy</a><a href="legal/terms/">Terms</a><a href="legal/notices/">Notices</a></nav>
   </div>
+  <div class="footer-inner footer-base"><span>MIT licensed · Not affiliated with the makers of the apps it scans.</span></div>
 </footer>
-<script src="icons.js?v=20" defer></script>
-<script src="demo.js?v=20" defer></script>
-<script src="story.js?v=20" defer></script>
-<script src="motion.js?v=20" defer></script>
-<script src="header.js?v=20" defer></script>
+<script src="icons.js?v=21" defer></script>
+<script src="demo.js?v=21" defer></script>
+<script src="story.js?v=21" defer></script>
+<script src="motion.js?v=21" defer></script>
+<script src="header.js?v=21" defer></script>
 </body>
 </html>
