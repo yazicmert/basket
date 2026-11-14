@@ -158,3 +158,20 @@ test('WT2. Worktrees and build outputs are listed, shown and selected by id; sou
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('WT3. Show in Finder never opens a path sent by the window', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-rv-'));
+  const atlas = createAtlasServer({ dataDir, simulateSystemOpen: true });
+  try {
+    await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+    const res = await fetch(`http://127.0.0.1:${atlas.server.address().port}/api/finder/reveal`, {
+      method: 'POST',
+      headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: os.homedir() })
+    });
+    assert.equal(res.status, 400);
+  } finally {
+    await atlas.shutdown();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

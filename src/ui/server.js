@@ -1005,7 +1005,8 @@ export function createAtlasServer(options = {}) {
       if (url.pathname === '/api/finder/reveal' && req.method === 'POST') {
         const body = await readJsonBody(req);
         // A selection is revealed by what the summary chose for it (a file or a folder)
-        let target = body.path;
+        // Only places the server listed can be shown; a path sent by the window is never opened
+        let target = null;
         let reveal = null;
         if (Array.isArray(body.artifactIds)) {
           reveal = summarizeSelection(activeService().activeState, body.artifactIds, { withReveal: true }).reveal;
@@ -1021,6 +1022,8 @@ export function createAtlasServer(options = {}) {
         } else if (typeof body.targetId === 'string') {
           target = revealPathForId(activeService().activeState, body.targetId);
           if (!target) return sendJson(res, 404, { ok: false, error: 'UNKNOWN_TARGET' });
+        } else {
+          return sendJson(res, 400, { ok: false, error: 'NOTHING_TO_SHOW' });
         }
         const result = await activeService().platformServices.revealInFinder(target, { simulate: Boolean(options.simulateSystemOpen) });
         return sendJson(res, result.ok ? 200 : 404, { ...result, reveal });
