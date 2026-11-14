@@ -30,6 +30,7 @@
     </a>
     <nav class="topnav" aria-label="Site">
       <a class="optional" href="#how-links-are-known">How it works</a>
+      <a class="optional" href="#insights">Insights</a>
       <a class="optional" href="#supported">Supported apps</a>
       <a class="optional" href="#install">Install</a>
       <a href="permissions/">Permissions</a>
@@ -160,6 +161,26 @@
           <p>When a new version is out, a button appears in the title bar. The app keeps checking while it is open. On macOS one confirmation downloads the new version, checks it against its published SHA-256 and restarts into it, without a trip to the download page; a copy opened from the disk image is installed into Applications. On Windows the same button downloads the new version, checks its SHA-256, name and version, and restarts into it.</p></div>
         <div><h3>Shows real disk usage</h3>
           <p>Sizes are physical. Hardlinked files are counted once, your project folders are counted separately from the app's own data, and anything that could not be read is reported, so you can tell why a total is what it is.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="spec" id="insights">
+    <h2>After the scan <small>The Insights tab</small></h2>
+    <div class="spec-body">
+      <div class="principles">
+        <div><h3>What changed since last time</h3>
+          <p>Each scan is compared with the last one of the same app that counted the same folders: how much it grew, in which kinds of files and in which sessions. When the two scans counted different things, it says so instead of guessing.</p></div>
+        <div><h3>Worktrees and build outputs</h3>
+          <p>Second copies of a project that sessions work in are listed with their size, their sessions and their branch. Build outputs are grouped by project, with the build file that remakes them. Their build outputs can be reviewed for removal; a worktree itself is removed with the Git command the app shows you.</p></div>
+        <div><h3>Identical files, when you ask</h3>
+          <p>Files with exactly the same content in different places, compared by reading them. You choose which copies go; a protected copy is always kept, and every file is reviewed first.</p></div>
+        <div><h3>Space you get back</h3>
+          <p>Quarantine keeps files on the same disk so they can be put back. After 30 days, Empty Old Files deletes exactly the list you confirm, and the space is free.</p></div>
+        <div><h3>Show in Finder that knows where to go</h3>
+          <p>One file is selected in its folder. A selection spread over many folders lists them with their sizes, and you open the one you want. Every folder on the map can be shown too.</p></div>
+        <div><h3>A report you can keep</h3>
+          <p>Export Report writes a page and a spreadsheet file of the scan to your computer: what each session left behind, by kind and by risk. Prompts are never included.</p></div>
       </div>
     </div>
   </section>
