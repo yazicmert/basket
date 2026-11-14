@@ -191,5 +191,6 @@ On Windows 10 or 11, with nothing extra installed:
 - [Roadmap](ROADMAP.md)
 - [Rules for contributors and coding agents](AGENTS.md)
 - [Permissions, one page each](https://yazicmert.github.io/basket/permissions/)
+- [Privacy](https://yazicmert.github.io/basket/legal/privacy/), [terms of use](https://yazicmert.github.io/basket/legal/terms/) and [notices](https://yazicmert.github.io/basket/legal/notices/)
 
 MIT licensed.
