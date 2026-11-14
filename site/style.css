@@ -2369,3 +2369,264 @@ h3.platform span {
 .app-names .app-any {
   color: var(--ink-3);
 }
+
+/* ---------- One prompt, and what it leaves behind (scroll-driven) ---------- */
+
+.story-track {
+  /* The page scrolls through this length while the stage stays in place */
+  height: 300vh;
+  margin-block: 24px 40px;
+}
+.story-sticky {
+  position: sticky;
+  top: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.story.static .story-track {
+  height: auto;
+}
+.story.static .story-sticky {
+  position: static;
+}
+.story-head {
+  max-width: 640px;
+}
+.story-head h2 {
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3.2vw, 34px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  margin: 0 0 8px;
+}
+.story-head p {
+  color: var(--ink-2);
+  font-size: 16px;
+  margin: 0;
+}
+.story-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  height: min(520px, calc(100vh - 250px));
+  min-height: 380px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.story-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 18px 22px 20px;
+}
+.story-disk {
+  border-left: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+.story-pane-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  margin-bottom: 14px;
+}
+.story-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.story-msg {
+  max-width: 88%;
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.story-msg.you {
+  align-self: flex-end;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  border-bottom-right-radius: 4px;
+}
+.story-msg.ai {
+  align-self: flex-start;
+  background: var(--surface-sunken);
+  border-bottom-left-radius: 4px;
+}
+.story-msg.tool {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.story-tool-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  flex: none;
+}
+.story-disk-list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.story-group-title {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-bottom: 4px;
+}
+.story-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.story-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.story-size {
+  flex: none;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+/* Shown as the page scrolls: each item eases in when it appears */
+.story-msg:not(.on),
+.story-file:not(.on),
+.story-group:not(.on) {
+  display: none;
+}
+.story-msg.on,
+.story-file.on {
+  animation: story-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes story-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.story-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-strong);
+}
+.story-total {
+  display: block;
+  font-weight: 600;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.story-beyond {
+  display: block;
+  margin-top: 2px;
+  min-height: 1.4em;
+  font-size: 13px;
+  color: var(--ink-2);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.story.done .story-beyond {
+  opacity: 1;
+}
+.story-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: transparent;
+}
+.story-progress span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+.story.static .story-progress {
+  display: none;
+}
+.story-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+@media (max-width: 760px) {
+  .story-sticky {
+    top: 72px;
+    gap: 10px;
+  }
+  .story-head h2 {
+    font-size: 21px;
+    margin: 0;
+  }
+  .story-head p {
+    display: none;
+  }
+  /* The newest files stay in view */
+  .story-disk-list {
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .story-file {
+    padding: 4px 0;
+    font-size: 12px;
+  }
+  .story-path {
+    font-size: 11px;
+  }
+  .story-msg {
+    font-size: 13px;
+    padding: 7px 11px;
+  }
+  .story-note {
+    font-size: 12px;
+  }
+  .story-stage {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 2fr 3fr;
+    height: calc(100vh - 190px);
+    min-height: 0;
+  }
+  .story-disk {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .story-pane {
+    padding: 14px 16px;
+  }
+  /* The newest messages stay in view */
+  .story-chat {
+    justify-content: flex-end;
+  }
+  .story-pane-title {
+    margin-bottom: 8px;
+  }
+}
