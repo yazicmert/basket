@@ -66,3 +66,4 @@ for ($i = 0; $i -lt 100 -and (Get-Process -Id $Backend.ProcessId -ErrorAction Si
 if (Get-Process -Id $Backend.ProcessId -ErrorAction SilentlyContinue) { throw 'the backend kept running after the app quit' }
 if (Test-Path $UrlFile) { throw 'window-url.txt was left behind' }
 Write-Host 'WINDOWS_LAUNCH_VERIFIED: OK'
+exit 0

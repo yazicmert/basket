@@ -81,3 +81,5 @@ finally {
   if ($Fake) { Stop-Process -Id $Fake.Id -Force -ErrorAction SilentlyContinue }
   Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
 }
+# The refusal check above leaves exit code 2 behind on purpose
+exit 0
