@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/yazicmert/basket/security/advisories/new
+    about: Please report security problems privately.
+  - name: How it works and what it can read
+    url: https://yazicmert.github.io/basket/permissions/
+    about: Each permission, what it allows and how to change it.

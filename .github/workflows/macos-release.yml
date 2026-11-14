@@ -184,14 +184,13 @@ jobs:
             dist/ArtifactAtlas-Windows.zip \
             dist/SHA256SUMS.txt \
             "${FLAGS[@]}"
-          ## Artifact Atlas ${TAG}
+          Download for **[macOS](https://github.com/yazicmert/basket/releases/download/${TAG}/ArtifactAtlas-macOS.dmg)** (14 or later, Apple silicon) or **[Windows](https://github.com/yazicmert/basket/releases/download/${TAG}/ArtifactAtlas-Windows.zip)** (10 or 11). If you already have the app, its update button installs this version.
 
-          - **macOS** (Apple silicon, macOS 14 or later): \`ArtifactAtlas-macOS.dmg\`. Open it and drag Artifact Atlas to Applications.
-          - **Windows** (10 or 11, 64-bit): \`ArtifactAtlas-Windows.zip\`. Extract it and start \`ArtifactAtlas.exe\`. The build is not signed with a certificate, so Windows asks before the first start: choose "More info", then "Run anyway".
+          **First launch.** The builds are not yet notarized or signed with a certificate. On macOS, choose *Open Anyway* in System Settings → Privacy & Security. On Windows, choose *More info*, then *Run anyway*.
 
-          Both downloads carry their own Node.js runtime; nothing else has to be installed.
+          Both downloads carry their own runtime; nothing else has to be installed.
 
-          ### SHA-256 Checksums
+          ### SHA-256
           \`\`\`
           $(cat dist/SHA256SUMS.txt)
           \`\`\`

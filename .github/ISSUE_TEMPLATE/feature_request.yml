@@ -1,0 +1,16 @@
+name: An idea
+description: Something Artifact Atlas could do, or do better.
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: The situation you are in, and what you would like the app to do.
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: Which AI app is it about, if any
+      placeholder: Claude Code, Cursor, Codex, …
