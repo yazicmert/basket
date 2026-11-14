@@ -16,7 +16,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=14" />
+<link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 <div class="topbar">
@@ -188,64 +188,21 @@
   <section class="spec" id="supported">
     <h2>Supported apps <small>And any other app</small></h2>
     <div class="spec-body">
-      <p>For <strong>Claude Code</strong> (the CLI, and the Code view of the Claude app) each file a session wrote is linked to the session and the tool call that wrote it. For <strong>Cursor</strong> and <strong>Codex</strong> (the CLI, and the Codex view of the ChatGPT app, which replaced the separate Codex app in July 2026), sessions are listed with their starting prompt; linking their files to tool calls is not yet supported for their current record formats. The other apps listed here are found through their known data folders, and any other app you choose, on macOS or Windows, is located by its identifier and name.</p>
-      <div class="marquee">
-        <div class="marquee-track">
-          <ul>
-            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claude.svg);mask-image:url(logos/claude.svg)"></i></span>Claude<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex<small>in ChatGPT and the CLI</small></li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Devin Desktop<small>formerly Windsurf</small></li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/ollama.svg);mask-image:url(logos/ollama.svg)"></i></span>Ollama</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/lmstudio.svg);mask-image:url(logos/lmstudio.svg)"></i></span>LM Studio</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>GPT4All</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/zedindustries.svg);mask-image:url(logos/zedindustries.svg)"></i></span>Zed</li>
-          </ul>
-          <ul aria-hidden="true">
-            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/claude.svg);mask-image:url(logos/claude.svg)"></i></span>Claude<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor<small>sessions</small></li>
-            <li class="chip traced"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex<small>in ChatGPT and the CLI</small></li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Devin Desktop<small>formerly Windsurf</small></li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/ollama.svg);mask-image:url(logos/ollama.svg)"></i></span>Ollama</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/lmstudio.svg);mask-image:url(logos/lmstudio.svg)"></i></span>LM Studio</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>GPT4All</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/zedindustries.svg);mask-image:url(logos/zedindustries.svg)"></i></span>Zed</li>
-          </ul>
+      <div class="app-tiers">
+        <div class="app-tier">
+          <div class="app-tier-head"><h3>Traced to the tool call</h3><p>Each file a session wrote is linked to that session and the tool call that wrote it.</p></div>
+          <ul class="app-list"><li><span class="app-mark"><i class="app-logo" style="-webkit-mask-image:url(logos/claudecode.svg);mask-image:url(logos/claudecode.svg)"></i></span>Claude Code</li><li><span class="app-mark"><i class="app-logo" style="-webkit-mask-image:url(logos/claude.svg);mask-image:url(logos/claude.svg)"></i></span>Claude <small>Code view</small></li></ul>
+        </div>
+        <div class="app-tier">
+          <div class="app-tier-head"><h3>Sessions and prompts</h3><p>Sessions are listed with the prompt that started them. Linking their files to tool calls is not yet supported.</p></div>
+          <ul class="app-list"><li><span class="app-mark"><i class="app-logo" style="-webkit-mask-image:url(logos/cursor.svg);mask-image:url(logos/cursor.svg)"></i></span>Cursor</li><li><span class="app-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4C7 4 6 5 6 7v2.5C6 11 5.2 12 4 12c1.2 0 2 1 2 2.5V17c0 2 1 3 3 3" /><path d="M15 4c2 0 3 1 3 3v2.5c0 1.5.8 2.5 2 2.5-1.2 0-2 1-2 2.5V17c0 2-1 3-3 3" /></svg></span>Codex <small>CLI and ChatGPT</small></li></ul>
+        </div>
+        <div class="app-tier">
+          <div class="app-tier-head"><h3>Found by their data</h3><p>Located through their known data folders. Any other app is found by its identifier and name.</p></div>
+          <ul class="app-names"><li>Devin Desktop <small>formerly Windsurf</small></li><li>Ollama</li><li>LM Studio</li><li>GPT4All</li><li>Zed</li><li>Gemini</li><li>Antigravity</li><li>GitHub Copilot</li><li>Jan</li><li>Perplexity</li><li>Msty</li><li>Continue</li><li>Aider</li><li>Trae</li><li>Kiro</li><li class="app-any">and any other app</li></ul>
         </div>
       </div>
-      <div class="marquee reverse">
-        <div class="marquee-track">
-          <ul>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/googlegemini.svg);mask-image:url(logos/googlegemini.svg)"></i></span>Gemini</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Antigravity</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/githubcopilot.svg);mask-image:url(logos/githubcopilot.svg)"></i></span>GitHub Copilot</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Jan</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/perplexity.svg);mask-image:url(logos/perplexity.svg)"></i></span>Perplexity</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Msty</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Continue</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Aider</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/trae.svg);mask-image:url(logos/trae.svg)"></i></span>Trae</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Kiro</li>
-            <li class="chip any"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Any other app</li>
-          </ul>
-          <ul aria-hidden="true">
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/googlegemini.svg);mask-image:url(logos/googlegemini.svg)"></i></span>Gemini</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Antigravity</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/githubcopilot.svg);mask-image:url(logos/githubcopilot.svg)"></i></span>GitHub Copilot</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Jan</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/perplexity.svg);mask-image:url(logos/perplexity.svg)"></i></span>Perplexity</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Msty</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Continue</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Aider</li>
-            <li class="chip"><span class="chip-icon"><i class="chip-logo" style="-webkit-mask-image:url(logos/trae.svg);mask-image:url(logos/trae.svg)"></i></span>Trae</li>
-            <li class="chip"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Kiro</li>
-            <li class="chip any"><span class="chip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4z" /><path d="M3.5 8.5h17" /><path d="M6.6 6.3h.1" /><path d="M9.2 6.3h.1" /></svg></span>Any other app</li>
-          </ul>
-        </div>
-      </div>
-      <p class="note">Logos are trademarks of their owners and are shown only to name the apps. Artifact Atlas is not affiliated with or endorsed by these companies.</p>
+      <p class="note">Logos are trademarks of their owners, shown only to name the apps. Artifact Atlas is not affiliated with these companies.</p>
     </div>
   </section>
 
@@ -355,8 +312,8 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js?v=14" defer></script>
-<script src="demo.js?v=14" defer></script>
-<script src="header.js?v=14" defer></script>
+<script src="icons.js?v=15" defer></script>
+<script src="demo.js?v=15" defer></script>
+<script src="header.js?v=15" defer></script>
 </body>
 </html>
