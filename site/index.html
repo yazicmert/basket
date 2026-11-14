@@ -16,7 +16,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<link rel="stylesheet" href="style.css?v=17" />
+<link rel="stylesheet" href="style.css?v=18" />
 </head>
 <body>
 <div class="topbar">
@@ -54,22 +54,27 @@
   </header>
 
   <section class="story" id="story" aria-label="One prompt and what it leaves on disk">
-    <div class="story-head">
-      <h2>One prompt. Everything behind it.</h2>
-      <p>While you talk to a coding assistant, it writes your code and quietly leaves more on disk: installs, caches, screenshots, its own record of the session. Artifact Atlas shows all of it, traced back to the prompt.</p>
-    </div>
-    <div class="story-stage">
-      <div class="story-pane">
-        <div class="story-pane-title">Conversation</div>
-        <div class="story-chat" aria-live="off"></div>
+    <div class="story-track">
+      <div class="story-sticky">
+        <div class="story-head">
+          <h2>One prompt. Everything behind it.</h2>
+          <p>While you talk to a coding assistant, it writes your code and quietly leaves more on disk. Scroll to watch it happen.</p>
+        </div>
+        <div class="story-stage">
+          <div class="story-pane">
+            <div class="story-pane-title">Conversation</div>
+            <div class="story-chat"></div>
+          </div>
+          <div class="story-pane story-disk">
+            <div class="story-pane-title">On your disk</div>
+            <div class="story-disk-list"></div>
+            <div class="story-foot"><span class="story-total">1 prompt</span><span class="story-beyond"></span></div>
+          </div>
+          <div class="story-progress" aria-hidden="true"><span></span></div>
+        </div>
+        <p class="story-note">An illustration with example numbers. A scan shows the real ones for your computer.</p>
       </div>
-      <div class="story-pane story-disk">
-        <div class="story-pane-title">On your disk</div>
-        <div class="story-disk-list"></div>
-        <div class="story-foot"><div><span class="story-total">1 prompt</span><span class="story-beyond"></span></div><button class="story-replay" type="button">Replay</button></div>
-      </div>
     </div>
-    <p class="story-note">An illustration with example numbers. A scan shows the real ones for your computer.</p>
   </section>
 
   <figure class="shot">
@@ -317,9 +322,9 @@ npm test</pre>
     </nav>
   </div>
 </footer>
-<script src="icons.js?v=17" defer></script>
-<script src="demo.js?v=17" defer></script>
-<script src="story.js?v=17" defer></script>
-<script src="header.js?v=17" defer></script>
+<script src="icons.js?v=18" defer></script>
+<script src="demo.js?v=18" defer></script>
+<script src="story.js?v=18" defer></script>
+<script src="header.js?v=18" defer></script>
 </body>
 </html>
