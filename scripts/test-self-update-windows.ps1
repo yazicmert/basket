@@ -38,7 +38,7 @@ import { stageVerifiedWindowsPackage, launchWindowsSwap } from '$Src';
 const [zip, staging, install, pid, version] = process.argv.slice(2);
 let refused = false;
 try { stageVerifiedWindowsPackage({ zipPath: zip, stagingDir: staging, expectedVersion: '99.0.0' }); }
-catch (err) { refused = /UPDATE_VERSION_MISMATCH/.test(err.message); }
+catch (err) { refused = /UPDATE_VERSION_MISMATCH/.test(err.message); if (!refused) console.error(err.message); }
 if (!refused) { console.error('a wrong version was not refused'); process.exit(1); }
 const staged = stageVerifiedWindowsPackage({ zipPath: zip, stagingDir: staging, expectedVersion: version });
 console.log('staged', staged);

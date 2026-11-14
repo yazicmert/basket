@@ -71,7 +71,17 @@ export function stageVerifiedWindowsPackage({ zipPath, stagingDir, expectedVersi
   const unpackDir = path.join(stagingDir, 'unpacked');
   fs.rmSync(unpackDir, { recursive: true, force: true });
   fs.mkdirSync(unpackDir, { recursive: true });
-  execFileSync(tar, ['-xf', zipPath, '-C', unpackDir], { stdio: 'ignore', windowsHide: true });
+  // tar.exe is given short relative names and run inside the staging folder: it cannot read a
+  // path with letters outside the system code page (a user name such as "Yıldız") from its
+  // arguments, but works inside such a folder
+  const inside = path.relative(stagingDir, zipPath);
+  const zipArg = inside && !inside.startsWith('..') && !path.isAbsolute(inside) ? inside : zipPath;
+  try {
+    execFileSync(tar, ['-xf', zipArg, '-C', 'unpacked'], { cwd: stagingDir, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  } catch (err) {
+    const said = String(err.stderr || '').trim().split(/\r?\n/).slice(-2).join(' ');
+    throw new Error(`UPDATE_UNPACK_FAILED: ${said || err.message}`);
+  }
   return checkStagedWindowsPackage(path.join(unpackDir, 'ArtifactAtlas'), expectedVersion);
 }
 
