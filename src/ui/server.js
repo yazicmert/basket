@@ -14,8 +14,9 @@ import {
   normalizeScanScope,
   SCAN_SCOPE_PERMISSIONS
 } from '../platform/permissions.js';
-import { findKnownAppProfile, listKnownApplicationsWithData } from '../discovery/app-footprint.js';
-import { listStartMenuApplications } from '../discovery/windows-apps.js';
+import { findKnownAppProfile, findStorePackageProfile, listKnownApplicationsWithData, profileDisplayName } from '../discovery/app-footprint.js';
+import { listStartMenuApplications, listStoreApplications } from '../discovery/windows-apps.js';
+import { PICK_KINDS, pickWithWindowsDialog } from '../platform/windows-picker.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
 /**
@@ -33,6 +34,7 @@ function readBundleIdentifier(bundlePath) {
   }
 }
 import { readAppIconPng } from '../discovery/app-icon.js';
+import { readWindowsAppIconPng } from '../discovery/windows-icon.js';
 import { buildMapLevel, levelArtifactIds, searchFiles } from '../graph/map-levels.js';
 import { sessionLeftoverIds } from '../graph/prompt-costs.js';
 import { checkForUpdate, UPDATE_CHECK_INTERVAL_MS } from '../platform/update-check.js';
@@ -46,6 +48,13 @@ import {
   launchSwap,
   createStagingDir
 } from '../platform/self-update.js';
+import {
+  WINDOWS_ZIP_ASSET_NAME,
+  findRunningWindowsInstall,
+  resolveWindowsInstallTarget,
+  stageVerifiedWindowsPackage,
+  launchWindowsSwap
+} from '../platform/self-update-windows.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -185,18 +194,28 @@ export function createAtlasServer(options = {}) {
 
   // In-place update. Only a packaged copy in a writable folder can replace itself; any
   // other copy is sent to the download page instead.
+  // On macOS the running copy is a .app bundle; on Windows, the folder holding
+  // ArtifactAtlas.exe.
+  const isWindowsUpdate = platform === 'win32';
+  // The system file dialogs of the Windows app (the Mac app has its own Open panels)
+  const pickImpl = options.pickImpl || pickWithWindowsDialog;
+  const nativePicker = platform === 'win32' && (process.platform === 'win32' || Boolean(options.pickImpl));
   const appBundlePath =
     options.appBundlePath !== undefined
       ? options.appBundlePath
-      : findRunningAppBundle(fileURLToPath(import.meta.url));
+      : isWindowsUpdate
+        ? findRunningWindowsInstall(fileURLToPath(import.meta.url))
+        : findRunningAppBundle(fileURLToPath(import.meta.url));
   const installState = { phase: 'idle', error: null, received: 0, total: 0 };
   const installTarget = () =>
-    resolveInstallTarget({
-      appBundlePath,
-      platform,
-      homeDir: liveHomeDir,
-      systemApplicationsDir: options.systemApplicationsDir || '/Applications'
-    });
+    isWindowsUpdate
+      ? resolveWindowsInstallTarget({ installDir: appBundlePath, localAppData: options.localAppData })
+      : resolveInstallTarget({
+          appBundlePath,
+          platform,
+          homeDir: liveHomeDir,
+          systemApplicationsDir: options.systemApplicationsDir || '/Applications'
+        });
   // An update that was started before this launch: if this is still the old version, the
   // helper did not finish, and its log says why. Reported once.
   let lastFailure = null;
@@ -236,21 +255,34 @@ export function createAtlasServer(options = {}) {
         version: status.latestVersion,
         stagingDir,
         fetchImpl: options.updateFetch || globalThis.fetch,
-        onProgress: (p) => Object.assign(installState, p)
+        onProgress: (p) => Object.assign(installState, p),
+        ...(isWindowsUpdate ? { assetName: WINDOWS_ZIP_ASSET_NAME } : {})
       });
       installState.phase = 'verifying';
-      const stagedBundle = stageVerifiedBundle({ zipPath, stagingDir, expectedVersion: status.latestVersion });
+      const staged = isWindowsUpdate
+        ? stageVerifiedWindowsPackage({ zipPath, stagingDir, expectedVersion: status.latestVersion })
+        : stageVerifiedBundle({ zipPath, stagingDir, expectedVersion: status.latestVersion });
       installState.phase = 'restarting';
-      // The helper stops the app (this backend's parent), swaps the bundle and reopens it
+      // The helper waits for the app (this backend's parent) to quit, swaps it and reopens it
       settings.pendingUpdate = { version: status.latestVersion, stagingDir };
       saveSettings();
-      launchSwap({
-        appBundlePath: possible.targetPath,
-        runningBundlePath: appBundlePath,
-        stagedBundle,
-        appPid: options.appPid || process.ppid,
-        stagingDir
-      });
+      if (isWindowsUpdate) {
+        launchWindowsSwap({
+          installDir: possible.targetPath,
+          runningDir: appBundlePath,
+          stagedDir: staged,
+          appPid: options.appPid || process.ppid,
+          stagingDir
+        });
+      } else {
+        launchSwap({
+          appBundlePath: possible.targetPath,
+          runningBundlePath: appBundlePath,
+          stagedBundle: staged,
+          appPid: options.appPid || process.ppid,
+          stagingDir
+        });
+      }
       return { version: status.latestVersion };
     } catch (err) {
       Object.assign(installState, { phase: 'failed', error: err.message });
@@ -341,12 +373,12 @@ export function createAtlasServer(options = {}) {
   const installedBundles = () => {
     const bundles = [];
     const seen = new Set();
-    const add = (name, bundlePath, description, bundleId = null, dataOnly = null) => {
+    const add = (name, bundlePath, description, bundleId = null, dataOnly = null, knownProfile = null) => {
       if (seen.has(bundlePath)) {
         return;
       }
       seen.add(bundlePath);
-      const profile = findKnownAppProfile({ name, bundleId });
+      const profile = knownProfile || findKnownAppProfile({ name, bundleId });
       bundles.push({
         name,
         bundleId,
@@ -369,6 +401,16 @@ export function createAtlasServer(options = {}) {
       ];
       for (const app of listStartMenuApplications(startMenuDirs)) {
         add(app.name, app.shortcutPath, 'Start Menu');
+      }
+      // Store apps have no shortcut file; a known one is found by its data folder's name
+      const listed = new Set(bundles.map((b) => b.profileId).filter(Boolean));
+      const packagesDir = options.storePackagesDir || path.join(liveHomeDir, 'AppData', 'Local', 'Packages');
+      for (const pkg of listStoreApplications(packagesDir)) {
+        const profile = findStorePackageProfile(pkg.packageName);
+        if (profile && !listed.has(profile.id)) {
+          listed.add(profile.id);
+          add(profileDisplayName(profile), `${KNOWN_APP_PREFIX}${profile.id}`, 'Microsoft Store', null, null, profile);
+        }
       }
     } else {
       const appDirs = options.applicationDirs || [
@@ -526,7 +568,7 @@ export function createAtlasServer(options = {}) {
   const cachedAppIcon = (bundlePath) => {
     if (!iconCache.has(bundlePath)) {
       if (iconCache.size > 600) iconCache.clear();
-      iconCache.set(bundlePath, readAppIconPng(bundlePath));
+      iconCache.set(bundlePath, platform === 'win32' ? readWindowsAppIconPng(bundlePath) : readAppIconPng(bundlePath));
     }
     return iconCache.get(bundlePath);
   };
@@ -668,6 +710,7 @@ export function createAtlasServer(options = {}) {
           ok: true,
           ...permissionsPayload(),
           arch: process.arch,
+          systemPicker: nativePicker,
           isDemoEnvironment: activeService().activeState.isDemoEnvironment,
           homeDir: activeService().platformServices.homeDir,
           quarantineVaultLocation: activeService().cleanupEngine.quarantineRoot,
@@ -828,6 +871,23 @@ export function createAtlasServer(options = {}) {
           return sendJson(res, 200, { ok: true, restarting: true, ...result });
         } catch (err) {
           return sendJson(res, 409, { ok: false, error: err.message, update: await updateStatus() });
+        }
+      }
+
+      if (url.pathname === '/api/system/pick' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (!nativePicker) {
+          return sendJson(res, 404, { ok: false, error: 'NO_SYSTEM_PICKER' });
+        }
+        if (!PICK_KINDS.includes(body.kind)) {
+          return sendJson(res, 400, { ok: false, error: 'UNKNOWN_PICKER' });
+        }
+        try {
+          const startMenuDir = path.join(liveHomeDir, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+          const picked = await pickImpl(body.kind, { startMenuDir });
+          return sendJson(res, 200, { ok: true, path: picked || null });
+        } catch (err) {
+          return sendJson(res, 500, { ok: false, error: err.message });
         }
       }
 

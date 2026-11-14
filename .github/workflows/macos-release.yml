@@ -55,6 +55,14 @@ jobs:
         shell: pwsh
         run: ./scripts/verify-windows-bundle.ps1
 
+      - name: Verify the In-Place Update on Windows PowerShell 5.1 (Swap, Restore, Refusals)
+        shell: powershell
+        run: ./scripts/test-self-update-windows.ps1
+
+      - name: Launch as a User Would, Close the Window, Check Real Start Menu & Store Readers
+        shell: powershell
+        run: ./scripts/test-windows-launch.ps1
+
       - name: Hand the Verified ZIP to the Publish Job
         uses: actions/upload-artifact@v4
         with:

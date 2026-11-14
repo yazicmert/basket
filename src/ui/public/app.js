@@ -555,11 +555,14 @@ function applyPlatformWording() {
   const win = isWindows();
   document.getElementById('live-env-badge').textContent = win ? 'Your PC' : 'Your Mac';
   document.getElementById('ctx-reveal-finder-btn').textContent = `Show in ${fileManagerName()}`;
+  const picker = Boolean(uiState.bootstrap?.systemPicker);
+  document.getElementById('browse-app-btn').classList.toggle('hidden', !picker);
+  document.getElementById('browse-workspace-btn').classList.toggle('hidden', !picker);
   document.getElementById('dropzone-how').textContent = win
-    ? 'Pick an app from the list below, or use Choose App to enter the path of a program, a shortcut or its folder.'
+    ? 'Drag a program or its Start Menu shortcut here, pick an app from the list below, or browse for one in Choose App.'
     : 'Drag an app from the Applications folder in Finder. Apps cannot be dragged out of the Dock; pick one from the list below instead.';
   document.getElementById('dropzone-headline').textContent = win
-    ? 'Choose an app to see what it left behind.'
+    ? 'Drop or choose an app to see what it left behind.'
     : 'Drop an app to see what it left behind.';
   document.getElementById('custom-bundle-path-input').placeholder = win
     ? 'C:\\Users\\you\\AppData\\Local\\Programs\\cursor\\Cursor.exe'
@@ -721,11 +724,14 @@ function bindDropzoneEvents() {
     }
 
     if (droppedPath && !/[\\/]/.test(droppedPath)) {
-      // A browser only reveals the file name. Match it against the listed applications.
-      const wanted = droppedPath.trim().toLowerCase();
-      const match = (uiState.bootstrap?.availableBundles || []).find(
-        (b) => baseName(b.bundlePath).toLowerCase() === wanted
-      );
+      // A browser only reveals the file name. Match it against the listed applications by
+      // name, with or without .app, .lnk or .exe ("Cursor.exe" finds the Cursor shortcut).
+      const bare = (n) => String(n || '').trim().toLowerCase().replace(/\.(app|lnk|exe)$/, '');
+      const wanted = bare(droppedPath);
+      const listed = uiState.bootstrap?.availableBundles || [];
+      const match =
+        listed.find((b) => baseName(b.bundlePath).toLowerCase() === droppedPath.trim().toLowerCase()) ||
+        listed.find((b) => !b.dataOnly && (bare(baseName(b.bundlePath)) === wanted || bare(b.name) === wanted));
       droppedPath = match ? match.bundlePath : '';
       if (!match) {
         showToast('Could not tell where that app is. Use Choose App instead.');
@@ -744,6 +750,21 @@ function bindDropzoneEvents() {
   document.getElementById('choose-workspace-btn').addEventListener('click', () => {
     openAppPickerModal(true);
   });
+
+  // Windows: the system's own dialogs, which give the full path a browser window cannot
+  const browse = async (kind, inputId) => {
+    try {
+      const res = await apiRequest('/api/system/pick', 'POST', { kind });
+      if (!res.path) return;
+      document.getElementById(inputId).value = res.path;
+      if (kind === 'app') await previewIdentifiedBundleInModal(res.path);
+      else uiState.pendingWorkspacePath = res.path;
+    } catch (err) {
+      showToast(`Could not open the dialog: ${err.message}`);
+    }
+  };
+  document.getElementById('browse-app-btn').addEventListener('click', () => browse('app', 'custom-bundle-path-input'));
+  document.getElementById('browse-workspace-btn').addEventListener('click', () => browse('folder', 'custom-workspace-path-input'));
 }
 
 async function handleDroppedOrSelectedBundle(bundlePath) {
@@ -3038,11 +3059,7 @@ function openSettingsModal() {
         <input type="checkbox" id="settings-update-check" />
         <span>Check for new versions</span>
       </label>
-      <p class="inspector-note">${
-        isWindows()
-          ? 'The check asks GitHub for the latest release number and sends nothing about you or your files. When a new version is out, the update button opens its download page. This is the only time the app uses the network.'
-          : 'The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.'
-      }</p>
+      <p class="inspector-note">The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.</p>
     </div>
   `;
   modal.classList.remove('hidden');
@@ -3079,7 +3096,8 @@ const UPDATE_BLOCKED_REASONS = {
   TRANSLOCATED: 'macOS is running this copy from a temporary location and no Applications folder can be written to',
   RUNNING_FROM_DISK_IMAGE: 'This copy runs from the disk image and no Applications folder can be written to',
   NOT_PACKAGED: 'This copy runs from source',
-  NOT_MACOS: null
+  NOT_MACOS: null,
+  NOT_PACKAGED_WINDOWS: null
 };
 
 // Shows a button in the title bar when a newer version has been released.
@@ -3163,6 +3181,9 @@ async function installOrOpenUpdate() {
     uiState.update = { ...uiState.update, install: { ...update.install, phase: 'restarting' } };
     renderUpdatePill();
     showToast(`Installing ${update.latestVersion}. Artifact Atlas will reopen in a moment.`);
+    // On Windows the window is a browser app window: closing it lets the launcher quit, so
+    // the helper can replace the app and open it again
+    if (isWindows()) setTimeout(() => window.close(), 1500);
   } catch (err) {
     clearInterval(poll);
     uiState.updateInstalling = false;

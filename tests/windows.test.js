@@ -281,3 +281,104 @@ test('W7. Windows app list: Start Menu shortcuts, plus tools found by the data t
     fs.rmSync(env.root, { recursive: true, force: true });
   }
 });
+
+test('W8. Microsoft Store apps are found by their data folder name only', async () => {
+  const { storePackageNames, listStoreApplications } = await import('../src/discovery/windows-apps.js');
+  const { findStorePackageProfile } = await import('../src/discovery/app-footprint.js');
+  assert.deepEqual(storePackageNames('OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0'), ['openai.chatgpt-desktop', 'chatgpt-desktop', 'chatgpt']);
+  assert.deepEqual(storePackageNames('not a package'), []);
+  assert.equal(findStorePackageProfile('OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0').id, 'chatgpt');
+  assert.equal(findStorePackageProfile('Claude_pzs8sxrjxfjjc').id, 'claude');
+  // Microsoft's Copilot is not GitHub Copilot; a calculator is nothing known
+  assert.equal(findStorePackageProfile('Microsoft.Copilot_8wekyb3d8bbwe'), null);
+  assert.equal(findStorePackageProfile('Microsoft.WindowsCalculator_8wekyb3d8bbwe'), null);
+
+  const env = makeWindowsHome();
+  const packages = path.join(env.home, 'AppData', 'Local', 'Packages');
+  writeFile(path.join(packages, 'OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0', 'LocalCache', 'Roaming', 'ChatGPT', 'cache.bin'), 'cached');
+  writeFile(path.join(packages, 'Microsoft.Copilot_8wekyb3d8bbwe', 'LocalState', 'x.dat'), 'other product');
+  assert.equal(listStoreApplications(packages).length, 2);
+  const atlas = createAtlasServer({
+    dataDir: path.join(env.root, 'data'),
+    liveHomeDir: env.home,
+    platform: 'win32',
+    applicationDirs: [env.startMenu],
+    simulateSystemOpen: true
+  });
+  const api = async (route, body) => {
+    const res = await fetch(`http://127.0.0.1:${atlas.server.address().port}${route}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return { status: res.status, data: await res.json() };
+  };
+  try {
+    await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+    await api('/api/permissions/home-folder-scan', { granted: true });
+    const boot = (await api('/api/bootstrap')).data;
+    const chatgpt = boot.availableBundles.find((b) => b.name === 'ChatGPT');
+    assert.ok(chatgpt, 'the Store app is listed');
+    assert.equal(chatgpt.dataOnly, false);
+    assert.equal(chatgpt.isKnownAIApp, true);
+    assert.ok(!boot.availableBundles.some((b) => /copilot/i.test(b.name)));
+    const scan = (await api('/api/scan/start', { bundlePath: chatgpt.bundlePath })).data;
+    const paths = (scan.state.scan.roots || []).join('\n') + JSON.stringify(scan.state.application);
+    assert.ok(scan.state.graph.stats.artifactCount >= 1, 'the Store data folder is scanned');
+    assert.ok(!paths.includes('Microsoft.Copilot'));
+  } finally {
+    await atlas.shutdown();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
+test('W9. Windows file dialogs: only two kinds, the picked path is returned, nothing is run', async () => {
+  const { windowsPickerScript } = await import('../src/platform/windows-picker.js');
+  const app = windowsPickerScript('app', { startMenuDir: "C:\\Users\\o'neil\\Start Menu" });
+  assert.match(app, /OpenFileDialog/);
+  assert.match(app, /DereferenceLinks = \$false/);
+  assert.match(app, /o''neil/, 'quotes in paths are escaped');
+  assert.doesNotMatch(app, /Start-Process|Invoke-Item|& \$/);
+  assert.match(windowsPickerScript('folder'), /FolderBrowserDialog/);
+  assert.throws(() => windowsPickerScript('anything'), /Unknown picker/);
+
+  const env = makeWindowsHome();
+  const asked = [];
+  const make = (platform) =>
+    createAtlasServer({
+      dataDir: path.join(env.root, `data-${platform}`),
+      liveHomeDir: env.home,
+      platform,
+      applicationDirs: [env.startMenu],
+      simulateSystemOpen: true,
+      pickImpl: async (kind) => {
+        asked.push(kind);
+        return kind === 'app' ? env.cursorShortcut : null;
+      }
+    });
+  const win = make('win32');
+  const mac = make('darwin');
+  const api = async (atlas, route, body) => {
+    const res = await fetch(`http://127.0.0.1:${atlas.server.address().port}${route}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return { status: res.status, data: await res.json() };
+  };
+  try {
+    await new Promise((resolve) => win.server.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve) => mac.server.listen(0, '127.0.0.1', resolve));
+    assert.equal((await api(win, '/api/bootstrap')).data.systemPicker, true);
+    assert.equal((await api(mac, '/api/bootstrap')).data.systemPicker, false);
+    assert.equal((await api(win, '/api/system/pick', { kind: 'app' })).data.path, env.cursorShortcut);
+    assert.equal((await api(win, '/api/system/pick', { kind: 'folder' })).data.path, null, 'cancelled');
+    assert.equal((await api(win, '/api/system/pick', { kind: 'exe' })).status, 400);
+    assert.equal((await api(mac, '/api/system/pick', { kind: 'app' })).status, 404);
+    assert.deepEqual(asked, ['app', 'folder']);
+  } finally {
+    await win.shutdown();
+    await mac.shutdown();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});

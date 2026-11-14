@@ -132,3 +132,40 @@ export function describeWindowsApplication(reference) {
   }
   throw new Error(`Expected a program (.exe), a shortcut (.lnk) or its folder, got: ${base}`);
 }
+
+/**
+ * Microsoft Store applications have no Start Menu shortcut file; each keeps its data in a
+ * folder under %LOCALAPPDATA%\Packages named `<Publisher>.<Name>_<publisher hash>`. Only
+ * these folder names are read. Returns the names an application may be known by, lowercase:
+ * "OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0" -> ["openai.chatgpt-desktop", "chatgpt-desktop", "chatgpt"].
+ */
+export function storePackageNames(folderName) {
+  const match = /^([A-Za-z0-9][A-Za-z0-9.-]*)_[a-z0-9]{13}$/.exec(String(folderName || ''));
+  if (!match) return [];
+  const family = match[1].toLowerCase();
+  const names = new Set([family]);
+  const short = family.includes('.') ? family.slice(family.lastIndexOf('.') + 1) : family;
+  names.add(short);
+  const stripped = short.replace(/-?(desktop|app|beta|preview)$/, '');
+  if (stripped.length >= 3) names.add(stripped);
+  return Array.from(names);
+}
+
+/** Lists Store application data folders by name; nothing inside them is read. */
+export function listStoreApplications(packagesDir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(packagesDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const names = storePackageNames(entry.name);
+    if (names.length > 0) {
+      found.push({ packageName: entry.name, names, path: path.join(packagesDir, entry.name) });
+    }
+  }
+  return found;
+}

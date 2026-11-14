@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { storePackageNames } from './windows-apps.js';
 
 /**
  * Generic, adapter-independent discovery of where a macOS application keeps its data.
@@ -43,7 +44,8 @@ const HOME_SLUG_PARENTS = [
 const WINDOWS_APPDATA_CONTAINERS = [
   { rel: 'AppData/Roaming', role: 'APP_SUPPORT' },
   { rel: 'AppData/Local', role: 'LOCAL_APP_DATA' },
-  { rel: 'AppData/LocalLow', role: 'LOCAL_APP_DATA' }
+  { rel: 'AppData/LocalLow', role: 'LOCAL_APP_DATA' },
+  { rel: 'AppData/Local/Packages', role: 'LOCAL_APP_DATA', storePackages: true }
 ];
 
 /** Folder name endings an application adds to its own name on Windows ("cursor-updater"). */
@@ -155,7 +157,8 @@ export const KNOWN_APP_PROFILES = [
   },
   { id: 'zed', ai: true, bundleIdPrefixes: ['dev.zed.'], names: ['zed'], extraLocations: [] },
   { id: 'gemini', ai: true, bundleIdPrefixes: [], names: ['gemini', 'antigravity'], extraLocations: ['.gemini'] },
-  { id: 'copilot', ai: true, bundleIdPrefixes: [], names: ['copilot', 'github copilot'], extraLocations: ['.config/github-copilot'] },
+  // Microsoft's own Copilot app is a different product; its Store package is not GitHub Copilot
+  { id: 'copilot', ai: true, bundleIdPrefixes: [], names: ['copilot', 'github copilot'], extraLocations: ['.config/github-copilot'], notStorePublishers: ['microsoft'] },
   { id: 'jan', ai: true, bundleIdPrefixes: ['jan.ai.'], names: ['jan'], extraLocations: [] },
   { id: 'perplexity', ai: true, bundleIdPrefixes: ['ai.perplexity.'], names: ['perplexity'], extraLocations: [] },
   { id: 'msty', ai: true, bundleIdPrefixes: [], names: ['msty'], extraLocations: [] },
@@ -217,6 +220,22 @@ function holdsData(location) {
     // Unreadable: it exists, and the scan will report it
     return true;
   }
+}
+
+/** Whether a Store data folder belongs to the application named by these tokens. */
+export function storePackageMatches(folderName, nameTokens, profile = null) {
+  const names = storePackageNames(folderName);
+  if (names.length === 0) return false;
+  const publisher = names[0].includes('.') ? names[0].slice(0, names[0].indexOf('.')) : '';
+  if (profile && (profile.notStorePublishers || []).includes(publisher)) return false;
+  return names.some((n) => nameTokens.has(n));
+}
+
+/** The known application a Store package belongs to, or null. */
+export function findStorePackageProfile(folderName) {
+  return (
+    KNOWN_APP_PROFILES.find((profile) => storePackageMatches(folderName, new Set(profile.names), profile)) || null
+  );
 }
 
 export function findKnownAppProfile({ name = '', bundleId = '' }) {
@@ -287,7 +306,11 @@ export function matchContainerEntry(entryName, { nameTokens, bundleId }) {
 }
 
 /** Windows: the folder is named after the application, optionally with a known ending. */
-function matchWindowsEntry(entryName, nameTokens) {
+function matchWindowsEntry(entryName, nameTokens, { storePackages = false } = {}, profile = null) {
+  if (storePackages) {
+    // Store data folders: "<Publisher>.<Name>_<hash>"; matched by the name part only
+    return storePackageMatches(entryName, nameTokens, profile) ? 'APPLICATION_NAME' : null;
+  }
   const lower = String(entryName).toLowerCase();
   if (nameTokens.has(lower)) {
     return 'APPLICATION_NAME';
@@ -352,7 +375,7 @@ export function discoverApplicationFootprint({
       continue;
     }
     for (const entry of entries) {
-      const matchedBy = matchWindowsEntry(entry, nameTokens);
+      const matchedBy = matchWindowsEntry(entry, nameTokens, container, profile);
       if (matchedBy) {
         add(container.role, path.join(containerDir, entry), matchedBy);
       }
