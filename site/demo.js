@@ -262,9 +262,11 @@
   var tabs = html('div', 'demo-tabs');
   tabs.setAttribute('role', 'tablist');
   var tabMap = html('button', null, 'Map');
+  var tabInsights = html('button', null, 'Insights');
   var tabQuarantine = html('button');
-  [tabMap, tabQuarantine].forEach(function (b) { b.type = 'button'; b.setAttribute('role', 'tab'); tabs.appendChild(b); });
+  [tabMap, tabInsights, tabQuarantine].forEach(function (b) { b.type = 'button'; b.setAttribute('role', 'tab'); tabs.appendChild(b); });
   tabMap.id = 'demo-tab-map';
+  tabInsights.id = 'demo-tab-insights';
   tabQuarantine.id = 'demo-tab-quarantine';
   bar.appendChild(tabs);
   bar.appendChild(html('span', 'demo-badge', 'Sample data'));
@@ -298,6 +300,8 @@
   stage.appendChild(scroller);
   var list = html('div', 'demo-list');
   stage.appendChild(list);
+  var insightsBox = html('div', 'demo-insights');
+  stage.appendChild(insightsBox);
   var action = html('div', 'demo-action');
   stage.appendChild(action);
   body.appendChild(stage);
@@ -819,6 +823,37 @@
     });
   }
 
+  // ---------- Insights (from the sample files only) ----------
+
+  function insightCard(title) {
+    var card = html('section', 'demo-icard');
+    card.appendChild(html('h4', null, title));
+    insightsBox.appendChild(card);
+    return card;
+  }
+
+  function renderInsights() {
+    insightsBox.textContent = '';
+    var growth = insightCard('Since the last scan');
+    growth.appendChild(html('p', 'demo-muted', 'This is the first scan of this app. The next one will show what changed.'));
+
+    var builds = files.filter(function (f) { return f.group === 'gBuild' && !isQuarantined(f.id); });
+    if (builds.length) {
+      var b = insightCard('Build outputs');
+      var bytes = builds.reduce(function (s, f) { return s + f.size; }, 0);
+      b.appendChild(html('div', 'demo-ifigure', formatBytes(bytes)));
+      b.appendChild(html('p', 'demo-muted', builds.length + (builds.length === 1 ? ' file' : ' files') + ' a build can make again. Selected files are reviewed before they move.'));
+    }
+
+    var copies = insightCard('Identical files');
+    copies.appendChild(html('p', 'demo-muted', 'Compared only when you ask, by reading the files. In this sample, no two files have the same content.'));
+
+    var q = insightCard('Quarantine');
+    var held = state.quarantined.reduce(function (s, id) { return s + byId[id].size; }, 0);
+    q.appendChild(html('div', 'demo-ifigure', formatBytes(held)));
+    q.appendChild(html('p', 'demo-muted', 'Held, and can be put back. After 30 days, Empty Old Files deletes the list you confirm and frees the space.'));
+  }
+
   // ---------- Render ----------
 
   function render() {
@@ -827,10 +862,12 @@
     totals.textContent = live.length + ' files · ' + formatBytes(bytes);
     tabQuarantine.textContent = 'Quarantine ' + state.quarantined.length;
     tabMap.setAttribute('aria-selected', String(state.view === 'map'));
+    tabInsights.setAttribute('aria-selected', String(state.view === 'insights'));
     tabQuarantine.setAttribute('aria-selected', String(state.view === 'quarantine'));
     scroller.hidden = state.view !== 'map';
     if (!scroller.hidden) centerScroller();
     list.hidden = state.view !== 'quarantine';
+    insightsBox.hidden = state.view !== 'insights';
 
     crumbBar.hidden = state.view !== 'map';
     for (var nodeId in nodeEls) {
@@ -841,11 +878,13 @@
     renderPanel();
     renderAction();
     renderList();
+    renderInsights();
 
   }
 
   tabMap.addEventListener('click', function () { state.view = 'map'; render(); });
   tabQuarantine.addEventListener('click', function () { state.view = 'quarantine'; state.armed = null; render(); });
+  tabInsights.addEventListener('click', function () { state.view = 'insights'; state.armed = null; render(); });
   svg.addEventListener('click', function (ev) {
     if (ev.target === svg) select(null);
   });

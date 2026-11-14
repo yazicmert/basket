@@ -734,22 +734,32 @@ export class CleanupEngine {
    * manifest and the SQLite row stay, marked PURGED, so the Quarantine still shows what was
    * there. This is the only place in the app that deletes a file permanently.
    */
-  purgeEntries(entryIds, { now = Date.now() } = {}) {
+  async purgeEntries(entryIds, { now = Date.now() } = {}) {
     const wanted = new Set(entryIds);
     const purged = [];
-    for (const entry of this.listPurgeableEntries({ now })) {
-      if (!wanted.has(entry.id)) continue;
-      fs.unlinkSync(entry.payloadPath);
-      const { payloadPath, payloadBytes, ...stored } = entry;
-      const updated = { ...stored, status: 'PURGED', purgedAt: new Date(now).toISOString() };
-      try {
-        const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8'));
-        writeFileDurable(entry.manifestPath, JSON.stringify({ ...manifest, status: 'PURGED', purgedAt: updated.purgedAt }, null, 2));
-      } catch {
-        // The row below still records it
+    const purgedAt = new Date(now).toISOString();
+    // In batches: one transaction each, and a pause between them so the app stays responsive
+    const eligible = this.listPurgeableEntries({ now }).filter((e) => wanted.has(e.id));
+    for (let i = 0; i < eligible.length; i += 500) {
+      const batch = [];
+      for (const entry of eligible.slice(i, i + 500)) {
+        // Checked again right before: still a regular file at the vault's own place
+        const st = fs.lstatSync(entry.payloadPath, { throwIfNoEntry: false });
+        if (!st || !st.isFile()) continue;
+        fs.unlinkSync(entry.payloadPath);
+        const { payloadPath, payloadBytes, ...stored } = entry;
+        batch.push({ ...stored, status: 'PURGED', purgedAt });
+        purged.push({ id: entry.id, sizeBytes: payloadBytes });
+        try {
+          // The row is the record; the manifest says the same for anyone reading the vault
+          const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8'));
+          fs.writeFileSync(entry.manifestPath, JSON.stringify({ ...manifest, status: 'PURGED', purgedAt }, null, 2));
+        } catch {
+          // The row below still records it
+        }
       }
-      this.sqliteStore.saveQuarantineEntry(updated);
-      purged.push({ id: entry.id, sizeBytes: payloadBytes });
+      this.sqliteStore.saveQuarantineEntries(batch);
+      await new Promise((resolve) => setImmediate(resolve));
     }
     return purged;
   }

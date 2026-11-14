@@ -24,7 +24,12 @@ test('G1. Growth is claimed only between scans that counted the same things', ()
   assert.equal(compareScans(null, after).reason, 'FIRST_SCAN');
   const wider = summarizeScanForHistory(state({ scope: { projectFolders: true, dependencyFolders: true } }));
   assert.equal(compareScans(before, wider).reason, 'DIFFERENT_SCOPE');
-  assert.equal(compareScans(before, summarizeScanForHistory(state({ truncated: true }))).reason, 'FILE_LIMIT');
+  // Past the file limit the total is still complete: it is compared, the breakdown is not
+  const capped = compareScans(before, summarizeScanForHistory(state({ truncated: true, files: [file('LOG', 5000)] })));
+  assert.equal(capped.comparable, true);
+  assert.equal(capped.totalsOnly, true);
+  assert.equal(capped.deltaBytes, 5000 - 1100);
+  assert.deepEqual([capped.kinds, capped.sessions, capped.deltaFiles], [[], [], null]);
   assert.equal(compareScans({ ...before, applicationId: 'other' }, after).reason, 'OTHER_APPLICATION');
 
   // Only numbers and IDs are kept
@@ -99,6 +104,11 @@ test('G3. Diagnostics hold field names and types only: no prompt, value, ID or p
     assert.equal(normalizeKey(UUID), '<id>');
     assert.equal(normalizeKey('/Users/me/x'), '<path>');
     assert.equal(normalizeKey(`composerData:${UUID}`), 'composerData:<id>');
+    assert.equal(normalizeKey('quarterly-report.xlsx'), '<file>');
+    assert.equal(normalizeKey('jane@example.com'), '<name>');
+    assert.equal(normalizeKey('editor.fontSize'), 'editor.fontSize', 'a setting name stays');
+    const many = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`project${i}`, { size: i }]));
+    assert.deepEqual(shapeOf(many), { '<key>': { size: 'number' }, '…': '20 entries' });
     assert.deepEqual(shapeOf({ a: 'text', b: [1, 2], c: { d: null } }), { a: 'string', b: ['number'], c: { d: 'null' } });
 
     const codexDir = path.join(home, '.codex', 'sessions', '2026', '11', '01');
@@ -114,7 +124,7 @@ test('G3. Diagnostics hold field names and types only: no prompt, value, ID or p
     fs.mkdirSync(cursorDir, { recursive: true });
     const db = new DatabaseSync(path.join(cursorDir, 'state.vscdb'));
     db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
-    db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`composerData:${UUID}`, JSON.stringify({ text: SECRET, files: { [`/Users/me/${UUID}.js`]: 1 } }));
+    db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`composerData:${UUID}`, JSON.stringify({ text: SECRET, files: { [`/Users/me/${UUID}.js`]: 1, 'billing-plan.md': 2 }, owner: { 'jane@example.com': true } }));
     db.close();
 
     const text = buildDiagnostics({
@@ -127,7 +137,7 @@ test('G3. Diagnostics hold field names and types only: no prompt, value, ID or p
     assert.match(text, /session_meta/);
     assert.match(text, /composerData:<id>/);
     assert.match(text, /"text": "string"/);
-    assert.doesNotMatch(text, /billing|3f2a1b4c|\/Users\/me/);
+    assert.doesNotMatch(text, /billing|3f2a1b4c|\/Users\/me|jane|example\.com/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

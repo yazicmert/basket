@@ -4,9 +4,11 @@
  * worktrees and numbers are stored; never conversation text (AGENTS.md rule 6). Session names
  * are looked up in the current scan when the change is shown.
  *
- * Two scans are compared only when they counted the same things: same application, same scan
- * permissions (whole project folders, dependency folders), and neither stopped at the file
- * limit. Otherwise the totals differ for reasons other than growth, so no change is claimed.
+ * Two scans are compared only when they counted the same things: same application and same
+ * scan permissions (whole project folders, dependency folders). Otherwise the totals differ for
+ * reasons other than growth, so no change is claimed. A scan that reached the file limit still
+ * has a complete total (files past it are measured), so totals are compared; the breakdown by
+ * kind and by session covers listed files only and is left out.
  */
 
 export const MAX_SESSIONS_KEPT = 200;
@@ -50,7 +52,6 @@ export function whyNotComparable(previous, current) {
   if (!previous) return 'FIRST_SCAN';
   if (previous.applicationId !== current.applicationId) return 'OTHER_APPLICATION';
   if (previous.scope !== current.scope) return 'DIFFERENT_SCOPE';
-  if (previous.truncated || current.truncated) return 'FILE_LIMIT';
   return null;
 }
 
@@ -60,6 +61,18 @@ export function compareScans(previous, current) {
     return { comparable: false, reason, previousScannedAt: previous?.scannedAt || null };
   }
   const total = (s) => s.listedBytes + s.measuredBytes;
+  // Past the file limit only the total is complete
+  if (previous.truncated || current.truncated) {
+    return {
+      comparable: true,
+      totalsOnly: true,
+      previousScannedAt: previous.scannedAt,
+      deltaBytes: total(current) - total(previous),
+      deltaFiles: null,
+      kinds: [],
+      sessions: []
+    };
+  }
   const kinds = new Set([...Object.keys(previous.kinds), ...Object.keys(current.kinds)]);
   const kindChanges = Array.from(kinds, (type) => ({
     artifactType: type,

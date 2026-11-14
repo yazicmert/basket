@@ -135,7 +135,7 @@ ${section('By kind', table(['Kind', 'Files', 'Size'], data.kinds.map((k) => [esc
 ${section(
   'What each session left behind',
   table(['Session', 'Its output', 'Left behind'], data.sessions.slice(0, 50).map((s) => [`${escapeHtml(s.label)}${s.startedAt ? `<span class="path">${escapeHtml(new Date(s.startedAt).toLocaleDateString('en-US', { dateStyle: 'medium' }))}</span>` : ''}`, formatBytes(s.output.bytes), formatBytes(s.costBytes)])),
-  'At least: files made by commands a session ran (installs, builds) are not named in its record. Prompts are not included in reports.'
+  'At least: files made by commands a session ran (installs, builds) are not named in its record. Sessions are named by the title the app keeps for them, or by their ID; the prompts themselves are not included.'
 )}
 ${section('Worktrees', table(['Worktree', 'Files', 'Size'], data.worktrees.map((w) => [`${escapeHtml(w.name)}<span class="path">${escapeHtml(w.path)}</span>`, w.fileCount.toLocaleString('en-US'), formatBytes(w.bytes)])))}
 ${section('Build outputs by project', table(['Project', 'Files', 'Size'], data.buildProjects.map((b) => [`${escapeHtml(b.name)}<span class="path">${escapeHtml(b.path)}${b.rebuild ? ` · ${escapeHtml(b.rebuild)}` : ''}</span>`, b.count.toLocaleString('en-US'), formatBytes(b.bytes)])))}

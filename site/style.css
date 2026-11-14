@@ -2133,3 +2133,38 @@ h3.platform span {
     min-width: 540px;
   }
 }
+
+/* Insights in the preview: the sample's own numbers */
+
+.demo-insights {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 16px;
+  min-height: 320px;
+}
+.demo-insights[hidden] {
+  display: none;
+}
+.demo-icard {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-raised);
+}
+.demo-icard h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.demo-icard p {
+  margin: 4px 0 0;
+  max-width: 60ch;
+}
+.demo-ifigure {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}

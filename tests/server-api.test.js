@@ -120,6 +120,34 @@ test('HTTP Desktop UI Server & REST API end-to-end integration test', async () =
     const restoreData = await restoreRes.json();
     assert.equal(restoreData.ok, true);
     assert.equal(restoreData.restored, true);
+
+    // 7. Emptying the Quarantine: nothing before 30 days, then exactly the confirmed list, once
+    const post = async (route, body) => {
+      const res = await fetch(`${baseUrl}${route}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Atlas-Token': sessionToken },
+        body: JSON.stringify(body)
+      });
+      return { status: res.status, data: await res.json() };
+    };
+    const rev2 = (await post('/api/cleanup/review', { artifactIds: [lowRiskArt.id] })).data;
+    const held = (await post('/api/cleanup/quarantine', { artifactIds: [lowRiskArt.id], confirmationToken: rev2.review.confirmationToken })).data.quarantinedEntries[0];
+    assert.equal((await post('/api/quarantine/purge/prepare', {})).data.purge.count, 0);
+    const aged = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    service.sqliteStore.db.prepare('UPDATE quarantine_entries SET quarantined_at = ? WHERE id = ?').run(aged, held.id);
+    const manifest = JSON.parse(fs.readFileSync(held.manifestPath, 'utf8'));
+    fs.writeFileSync(held.manifestPath, JSON.stringify({ ...manifest, quarantinedAt: aged }));
+    const prepared = (await post('/api/quarantine/purge/prepare', {})).data.purge;
+    assert.equal(prepared.count, 1);
+    assert.equal((await post('/api/quarantine/purge', { token: 'purge_guess' })).status, 409);
+    // The list is asked for again before confirming
+    const again = (await post('/api/quarantine/purge/prepare', {})).data.purge;
+    const purged = await post('/api/quarantine/purge', { token: again.token });
+    assert.equal(purged.status, 200);
+    assert.equal(purged.data.purgedCount, 1);
+    assert.equal(fs.existsSync(held.quarantinePath), false);
+    assert.equal(purged.data.quarantineEntries.find((e) => e.id === held.id).status, 'PURGED');
+    assert.equal((await post('/api/quarantine/purge', { token: again.token })).status, 409, 'used once');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     service.sqliteStore.close();

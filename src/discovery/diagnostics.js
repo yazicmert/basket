@@ -14,6 +14,7 @@ import { ArtifactType } from '../models/entities.js';
 
 const MAX_DEPTH = 5;
 const MAX_KEYS = 40;
+const FILE_NAME = /\.(?:js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|md|mdx|txt|json|jsonl|yml|yaml|toml|xml|html|css|scss|csv|tsv|xlsx|xls|docx|doc|pptx|pdf|png|jpe?g|gif|svg|webp|zip|lock|log|sql|ipynb|env)$/i;
 const ID_KEY = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,}|\d{6,})$/i;
 
 /** A field name as shown: IDs, paths and long or odd names become placeholders. */
@@ -21,6 +22,9 @@ export function normalizeKey(key) {
   const k = String(key);
   if (ID_KEY.test(k)) return '<id>';
   if (/[\\/]/.test(k) || /^[A-Za-z]:/.test(k) || k.startsWith('file:')) return '<path>';
+  if (/@/.test(k)) return '<name>';
+  // A field name with a file ending is a file name, not a field
+  if (FILE_NAME.test(k)) return '<file>';
   // "composerData:3f2a…" keeps its prefix and hides the id
   const named = k.replace(/([:._-])(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-f]{16,}|\d{6,})/gi, '$1<id>');
   if (named.length > 48 || /\s/.test(named)) return '<text>';
@@ -37,6 +41,11 @@ export function shapeOf(value, depth = 0) {
   }
   if (typeof value === 'object') {
     if (depth >= MAX_DEPTH) return '{…}';
+    const keys = Object.keys(value);
+    // An object with many keys is a map (keyed by names, files or ids): one placeholder
+    if (keys.length > 12) {
+      return { '<key>': mergeShapes(keys.slice(0, 10).map((k) => shapeOf(value[k], depth + 1))), '…': `${keys.length} entries` };
+    }
     const out = {};
     for (const key of Object.keys(value).slice(0, MAX_KEYS)) {
       const name = normalizeKey(key);
@@ -94,7 +103,12 @@ export function codexRecordShapes(homeDir) {
   for (const file of files) {
     let lines;
     try {
-      lines = fs.readFileSync(file, 'utf8').split('\n').slice(0, 300);
+      // The first 512 KB is enough for the shape; a record cut off at the end is skipped
+      const fd = fs.openSync(file, 'r');
+      const buffer = Buffer.alloc(512 * 1024);
+      const n = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      fs.closeSync(fd);
+      lines = buffer.subarray(0, n).toString('utf8').split('\n').slice(0, 300);
     } catch {
       continue;
     }
@@ -134,13 +148,16 @@ export function cursorRecordShapes(homeDir, { platform = process.platform } = {}
           tableShapes[table] = { columns: cols };
           continue;
         }
+        // Keys first; a value is read only for the few samples of each pattern
         const patterns = new Map();
-        for (const row of db.prepare(`SELECT key, value FROM ${table} LIMIT 20000`).iterate()) {
+        const valueOf = db.prepare(`SELECT value FROM ${table} WHERE key = ? LIMIT 1`);
+        for (const row of db.prepare(`SELECT key FROM ${table} LIMIT 20000`).iterate()) {
           const pattern = normalizeKey(row.key);
           const entry = patterns.get(pattern) || { count: 0, shape: null, samples: 0 };
           entry.count += 1;
           if (entry.samples < 3) {
-            const text = typeof row.value === 'string' ? row.value : Buffer.isBuffer(row.value) || row.value instanceof Uint8Array ? Buffer.from(row.value).toString('utf8') : null;
+            const value = valueOf.get(row.key)?.value;
+            const text = typeof value === 'string' ? value : Buffer.isBuffer(value) || value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : null;
             if (text && /^[[{]/.test(text.trim())) {
               try {
                 const shape = shapeOf(JSON.parse(text));

@@ -318,7 +318,7 @@ export class ArtifactAtlasService {
     const summary = summarizeScanForHistory(this.activeState);
     // The newest earlier scan that counted the same things; else the newest, to say why not
     const earlier = this.sqliteStore.listScanSummaries(summary.applicationId, 20).filter((s) => !s.cancelled);
-    const previous = earlier.find((s) => s.scope === summary.scope && !s.truncated) || earlier[0] || null;
+    const previous = earlier.find((s) => s.scope === summary.scope) || earlier[0] || null;
     this.activeState.growth = { ...compareScans(previous, summary), history: [] };
     // Names for the sessions that grew: their stored title, or their ID (never prompt text)
     const sessionById = new Map((this.activeState.sessions || []).map((s) => [s.id, s]));
@@ -329,7 +329,7 @@ export class ArtifactAtlasService {
     if (scan.status !== 'CANCELLED') this.sqliteStore.saveScanSummary(summary);
     this.activeState.growth.history = this.sqliteStore
       .listScanSummaries(summary.applicationId, 12)
-      .filter((s) => s.scope === summary.scope && !s.truncated)
+      .filter((s) => s.scope === summary.scope)
       .map((s) => ({ scannedAt: s.scannedAt, bytes: s.listedBytes + s.measuredBytes }))
       .reverse();
 
@@ -588,22 +588,25 @@ export class ArtifactAtlasService {
     const ids = entries.map((e) => e.id).sort();
     const token = ids.length > 0 ? `purge_${crypto.createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 24)}` : null;
     this.pendingPurge = token ? { token, ids, preparedAt: now } : null;
+    // The largest are shown; the confirmation still covers exactly the whole list
+    const shown = [...entries].sort((a, b) => (b.payloadBytes || 0) - (a.payloadBytes || 0)).slice(0, 200);
     return {
       minAgeDays: PURGE_MIN_AGE_DAYS,
       token,
+      count: entries.length,
       totalBytes: entries.reduce((s, e) => s + (e.payloadBytes || 0), 0),
-      entries: entries.map((e) => ({ id: e.id, artifactName: e.artifactName, originalPath: e.originalPath, sizeBytes: e.payloadBytes, quarantinedAt: e.quarantinedAt }))
+      entries: shown.map((e) => ({ id: e.id, artifactName: e.artifactName, originalPath: e.originalPath, sizeBytes: e.payloadBytes, quarantinedAt: e.quarantinedAt }))
     };
   }
 
-  purgeQuarantine({ token, now = Date.now() }) {
+  async purgeQuarantine({ token, now = Date.now() }) {
     const pending = this.pendingPurge;
     // One use, within ten minutes of the list the user saw
     if (!pending || !token || token !== pending.token || now - pending.preparedAt > 10 * 60 * 1000) {
       throw new Error('PURGE_CONFIRMATION_EXPIRED: Open the list again and confirm.');
     }
     this.pendingPurge = null;
-    const purged = this.cleanupEngine.purgeEntries(pending.ids, { now });
+    const purged = await this.cleanupEngine.purgeEntries(pending.ids, { now });
     return {
       purgedCount: purged.length,
       skippedCount: pending.ids.length - purged.length,

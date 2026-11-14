@@ -72,6 +72,15 @@ export async function findIdenticalFiles(state, { signal, onProgress = () => {},
   }
   const totalBytes = candidates.reduce((s, g) => s + g.length * g[0].sizeBytes, 0);
   let doneBytes = 0;
+  let sinceYield = 0;
+  // Many small files never reach the pause inside hashFile, so pause by files read as well
+  const pace = async () => {
+    if (++sinceYield >= 25) {
+      sinceYield = 0;
+      onProgress({ doneBytes, totalBytes });
+      await yieldNow();
+    }
+  };
   const groups = [];
   for (const group of candidates) {
     if (signal?.aborted) throw new Error('CANCELLED');
@@ -87,6 +96,7 @@ export async function findIdenticalFiles(state, { signal, onProgress = () => {},
       }
       if (!byPrefix.has(key)) byPrefix.set(key, []);
       byPrefix.get(key).push(a);
+      await pace();
     }
     for (const same of byPrefix.values()) {
       if (same.length < 2) continue;
@@ -102,6 +112,7 @@ export async function findIdenticalFiles(state, { signal, onProgress = () => {},
         key ||= 'prefix-is-whole';
         if (!byFull.has(key)) byFull.set(key, []);
         byFull.get(key).push(a);
+        await pace();
       }
       for (const copies of byFull.values()) {
         if (copies.length < 2) continue;

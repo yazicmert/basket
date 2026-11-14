@@ -1181,7 +1181,7 @@ export function createAtlasServer(options = {}) {
       if (url.pathname === '/api/quarantine/purge' && req.method === 'POST') {
         const body = await readJsonBody(req);
         try {
-          const result = activeService().purgeQuarantine({ token: body.token });
+          const result = await activeService().purgeQuarantine({ token: body.token });
           return sendJson(res, 200, { ok: true, ...result });
         } catch (err) {
           return sendJson(res, 409, { ok: false, error: err.message });

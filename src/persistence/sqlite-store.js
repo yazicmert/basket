@@ -564,9 +564,30 @@ export class SQLiteStore {
     }
   }
 
+  /** Several entries in one transaction (emptying the Quarantine can touch thousands). */
+  saveQuarantineEntries(entries) {
+    this.db.exec('BEGIN TRANSACTION;');
+    try {
+      for (const entry of entries) this.writeQuarantineEntry(entry);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
   saveQuarantineEntry(entry) {
     this.db.exec('BEGIN TRANSACTION;');
     try {
+      this.writeQuarantineEntry(entry);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  writeQuarantineEntry(entry) {
       this.db
         .prepare(`
           INSERT OR REPLACE INTO quarantine_entries (
@@ -606,12 +627,6 @@ export class SQLiteStore {
         .prepare('UPDATE artifacts SET quarantined = ? WHERE id = ?')
         // A file emptied from the Quarantine is gone, so it stays out of the scan as well
         .run(entry.status === 'QUARANTINED' || entry.status === 'PURGED' ? 1 : 0, entry.artifactId);
-
-      this.db.exec('COMMIT;');
-    } catch (err) {
-      this.db.exec('ROLLBACK;');
-      throw err;
-    }
   }
 
   listQuarantineEntries(statusFilter = null) {

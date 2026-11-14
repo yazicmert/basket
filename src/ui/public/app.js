@@ -2482,7 +2482,6 @@ async function revealById(targetId, label) {
 const GROWTH_REASONS = {
   FIRST_SCAN: 'This is the first scan of this app. The next one will show what changed.',
   DIFFERENT_SCOPE: 'The last scan counted different folders (see Permissions), so the totals are not comparable.',
-  FILE_LIMIT: 'One of the scans reached the file limit, so the totals are not comparable.',
   CANCELLED: 'This scan was stopped before the end.',
   OTHER_APPLICATION: 'The last scan was of another app.'
 };
@@ -2532,13 +2531,19 @@ function growthCardHtml(growth) {
     `<div class="insight-split">
        <div>
          <div class="insight-figure">${signedBytes(growth.deltaBytes)}</div>
-         <div class="insight-meta">since ${escapeHtml(formatDate(growth.previousScannedAt))} · ${growth.deltaFiles >= 0 ? '+' : '−'}${Math.abs(growth.deltaFiles).toLocaleString()} files</div>
+         <div class="insight-meta">since ${escapeHtml(formatDate(growth.previousScannedAt))}${growth.deltaFiles === null ? '' : ` · ${growth.deltaFiles >= 0 ? '+' : '−'}${Math.abs(growth.deltaFiles).toLocaleString()} files`}</div>
          ${sparklineSvg(growth.history)}
        </div>
        <div>
          ${kinds ? `<div class="insight-subtitle">By kind</div>${kinds}` : ''}
          ${sessions ? `<div class="insight-subtitle">Sessions that grew</div>${sessions}` : ''}
-         ${!kinds && !sessions ? '<p class="insight-quiet">Nothing was added or removed since then.</p>' : ''}
+         ${
+           growth.totalsOnly
+             ? '<p class="insight-quiet">A scan reached the file limit, so only the total is compared. It is complete: files past the limit are measured. The breakdown by kind and session covers listed files only and is left out.</p>'
+             : !kinds && !sessions
+               ? '<p class="insight-quiet">Nothing was added or removed since then.</p>'
+               : ''
+         }
        </div>
      </div>`
   );
@@ -2619,7 +2624,7 @@ function buildOutputsCardHtml(data) {
 }
 
 function copiesCardHtml(copies) {
-  const intro = '<p class="insight-quiet">Files with exactly the same content in different places. Only files of 64 KB or more are compared, by reading them; nothing is changed.</p>';
+  const intro = '<p class="insight-quiet">Files with exactly the same content in different places. Listed files of 64 KB or more are compared by reading them; nothing is changed.</p>';
   if (!copies || copies.status === 'idle' || copies.status === 'cancelled' || copies.status === 'failed') {
     return insightCard(
       'Identical files',
@@ -3155,7 +3160,7 @@ function renderQuarantineSummary() {
   const purged = entries.filter((e) => e.status === 'PURGED');
   const sum = (list) => list.reduce((s, e) => s + (e.sizeBytes || 0), 0);
   box.innerHTML = held.length || purged.length
-    ? `<span><strong>${formatBytes(sum(held))}</strong> held in ${pluralize(held.length, 'file')}</span>${
+    ? `${held.length ? `<span><strong>${formatBytes(sum(held))}</strong> held in ${pluralize(held.length, 'file')}</span>` : ''}${
         purged.length ? `<span>${formatBytes(sum(purged))} freed by emptying</span>` : ''
       }`
     : '';
@@ -3176,7 +3181,7 @@ async function openPurgeModal() {
   }
   uiState.pendingPurge = purge;
   const held = (uiState.quarantineEntries || []).filter((e) => e.status === 'QUARANTINED');
-  if (purge.entries.length === 0) {
+  if (purge.count === 0) {
     const oldest = held.map((e) => Date.parse(e.quarantinedAt)).filter(Number.isFinite).sort((a, b) => a - b)[0];
     const ready = oldest ? new Date(oldest + purge.minAgeDays * 86400000) : null;
     body.innerHTML = `<div class="purge-empty">
@@ -3188,7 +3193,7 @@ async function openPurgeModal() {
     body.innerHTML = `
       <div class="purge-total">
         <span class="purge-total-value">${formatBytes(purge.totalBytes)}</span>
-        <span class="purge-total-meta">${pluralize(purge.entries.length, 'file')} that ${purge.entries.length === 1 ? 'has' : 'have'} waited at least ${purge.minAgeDays} days</span>
+        <span class="purge-total-meta">${pluralize(purge.count, 'file')} that ${purge.count === 1 ? 'has' : 'have'} waited at least ${purge.minAgeDays} days</span>
       </div>
       <p class="purge-warning">These files are deleted for good and cannot be put back. Files that waited less than ${purge.minAgeDays} days stay in Quarantine.</p>
       <div class="purge-list">
@@ -3200,9 +3205,10 @@ async function openPurgeModal() {
             </div>`
           )
           .join('')}
-      </div>`;
+      </div>
+      ${purge.count > purge.entries.length ? `<p class="inspector-note">The ${purge.entries.length} largest are listed; all ${purge.count.toLocaleString()} are deleted.</p>` : ''}`;
     confirmBtn.classList.remove('hidden');
-    confirmBtn.textContent = `Delete ${pluralize(purge.entries.length, 'File')} Permanently`;
+    confirmBtn.textContent = `Delete ${pluralize(purge.count, 'File')} Permanently`;
   }
   modal.classList.remove('hidden');
 }

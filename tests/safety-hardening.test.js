@@ -570,9 +570,10 @@ test('S9. Emptying the Quarantine: only after 30 days, only the confirmed list, 
     const later = heldAt + 31 * day;
     const list = service.preparePurge({ now: later });
     assert.equal(list.entries.length, 1);
+    assert.equal(list.count, 1);
     assert.equal(list.minAgeDays, 30);
-    assert.throws(() => service.purgeQuarantine({ token: 'purge_wrong', now: later }), /PURGE_CONFIRMATION_EXPIRED/);
-    assert.throws(() => service.purgeQuarantine({ token: list.token, now: later + 11 * 60 * 1000 }), /PURGE_CONFIRMATION_EXPIRED/);
+    await assert.rejects(service.purgeQuarantine({ token: 'purge_wrong', now: later }), /PURGE_CONFIRMATION_EXPIRED/);
+    await assert.rejects(service.purgeQuarantine({ token: list.token, now: later + 11 * 60 * 1000 }), /PURGE_CONFIRMATION_EXPIRED/);
 
     // A manifest whose date differs from the database is skipped
     const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8'));
@@ -596,7 +597,7 @@ test('S9. Emptying the Quarantine: only after 30 days, only the confirmed list, 
     fs.writeFileSync(entry.quarantinePath, saved);
 
     const confirmed = service.preparePurge({ now: later });
-    const done = service.purgeQuarantine({ token: confirmed.token, now: later });
+    const done = await service.purgeQuarantine({ token: confirmed.token, now: later });
     assert.equal(done.purgedCount, 1);
     assert.equal(done.freedBytes, saved.length);
     assert.equal(fs.existsSync(entry.quarantinePath), false);
@@ -608,7 +609,7 @@ test('S9. Emptying the Quarantine: only after 30 days, only the confirmed list, 
     assert.equal(JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8')).status, 'PURGED');
     assert.throws(() => service.restoreQuarantineEntry({ entryId: entry.id }), /cannot be restored/);
     assert.equal(service.preparePurge({ now: later }).entries.length, 0);
-    assert.throws(() => service.purgeQuarantine({ token: confirmed.token, now: later }), /PURGE_CONFIRMATION_EXPIRED/);
+    await assert.rejects(service.purgeQuarantine({ token: confirmed.token, now: later }), /PURGE_CONFIRMATION_EXPIRED/);
   } finally {
     sandbox.cleanup();
   }

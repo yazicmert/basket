@@ -336,6 +336,12 @@ test('S6. Past the file limit files are measured, so the total is complete altho
     const level = buildMapLevel(b, 'overflow');
     assert.ok(level.nodes.some((n) => n.id === `overflow-folder:${folders[0].path}`));
     assert.deepEqual(levelArtifactIds(b, 'overflow'), [], 'never selectable');
+    // Two scans at the file limit are still compared by their (complete) totals
+    fs.writeFileSync(path.join(env.project, 'src', 'grown.bin'), 'g'.repeat(4321));
+    const c = await capped.scanAndAnalyze({ bundlePath: env.bundle, scanScope: scope });
+    assert.equal(c.growth.comparable, true);
+    assert.equal(c.growth.totalsOnly, true);
+    assert.equal(c.growth.deltaBytes, 4321);
   } finally {
     full.sqliteStore.close();
     capped.sqliteStore.close();
