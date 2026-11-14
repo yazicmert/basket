@@ -478,9 +478,17 @@ export class PlatformServices {
     if (!fs.existsSync(resolved)) {
       return { ok: false, error: 'FILE_NOT_FOUND', path: resolved };
     }
+    // A folder is opened to show what is in it; a file is selected in its folder
+    let isFolder = false;
+    try {
+      const st = fs.lstatSync(resolved);
+      isFolder = st.isDirectory() && !st.isSymbolicLink();
+    } catch {
+      isFolder = false;
+    }
     if (this.platform === 'darwin') {
       return new Promise((resolve) => {
-        execFile('/usr/bin/open', ['-R', resolved], (err) => {
+        execFile('/usr/bin/open', isFolder ? [resolved] : ['-R', resolved], (err) => {
           if (err) {
             resolve({ ok: false, error: err.message, path: resolved });
           } else {
@@ -492,7 +500,7 @@ export class PlatformServices {
     if (this.platform === 'win32' && process.platform === 'win32') {
       return new Promise((resolve) => {
         // File Explorer selects the file; it reports a non-zero exit code even when it worked
-        execFile('explorer.exe', [`/select,${resolved}`], () => {
+        execFile('explorer.exe', [isFolder ? resolved : `/select,${resolved}`], () => {
           resolve({ ok: true, action: 'EXPLORER_SELECT_WINDOWS', path: resolved });
         });
       });
@@ -500,7 +508,7 @@ export class PlatformServices {
     return {
       ok: true,
       action: 'REVEAL_SIMULATED_NON_MACOS',
-      commandPreview: `open -R ${JSON.stringify(resolved)}`,
+      commandPreview: `open ${isFolder ? '' : '-R '}${JSON.stringify(resolved)}`,
       path: resolved
     };
   }

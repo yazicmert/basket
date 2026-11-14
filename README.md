@@ -45,14 +45,14 @@ Get-FileHash $HOME\Downloads\ArtifactAtlas-Windows.zip -Algorithm SHA256
 
 ### Updates
 
-While the app is open it checks GitHub for a newer release at most once every half hour. On macOS, one confirmation downloads the new version, checks it against its published SHA-256, its bundle identifier, its version and its code signature, and restarts into it. A copy opened from the disk image is installed into Applications. If an update cannot finish, the previous version is kept and the app says why on its next launch. On Windows the update button opens the download page. The check can be turned off in **Settings**.
+While the app is open it checks GitHub for a newer release at most once every half hour. On macOS, one confirmation downloads the new version, checks it against its published SHA-256, its bundle identifier, its version and its code signature, and restarts into it. A copy opened from the disk image is installed into Applications. If an update cannot finish, the previous version is kept and the app says why on its next launch. On Windows the same button downloads the new ZIP, checks it against its published SHA-256, its name and its version, replaces the app's files in its folder (or installs it into `%LOCALAPPDATA%\Programs\ArtifactAtlas` when that folder cannot be written) and restarts into it; your own files in that folder are left alone. The check can be turned off in **Settings**.
 
 ---
 
 ## Using it
 
 1. The app opens on built-in sample data and reads nothing from your disk.
-2. Choose an application: drag it from Applications onto the window on macOS, or pick it from the list. The start screen lists only the AI apps installed on your computer. Known AI tools that are not installed as an app but left data behind (command-line tools such as Claude Code, or apps you removed) can still be chosen in **Choose App…**, marked *Data only* with the folder that was found. An empty folder does not count.
+2. Choose an application: drag it onto the window (from Applications on macOS; a program or its Start Menu shortcut on Windows), pick it from the list, or browse for it in **Choose App…**. On Windows, apps installed from the Microsoft Store are listed too. The start screen lists only the AI apps installed on your computer. Known AI tools that are not installed as an app but left data behind (command-line tools such as Claude Code, or apps you removed) can still be chosen in **Choose App…**, marked *Data only* with the folder that was found. An empty folder does not count.
 3. Before the first real scan, the app asks what it may read and what it should count (see [Permissions](#permissions)). The folder being scanned is shown live.
 4. The **Map** opens level by level: the application with its kinds of files and its sessions, then folders, then files. **Sizes** shows the same files as a treemap; **Quarantine** lists what you moved.
 5. Select files and choose **Move to Quarantine…**. A review lists what can move and what is blocked, and why. Restoring never overwrites another file.

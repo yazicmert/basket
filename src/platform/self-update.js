@@ -97,12 +97,12 @@ export function resolveInstallTarget({ appBundlePath, platform = process.platfor
 }
 
 /** Download URLs for a version. Only the project's own release path is ever used. */
-export function releaseAssetUrls(version) {
+export function releaseAssetUrls(version, assetName = ZIP_ASSET_NAME) {
   const parsed = parseVersion(version);
   if (!parsed) return null;
   const tag = `v${parsed.join('.')}`;
   return {
-    zipUrl: `${RELEASE_DOWNLOAD_PREFIX}${tag}/${ZIP_ASSET_NAME}`,
+    zipUrl: `${RELEASE_DOWNLOAD_PREFIX}${tag}/${assetName}`,
     sumsUrl: `${RELEASE_DOWNLOAD_PREFIX}${tag}/${SUMS_ASSET_NAME}`
   };
 }
@@ -141,12 +141,12 @@ async function fetchChecked(url, fetchImpl) {
  * Downloads the release ZIP for `version` into `stagingDir` and verifies its digest.
  * Returns the path of the verified ZIP.
  */
-export async function downloadVerifiedRelease({ version, stagingDir, fetchImpl = globalThis.fetch, onProgress = null }) {
-  const urls = releaseAssetUrls(version);
+export async function downloadVerifiedRelease({ version, stagingDir, fetchImpl = globalThis.fetch, onProgress = null, assetName = ZIP_ASSET_NAME }) {
+  const urls = releaseAssetUrls(version, assetName);
   if (!urls) throw new Error('UPDATE_VERSION_INVALID');
 
   const sumsText = await (await fetchChecked(urls.sumsUrl, fetchImpl)).text();
-  const expected = digestFromSums(sumsText, ZIP_ASSET_NAME);
+  const expected = digestFromSums(sumsText, assetName);
   if (!expected) throw new Error('UPDATE_DIGEST_MISSING');
 
   const response = await fetchChecked(urls.zipUrl, fetchImpl);
@@ -154,7 +154,7 @@ export async function downloadVerifiedRelease({ version, stagingDir, fetchImpl =
   if (total > MAX_ZIP_BYTES) throw new Error('UPDATE_TOO_LARGE');
 
   fs.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
-  const zipPath = path.join(stagingDir, ZIP_ASSET_NAME);
+  const zipPath = path.join(stagingDir, assetName);
   const hash = crypto.createHash('sha256');
   const file = fs.openSync(zipPath, 'w', 0o600);
   let received = 0;
@@ -288,7 +288,8 @@ export function launchSwap({ appBundlePath, stagedBundle, appPid, stagingDir, re
  */
 export function readSwapFailure(stagingDir) {
   try {
-    const log = fs.readFileSync(path.join(stagingDir, 'update.log'), 'utf8');
+    // Windows PowerShell writes the log with a byte-order mark
+    const log = fs.readFileSync(path.join(stagingDir, 'update.log'), 'utf8').replace(/^\ufeff/, '');
     if (/update finished with status 0/.test(log)) return null;
     const lines = log.split(/\r?\n/).filter((line) => /^(failed|refusing): /.test(line));
     return lines.length > 0 ? lines[lines.length - 1].replace(/^(failed|refusing): /, '') : 'the installer stopped before it finished';
