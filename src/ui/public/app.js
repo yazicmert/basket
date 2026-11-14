@@ -2823,7 +2823,7 @@ function bindContextualToolbarEvents() {
       const res = await apiRequest('/api/finder/reveal', 'POST', {
         artifactIds: Array.from(uiState.selectedArtifactIds)
       });
-      const r = res.reveal || selectionSummary.reveal;
+      const r = res.reveal;
       let message;
       if (!r || r.kind === 'file') {
         message = `Showing ${selectionSummary.firstName || baseName(res.path)} in ${fileManagerName()}.`;

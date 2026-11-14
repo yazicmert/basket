@@ -43,3 +43,23 @@ test('RV1. Show in Finder opens the file, the shared folder, or the largest part
   );
   assert.equal(win.path, 'C:\\Users\\me\\AppData\\Local\\Cursor', 'Windows paths compare without case');
 });
+
+test('RV2. A selection of 300,000 files is placed quickly, and a stray file outside home does not open home', () => {
+  const files = [];
+  for (let i = 0; i < 300000; i += 1) {
+    const root = i % 3 === 0 ? '/Users/me/dev/shop/dist' : '/Users/me/Library/Caches/claude';
+    files.push({ path: `${root}/d${i % 500}/f${i}.js`, bytes: i % 3 === 0 ? 100 : 10 });
+  }
+  const started = Date.now();
+  const big = mac(files);
+  assert.ok(Date.now() - started < 3000, 'fast enough to answer a click');
+  assert.equal(big.path, '/Users/me/dev/shop/dist');
+  assert.equal(big.totalCount, 300000);
+
+  const stray = mac([
+    { path: '/opt/a/x', bytes: 1 },
+    { path: '/Users/me/dev/a/y', bytes: 50 },
+    { path: '/Users/me/Library/b/z', bytes: 40 }
+  ]);
+  assert.equal(stray.path, '/Users/me/dev/a', 'never the home folder itself');
+});

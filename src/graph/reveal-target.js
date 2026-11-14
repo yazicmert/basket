@@ -22,10 +22,12 @@ export function chooseRevealTarget(files, { homeDir = '', pathApi = path } = {})
   const parts = list.map((f) => f.path.split(sep));
   // Folders shared by every file (the last part of each path is the file name)
   let depth = 0;
-  const shortest = Math.min(...parts.map((p) => p.length - 1));
+  let shortest = Infinity;
+  for (const p of parts) shortest = Math.min(shortest, p.length - 1); // no spread: 300,000 paths
   while (depth < shortest && parts.every((p) => fold(p[depth]) === fold(parts[0][depth]))) depth += 1;
 
-  const tooBroad = (d) => d <= 1 || (Boolean(homeDir) && isAboveOrHome(parts[0], d, homeDir, pathApi));
+  // Judged on the files still in play, which all share their first `d` folders
+  const tooBroad = (d, sample) => d <= 1 || (Boolean(homeDir) && isAboveOrHome(sample, d, homeDir, pathApi));
 
   // While the folder is too broad, go into the part of it that holds the most bytes
   let members = list.map((f, i) => ({ ...f, parts: parts[i] }));
@@ -42,7 +44,7 @@ export function chooseRevealTarget(files, { homeDir = '', pathApi = path } = {})
     const largest = [...groups.values()].sort((a, b) => b.bytes - a.bytes || b.files.length - a.files.length)[0];
     if (!largest) break;
     // Past the broad folders, stop where the remaining files part ways
-    if (!tooBroad(depth) && largest.files.length < members.length) break;
+    if (!tooBroad(depth, members[0].parts) && largest.files.length < members.length) break;
     members = largest.files;
     depth += 1;
   }

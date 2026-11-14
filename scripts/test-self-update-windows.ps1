@@ -24,7 +24,8 @@ try {
   New-Item -ItemType Directory -Force -Path $Staging | Out-Null
   Copy-Item -LiteralPath (Join-Path $Dist 'ArtifactAtlas-Windows.zip') -Destination $Staging
 
-  $Fake = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 300' -PassThru -WindowStyle Hidden
+  # The "running app" is the installed copy's own runtime, so its files are in use, as in a real update
+  $Fake = Start-Process -FilePath (Join-Path $Install 'runtime\node.exe') -ArgumentList '-e', '"setTimeout(() => {}, 300000)"' -PassThru -WindowStyle Hidden
 
   Write-Host '==> [Update 2/5] Unpacking with tar.exe, checking name and version, starting the helper'
   $Runner = Join-Path $Work 'run-update.mjs'
@@ -38,31 +39,40 @@ catch (err) { refused = /UPDATE_VERSION_MISMATCH/.test(err.message); }
 if (!refused) { console.error('a wrong version was not refused'); process.exit(1); }
 const staged = stageVerifiedWindowsPackage({ zipPath: zip, stagingDir: staging, expectedVersion: version });
 console.log('staged', staged);
-await launchWindowsSwap({ installDir: install, stagedDir: staged, appPid: Number(pid), stagingDir: staging, relaunch: false });
+await launchWindowsSwap({ installDir: install, stagedDir: staged, appPid: Number(pid), stagingDir: staging, relaunch: true });
 "@ | Set-Content -LiteralPath $Runner -Encoding UTF8
   & $Node $Runner (Join-Path $Staging 'ArtifactAtlas-Windows.zip') $Staging $Install $Fake.Id $Version
   if ($LASTEXITCODE -ne 0) { throw "staging failed ($LASTEXITCODE)" }
 
   Write-Host '==> [Update 3/5] Waiting for the helper'
   $Log = Join-Path $Staging 'update.log'
-  for ($i = 0; $i -lt 600; $i++) {
+  for ($i = 0; $i -lt 900; $i++) {
     if ((Test-Path $Log) -and (Select-String -Path $Log -Pattern 'update finished' -Quiet)) { break }
     Start-Sleep -Milliseconds 100
   }
   if (Test-Path $Log) { Get-Content $Log } else { Write-Host 'no update.log was written' }
   $Output = Join-Path $Staging 'helper-output.txt'
   if (Test-Path $Output) { Write-Host '--- helper output ---'; Get-Content $Output }
-  if (-not (Test-Path $Log)) {
-    Write-Host '--- running the helper in the foreground to show why ---'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Staging 'swap.ps1') -InstallDir $Install -StagedDir (Join-Path $Staging 'unpacked\ArtifactAtlas') -AppPid $Fake.Id -Staging $Staging -Relaunch 0 -RunningDir $Install
-    Write-Host "foreground exit code $LASTEXITCODE"
-    if (Test-Path $Log) { Get-Content $Log }
-  }
   if (-not (Test-Path $Log) -or -not (Select-String -Path $Log -Pattern 'update finished with status 0' -Quiet)) { throw 'the helper did not finish with status 0' }
   if (Get-Process -Id $Fake.Id -ErrorAction SilentlyContinue) { throw 'the running app was not stopped' }
   if (Test-Path (Join-Path $Install 'app\OLD_COPY_MARKER')) { throw 'the old copy is still installed' }
   if (-not (Test-Path (Join-Path $Install 'my-notes.txt'))) { throw 'a file that is not part of the app was removed' }
   if (Test-Path (Join-Path $Staging 'previous')) { throw 'the previous copy was not cleaned up' }
+
+  # The helper reopened the updated app, from the install folder
+  $NewExe = Join-Path $Install 'ArtifactAtlas.exe'
+  $Reopened = $null
+  for ($i = 0; $i -lt 200 -and -not $Reopened; $i++) {
+    $Reopened = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $NewExe } | Select-Object -First 1
+    if (-not $Reopened) { Start-Sleep -Milliseconds 100 }
+  }
+  if (-not $Reopened) { throw 'the updated app was not reopened' }
+  Write-Host "  reopened: $NewExe (pid $($Reopened.ProcessId))"
+  Start-Sleep -Seconds 3
+  # Close it again: the launcher, its backend and its window
+  Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Install)) -or ($_.CommandLine -and $_.CommandLine.Contains((Join-Path $env:LOCALAPPDATA 'ArtifactAtlas\window'))) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Seconds 2
+  Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'ArtifactAtlas\window-url.txt') -Force -ErrorAction SilentlyContinue
 
   Write-Host '==> [Update 4/5] Starting the swapped copy (smoke test)'
   $Smoke = Start-Process -FilePath (Join-Path $Install 'ArtifactAtlas.exe') -ArgumentList '--smoke-test' -Wait -PassThru

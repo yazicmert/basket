@@ -287,6 +287,11 @@ export function createAtlasServer(options = {}) {
       return { version: status.latestVersion };
     } catch (err) {
       Object.assign(installState, { phase: 'failed', error: err.message });
+      // Already reported here; nothing is left for the next launch to report
+      if (settings.pendingUpdate && settings.pendingUpdate.stagingDir === stagingDir) {
+        settings.pendingUpdate = null;
+        saveSettings();
+      }
       fs.rmSync(stagingDir, { recursive: true, force: true });
       throw err;
     }
@@ -530,7 +535,7 @@ export function createAtlasServer(options = {}) {
   };
 
   // Count, physical size and first path for a set of file ids.
-  const summarizeSelection = (state, artifactIds) => {
+  const summarizeSelection = (state, artifactIds, { withReveal = false } = {}) => {
     const wanted = new Set(Array.isArray(artifactIds) ? artifactIds : []);
     const seenInodes = new Set();
     let count = 0;
@@ -553,11 +558,13 @@ export function createAtlasServer(options = {}) {
       physicalBytes,
       firstName: first ? first.name : null,
       firstPath: first ? first.canonicalPath : null,
-      // What Show in Finder / File Explorer opens: the file, or the folder of the selection
-      reveal: chooseRevealTarget(files, {
-        homeDir: activeService().platformServices.homeDir,
-        pathApi: activeService().platformServices.platform === 'win32' ? path.win32 : path.posix
-      })
+      // What Show in Finder / File Explorer opens; worked out only when asked for
+      reveal: withReveal
+        ? chooseRevealTarget(files, {
+            homeDir: activeService().platformServices.homeDir,
+            pathApi: activeService().platformServices.platform === 'win32' ? path.win32 : path.posix
+          })
+        : undefined
     };
   };
 
@@ -947,7 +954,7 @@ export function createAtlasServer(options = {}) {
         let target = body.path;
         let reveal = null;
         if (Array.isArray(body.artifactIds)) {
-          reveal = summarizeSelection(activeService().activeState, body.artifactIds).reveal;
+          reveal = summarizeSelection(activeService().activeState, body.artifactIds, { withReveal: true }).reveal;
           if (!reveal) return sendJson(res, 404, { ok: false, error: 'NOTHING_SELECTED' });
           target = reveal.path;
         }

@@ -288,7 +288,8 @@ export function launchSwap({ appBundlePath, stagedBundle, appPid, stagingDir, re
  */
 export function readSwapFailure(stagingDir) {
   try {
-    const log = fs.readFileSync(path.join(stagingDir, 'update.log'), 'utf8');
+    // Windows PowerShell writes the log with a byte-order mark
+    const log = fs.readFileSync(path.join(stagingDir, 'update.log'), 'utf8').replace(/^\ufeff/, '');
     if (/update finished with status 0/.test(log)) return null;
     const lines = log.split(/\r?\n/).filter((line) => /^(failed|refusing): /.test(line));
     return lines.length > 0 ? lines[lines.length - 1].replace(/^(failed|refusing): /, '') : 'the installer stopped before it finished';
