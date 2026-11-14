@@ -2683,3 +2683,27 @@ h3.platform span {
 .motion .steps li.reveal.in {
   transform: none;
 }
+
+/* ---------- Legal pages ---------- */
+
+.legal-date {
+  margin: -4px 0 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.legal-quote {
+  font-size: 12.5px;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.legal-license {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  line-height: 1.6;
+  max-height: none;
+}

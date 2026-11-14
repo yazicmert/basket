@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy — Artifact Atlas</title>
+<meta name="description" content="How Artifact Atlas and its website treat your data: nothing is collected." />
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png" />
+<link rel="stylesheet" href="../../style.css?v=20" />
+</head>
+<body class="doc">
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="../../" aria-label="Artifact Atlas home">
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+        <line x1="5" y1="14" x2="10" y2="5" /><line x1="5" y1="14" x2="15.5" y2="12" stroke-dasharray="2.2 1.8" />
+        <circle cx="5" cy="14" r="3" fill="currentColor" /><circle cx="10" cy="5" r="2" fill="var(--surface)" /><circle cx="15.5" cy="12" r="2" fill="var(--surface)" />
+      </svg>
+      <span class="wordmark-name">Artifact Atlas</span>
+    </a>
+    <nav class="topnav" aria-label="Legal">
+      <a href="../../legal/privacy/" aria-current="page">Privacy</a><a href="../../legal/terms/">Terms</a><a href="../../legal/notices/">Notices</a>
+    </nav>
+  </div>
+</div>
+<main>
+  <nav class="crumbs"><a href="../../">Artifact Atlas</a> / <a href="../">Legal</a> / Privacy</nav>
+  <h1 class="page-title">Privacy</h1>
+  <p class="legal-date">Effective November 14, 2026</p>
+  <p class="lead">Artifact Atlas collects nothing about you. The app works on your computer and keeps what it finds there; this website has no cookies, no analytics and no third-party content.</p>
+
+  <h2>The app</h2>
+  <ul>
+    <li><strong>No account, no telemetry, no analytics.</strong> The app does not send information about you, your computer or your files anywhere.</li>
+    <li><strong>It reads only after you allow it.</strong> Until you grant the <a href="../../permissions/home-folder-scan/">Scan my home folder</a> consent, it shows built-in sample data. You choose what a scan counts, and you can withdraw the consent at any time.</li>
+    <li><strong>What it keeps, it keeps on your computer.</strong> A local index of the files it found (paths, sizes, dates, session IDs, tool names), your settings and the Quarantine are stored in the app's data folder: <code>~/Library/Application Support/ArtifactAtlas</code> on macOS, <code>%LOCALAPPDATA%\ArtifactAtlas</code> on Windows.</li>
+    <li><strong>Conversations stay private.</strong> The prompt that started a session is read from that session's own record when you open it, shown in the window, and never stored or written to a file.</li>
+    <li><strong>Reports and diagnostics stay with you.</strong> Export Report writes files to the app's data folder. Collect Diagnostics only shows text for you to copy; it holds field names and types, never your prompts or file contents. Nothing is sent.</li>
+  </ul>
+
+  <h2>The only network use</h2>
+  <p>The app asks GitHub for the number of the latest release, at most once every half hour while it is open, and downloads a new version only when you click the update button. These requests carry no information about you or your files, though GitHub, like any server, receives your IP address with them. You can turn the check off in <strong>Settings</strong>. GitHub handles that data under the <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub General Privacy Statement</a>.</p>
+
+  <h2>This website</h2>
+  <p>The site is a set of static pages hosted on GitHub Pages. It sets no cookies, runs no analytics or tracking, and loads no fonts, scripts or images from other sites. GitHub, as the host, may record technical data such as IP addresses to serve and protect the pages, under the GitHub privacy statement linked above.</p>
+
+  <h2>Removing your data</h2>
+  <p>Everything the app keeps is in its data folder. Deleting that folder removes the index, the settings and the Quarantine, including any files you moved there and have not put back. Move back anything you want to keep first.</p>
+
+  <h2>Changes and questions</h2>
+  <p>If this policy changes, the new version is published on this page with a new date. Questions can be asked in the project's <a href="https://github.com/yazicmert/basket/issues">GitHub issues</a>.</p>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <span>Artifact Atlas · MIT licensed</span>
+    <nav aria-label="Legal">
+      <a href="../../">Home</a>
+      <a href="../../legal/privacy/">Privacy</a>
+      <a href="../../legal/terms/">Terms</a>
+      <a href="../../legal/notices/">Notices</a>
+    </nav>
+  </div>
+</footer>
+<script src="../../header.js?v=20" defer></script>
+<script src="../../motion.js?v=20" defer></script>
+</body>
+</html>
