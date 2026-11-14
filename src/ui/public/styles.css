@@ -1947,3 +1947,42 @@ button.crumb:hover {
 .insight-split .insight-subtitle:first-child {
   margin-top: 0;
 }
+
+/* ---------- Unused leftovers ---------- */
+
+.unused-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+.insight-cta {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+.unused-steps {
+  display: grid;
+  gap: 0;
+  margin: 14px 0 16px;
+  border-top: 1px solid var(--line);
+}
+.unused-steps > div {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.unused-steps strong {
+  font-weight: 600;
+}
+.unused-steps span {
+  color: var(--ink-2);
+}
+.quarantine-batch-when {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}

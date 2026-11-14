@@ -851,7 +851,7 @@
     var q = insightCard('Quarantine');
     var held = state.quarantined.reduce(function (s, id) { return s + byId[id].size; }, 0);
     q.appendChild(html('div', 'demo-ifigure', formatBytes(held)));
-    q.appendChild(html('p', 'demo-muted', 'Held, and can be put back. After 30 days, Empty Old Files deletes the list you confirm and frees the space.'));
+    q.appendChild(html('p', 'demo-muted', 'Held, and can be put back. Unused leftovers are deleted after 7 days unless their app makes them again; anything else can be emptied after 30 days.'));
   }
 
   // ---------- Render ----------

@@ -167,7 +167,7 @@
             <div class="quarantine-header-bar">
               <div>
                 <h2 class="panel-heading">Quarantine</h2>
-                <p class="panel-subheading">Removed files are kept here and can be put back. A file that has waited 30 days can be emptied for good, after you confirm the list.</p>
+                <p class="panel-subheading">Removed files are kept here and can be put back. Unused leftovers are deleted on their date; anything else can be emptied after 30 days, from a list you confirm.</p>
                 <div id="quarantine-summary" class="quarantine-summary"></div>
               </div>
               <div class="quarantine-conflict-selector">
@@ -279,6 +279,21 @@
       <div class="modal-footer">
         <button id="cancel-purge-modal-btn" class="ghost-btn" type="button">Cancel</button>
         <button id="confirm-purge-btn" class="danger-btn" type="button">Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The unused-files cleanup: what moves now and when it is deleted -->
+  <div id="unused-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="unused-modal-title">
+    <div class="modal-dialog modal-dialog-wide">
+      <div class="modal-header">
+        <h2 id="unused-modal-title">Clean Up Unused Leftovers</h2>
+        <button id="close-unused-modal-btn" class="icon-btn" type="button" aria-label="Close" title="Close">Close</button>
+      </div>
+      <div class="modal-body" id="unused-modal-body"></div>
+      <div class="modal-footer">
+        <button id="cancel-unused-modal-btn" class="ghost-btn" type="button">Cancel</button>
+        <button id="confirm-unused-btn" class="primary-btn" type="button">Move</button>
       </div>
     </div>
   </div>

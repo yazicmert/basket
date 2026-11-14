@@ -270,6 +270,7 @@ async function initApp() {
 
   bindPermissionsEvents();
   bindPurgeEvents();
+  bindUnusedEvents();
 
   // Inside the macOS app (WKWebView) the real window controls overlap the top-left corner
   if (/AppleWebKit/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent)) {
@@ -288,6 +289,14 @@ async function loadBootstrap() {
   try {
     const boot = await apiRequest('/api/bootstrap');
     uiState.bootstrap = boot;
+    // What the scheduled deletion did while the app was closed or in the background, told once
+    const sd = boot.lastScheduledDeletion;
+    if (sd && (sd.deleted || sd.neededAgain)) {
+      setTimeout(() => showToast(
+        `${sd.deleted ? `Deleted ${pluralize(sd.deleted, 'unused file')} (${formatBytes(sd.freedBytes)}) that waited 7 days in Quarantine.` : ''}${
+          sd.neededAgain ? ` ${pluralize(sd.neededAgain, 'file')} ${sd.neededAgain === 1 ? 'was' : 'were'} made again by ${sd.neededAgain === 1 ? 'its app and is' : 'their apps and are'} kept.` : ''
+        }`.trim(), 8000), 800);
+    }
     uiState.quarantineEntries = boot.quarantineEntries || [];
     uiState.pendingWorkspacePath = boot.defaultWorkspacePath || '';
     uiState.pendingBundlePath = null;
@@ -2694,11 +2703,14 @@ function pastLimitCardHtml(scan) {
 async function renderInsightsView() {
   const body = document.getElementById('insights-body');
   if (!body || !uiState.activeState?.scan) return;
-  const [leftovers, copies] = await Promise.all([
+  const [leftovers, copies, unused] = await Promise.all([
     apiRequest('/api/project-leftovers', 'GET').then((r) => r.leftovers).catch(() => null),
-    apiRequest('/api/insights/copies', 'GET').then((r) => r.copies).catch(() => null)
+    apiRequest('/api/insights/copies', 'GET').then((r) => r.copies).catch(() => null),
+    apiRequest('/api/cleanup/unused/prepare', 'POST', { minDays: uiState.unusedDays || 30 }).then((r) => r.cleanup).catch(() => null)
   ]);
+  uiState.unusedPlan = unused;
   const cards = [
+    unusedCardHtml(unused),
     growthCardHtml(uiState.activeState.growth),
     pastLimitCardHtml(uiState.activeState.scan),
     copiesCardHtml(copies),
@@ -2714,7 +2726,120 @@ async function renderInsightsView() {
   }
 }
 
+/* Safe files nobody has used for a while: moved to the Quarantine together, deleted after 7 days
+   unless their app makes them again. */
+function unusedCardHtml(plan) {
+  if (!plan) return '';
+  const choices = (plan.dayChoices || [30, 90, 180])
+    .map((d) => `<option value="${d}"${d === plan.minDays ? ' selected' : ''}>${d} days</option>`)
+    .join('');
+  const picker = `<label class="unused-picker">Unused for at least <select id="unused-days" class="filter-select">${choices}</select></label>`;
+  if (plan.count === 0) {
+    return insightCard('Unused leftovers', `<div class="insight-split"><div><p class="insight-quiet">No file marked safe to remove has gone unused that long.</p></div><div>${picker}</div></div>`, { wide: true });
+  }
+  const kinds = plan.kinds
+    .slice(0, 4)
+    .map((k) => `<div class="insight-row"><span>${escapeHtml(formatArtifactTypeLabelClient(k.artifactType))}</span><span class="insight-num">${pluralize(k.count, 'file')} · ${formatBytes(k.bytes)}</span></div>`)
+    .join('');
+  return insightCard(
+    'Unused leftovers',
+    `<div class="insight-split">
+       <div>
+         <div class="insight-figure">${formatBytes(plan.bytes)}</div>
+         <div class="insight-meta">${pluralize(plan.count, 'safe file')} unused for ${plan.minDays} days or more</div>
+         <button id="unused-clean-btn" class="primary-btn insight-cta" type="button">Clean Up…</button>
+       </div>
+       <div>${picker}<div class="insight-subtitle">By kind</div>${kinds}</div>
+     </div>
+     <p class="insight-quiet">They move to the Quarantine and are deleted after ${plan.deleteAfterDays} days. If an app makes one of them again before then, that one is kept. You can put them back until the day they are deleted.</p>`,
+    { wide: true }
+  );
+}
+
+async function openUnusedCleanup() {
+  let plan;
+  try {
+    plan = (await apiRequest('/api/cleanup/unused/prepare', 'POST', { minDays: uiState.unusedDays || 30 })).cleanup;
+  } catch (err) {
+    showToast(`Could not list unused files: ${err.message}`);
+    return;
+  }
+  if (!plan.token) {
+    showToast('Nothing to clean up.');
+    return;
+  }
+  uiState.unusedPlan = plan;
+  const date = formatDate(plan.purgeAt);
+  document.getElementById('unused-modal-body').innerHTML = `
+    <div class="purge-total">
+      <span class="purge-total-value">${formatBytes(plan.bytes)}</span>
+      <span class="purge-total-meta">${pluralize(plan.count, 'safe file')} unused for ${plan.minDays} days</span>
+    </div>
+    <div class="unused-steps">
+      <div><strong>Now</strong><span>They move to the Quarantine, so their apps no longer see them.</span></div>
+      <div><strong>Until ${escapeHtml(date)}</strong><span>You can put any or all of them back. If an app makes one again, that one is kept.</span></div>
+      <div><strong>${escapeHtml(date)}</strong><span>The rest are deleted for good, the next time Artifact Atlas is open.</span></div>
+    </div>
+    <div class="kv-list">${plan.kinds
+      .map((k) => `<div class="kv-item"><span class="kv-key">${escapeHtml(formatArtifactTypeLabelClient(k.artifactType))}</span><span class="kv-val">${pluralize(k.count, 'file')} · ${formatBytes(k.bytes)}</span></div>`)
+      .join('')}</div>
+    <p class="inspector-note" id="unused-progress"></p>`;
+  const confirm = document.getElementById('confirm-unused-btn');
+  confirm.disabled = false;
+  confirm.textContent = `Move ${pluralize(plan.count, 'File')}, Delete on ${date}`;
+  document.getElementById('unused-modal').classList.remove('hidden');
+}
+
+async function confirmUnusedCleanup() {
+  const plan = uiState.unusedPlan;
+  if (!plan?.token) return;
+  const confirm = document.getElementById('confirm-unused-btn');
+  confirm.disabled = true;
+  confirm.textContent = 'Moving…';
+  const progress = setInterval(async () => {
+    try {
+      const p = (await apiRequest('/api/cleanup/unused/progress', 'GET')).progress;
+      if (p && p.total) document.getElementById('unused-progress').textContent = `Moving ${p.done.toLocaleString()} of ${p.total.toLocaleString()}…`;
+    } catch {
+      // The move itself reports the result
+    }
+  }, 700);
+  try {
+    const res = await apiRequest('/api/cleanup/unused', 'POST', { token: plan.token });
+    uiState.activeState = res.activeState;
+    uiState.quarantineEntries = res.quarantineEntries || [];
+    document.getElementById('unused-modal').classList.add('hidden');
+    reloadMapLevel();
+    renderGlobalInspectorSummary();
+    updateQuarantineCountPill();
+    renderInsightsView();
+    showToast(
+      `Moved ${pluralize(res.movedCount, 'file')} (${formatBytes(res.movedBytes)}). They are deleted on ${formatDate(res.purgeAt)} unless you put them back.${
+        res.blockedCount ? ` ${pluralize(res.blockedCount, 'file')} stayed where ${res.blockedCount === 1 ? 'it was' : 'they were'}.` : ''
+      }`,
+      7000
+    );
+  } catch (err) {
+    showToast(`Nothing was moved: ${err.message.replace(/^CLEANUP_CONFIRMATION_EXPIRED: /, '')}`);
+    document.getElementById('unused-modal').classList.add('hidden');
+  } finally {
+    clearInterval(progress);
+  }
+}
+
+function bindUnusedEvents() {
+  const close = () => document.getElementById('unused-modal').classList.add('hidden');
+  document.getElementById('close-unused-modal-btn').addEventListener('click', close);
+  document.getElementById('cancel-unused-modal-btn').addEventListener('click', close);
+  document.getElementById('confirm-unused-btn').addEventListener('click', confirmUnusedCleanup);
+}
+
 function bindInsightsActions(box) {
+  box.querySelector('#unused-clean-btn')?.addEventListener('click', openUnusedCleanup);
+  box.querySelector('#unused-days')?.addEventListener('change', (e) => {
+    uiState.unusedDays = Number(e.target.value);
+    renderInsightsView();
+  });
   box.querySelectorAll('[data-reveal]').forEach((btn) => btn.addEventListener('click', () => revealById(btn.dataset.reveal, btn.dataset.label)));
   box.querySelectorAll('[data-select-build]').forEach((btn) =>
     btn.addEventListener('click', async () => {
@@ -3092,7 +3217,45 @@ function renderQuarantineVaultView() {
 
   listEl.innerHTML = '';
   renderQuarantineSummary();
-  uiState.quarantineEntries.forEach((entry) => {
+
+  // Each unused-files cleanup still waiting is one row: its count, size, date and Put All Back
+  const scheduled = new Map();
+  const single = [];
+  for (const entry of uiState.quarantineEntries) {
+    if (entry.status === 'QUARANTINED' && entry.scheduledBy === 'unused-cleanup') {
+      if (!scheduled.has(entry.batchId)) scheduled.set(entry.batchId, []);
+      scheduled.get(entry.batchId).push(entry);
+    } else {
+      single.push(entry);
+    }
+  }
+  for (const [batchId, entries] of scheduled) {
+    const waiting = entries.filter((e) => e.autoPurgeAt);
+    const kept = entries.length - waiting.length;
+    const due = waiting.map((e) => Date.parse(e.autoPurgeAt)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    const daysLeft = due ? Math.max(0, Math.ceil((due - Date.now()) / 86400000)) : null;
+    const row = document.createElement('div');
+    row.className = 'quarantine-row-card quarantine-batch';
+    row.innerHTML = `
+      <div class="quarantine-row-main">
+        <div class="quarantine-row-title">
+          <strong>Unused leftovers</strong>
+          <span>${pluralize(entries.length, 'file')} · ${formatBytes(entries.reduce((s, e) => s + (e.sizeBytes || 0), 0))}</span>
+          <span class="metric-label">Removed ${escapeHtml(formatDate(entries[0].quarantinedAt))}</span>
+        </div>
+        <div class="quarantine-batch-when">${
+          waiting.length
+            ? `${daysLeft === 0 ? 'Deleted today' : `Deleted in ${pluralize(daysLeft, 'day')}`}, on ${escapeHtml(formatDate(new Date(due).toISOString()))}, unless you put ${waiting.length === 1 ? 'it' : 'them'} back.`
+            : 'Nothing left to delete on a schedule.'
+        }${kept ? ` ${pluralize(kept, 'file')} ${kept === 1 ? 'was' : 'were'} made again by ${kept === 1 ? 'its app and stays' : 'their apps and stay'} here, not deleted.` : ''}</div>
+      </div>
+      <button class="secondary-btn restore-batch-btn" data-batch-id="${escapeHtml(batchId)}" type="button">Put All Back</button>`;
+    listEl.appendChild(row);
+  }
+
+  // The rest one by one; a very long list shows its newest part
+  const SHOWN = 300;
+  single.slice(0, SHOWN).forEach((entry) => {
     const isHeld = entry.status === 'QUARANTINED';
     const isPurged = entry.status === 'PURGED';
     const row = document.createElement('div');
@@ -3121,6 +3284,32 @@ function renderQuarantineVaultView() {
       }
     `;
     listEl.appendChild(row);
+  });
+
+  if (single.length > SHOWN) {
+    const more = document.createElement('div');
+    more.className = 'empty-note';
+    more.textContent = `And ${pluralize(single.length - SHOWN, 'older entry', 'older entries')}.`;
+    listEl.appendChild(more);
+  }
+
+  listEl.querySelectorAll('.restore-batch-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const res = await apiRequest('/api/quarantine/restore-batch', 'POST', { batchId: btn.dataset.batchId });
+        uiState.activeState = res.activeState;
+        uiState.quarantineEntries = res.quarantineEntries || [];
+        reloadMapLevel();
+        renderGlobalInspectorSummary();
+        renderQuarantineVaultView();
+        updateQuarantineCountPill();
+        showToast(`Put back ${pluralize(res.restored, 'file')}.${res.kept ? ` ${pluralize(res.kept, 'file')} stayed: something is at ${res.kept === 1 ? 'its' : 'their'} place again.` : ''}`);
+      } catch (err) {
+        showToast(`Could not put them back: ${err.message}`);
+        btn.disabled = false;
+      }
+    });
   });
 
   listEl.querySelectorAll('.restore-entry-btn').forEach((btn) => {
@@ -3554,7 +3743,7 @@ function openSettingsModal() {
       <div class="kv-item"><span class="kv-key">Home folder</span><span class="kv-val mono">${escapeHtml(boot.homeDir || '')}</span></div>
       <div class="kv-item"><span class="kv-key">Quarantine folder</span><span class="kv-val mono">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
     </div>
-    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back; after 30 days you can empty them to free the space.</p>
+    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back. Unused leftovers you cleaned up are deleted after 7 days unless their app makes them again; anything else can be emptied after 30 days.</p>
     <div class="inspector-section">
       <div class="inspector-section-title">Updates</div>
       <div class="kv-list">
