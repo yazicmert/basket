@@ -121,6 +121,21 @@ export class Scanner {
       return lstat.size;
     };
 
+    // Files past the limit, totalled by folder so the map can say where they are. A folder is
+    // the walk root plus up to three folders below it; past 5,000 folders, one below the root.
+    const overflowFolders = new Map();
+    const addOverflowFolder = (filePath, bytes) => {
+      const root = normalizedRoots.filter((r) => filePath.startsWith(r + path.sep)).sort((a, b) => b.length - a.length)[0];
+      if (!root) return;
+      const parts = path.relative(root, path.dirname(filePath)).split(path.sep).filter(Boolean);
+      let key = path.join(root, ...parts.slice(0, 3));
+      if (!overflowFolders.has(key) && overflowFolders.size >= 5000) key = path.join(root, ...parts.slice(0, 1));
+      const entry = overflowFolders.get(key) || { path: key, fileCount: 0, physicalBytes: 0 };
+      entry.fileCount += 1;
+      entry.physicalBytes += bytes;
+      overflowFolders.set(key, entry);
+    };
+
     const yieldNow = async () => {
       emitProgress();
       await new Promise((r) => setImmediate(r));
@@ -189,7 +204,8 @@ export class Scanner {
         markTruncated();
         // A folder is walked once, so a file past the limit is met once; nothing is kept per file
         if ((lstat.mode & 0o400) !== 0) {
-          measureFile(lstat, scanRecord.overflow);
+          const added = measureFile(lstat, scanRecord.overflow);
+          addOverflowFolder(filePath, added);
         }
         return;
       }
@@ -420,6 +436,11 @@ export class Scanner {
 
     if (scanRecord.status !== ScanStatus.CANCELLED) {
       scanRecord.status = ScanStatus.COMPLETED;
+    }
+    if (overflowFolders.size > 0) {
+      scanRecord.overflow.folders = Array.from(overflowFolders.values())
+        .sort((a, b) => b.physicalBytes - a.physicalBytes)
+        .slice(0, 200);
     }
     scanRecord.completedAt = new Date().toISOString();
     currentPath = null;

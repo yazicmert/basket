@@ -604,6 +604,10 @@ export function createAtlasServer(options = {}) {
       const hasFiles = live.some((a) => a.canonicalPath === folder || a.canonicalPath.startsWith(folder.endsWith(path.sep) ? folder : folder + path.sep));
       return hasFiles ? folder : null;
     }
+    const pastLimit = /^overflow-folder:(.+)$/.exec(id);
+    if (pastLimit) {
+      return (state.scan?.overflow?.folders || []).some((f) => f.path === pastLimit[1]) ? pastLimit[1] : null;
+    }
     const measured = /^measured(?:-folder|-project)?:(.+)$/.exec(id);
     if (measured) {
       const p = measured[1];

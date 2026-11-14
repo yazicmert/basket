@@ -325,6 +325,17 @@ test('S6. Past the file limit files are measured, so the total is complete altho
     // Every byte is counted once: listed files, measured folders and the overflow add up
     const files = a.scan.discoveredArtifactCount + a.scan.measuredFileCount;
     assert.equal(b.scan.discoveredArtifactCount + b.scan.measuredFileCount, files);
+    // Files past the limit are totalled by folder, and the folders add up to the overflow
+    const folders = b.scan.overflow.folders;
+    assert.ok(folders.length > 0);
+    assert.equal(folders.reduce((n, f) => n + f.fileCount, 0), b.scan.overflow.fileCount);
+    assert.equal(folders.reduce((n, f) => n + f.physicalBytes, 0), b.scan.overflow.physicalBytes);
+    const { buildMapLevel, levelArtifactIds } = await import('../src/graph/map-levels.js');
+    const root = buildMapLevel(b, 'root');
+    assert.ok(root.nodes.some((n) => n.id === 'overflow'));
+    const level = buildMapLevel(b, 'overflow');
+    assert.ok(level.nodes.some((n) => n.id === `overflow-folder:${folders[0].path}`));
+    assert.deepEqual(levelArtifactIds(b, 'overflow'), [], 'never selectable');
   } finally {
     full.sqliteStore.close();
     capped.sqliteStore.close();

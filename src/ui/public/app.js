@@ -2340,7 +2340,9 @@ function renderNodeInspector(node, trace) {
           : ''
       }
       ${
-        meta.measuredOnly
+        meta.measuredOnly && meta.pastLimit
+          ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}These files are past the scan's file limit: counted and sized by folder, but not listed, so they cannot be selected here. Show the folder to look at them, or scan a narrower set of folders.</div>`
+          : meta.measuredOnly
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
           : meta.summary && node.nodeType !== 'AI_APPLICATION' && !meta.cost
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Cleanup moves files one by one; protected files are never moved.</div>
