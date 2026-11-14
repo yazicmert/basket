@@ -20,6 +20,7 @@ import { PICK_KINDS, pickWithWindowsDialog } from '../platform/windows-picker.js
 import { chooseRevealTarget } from '../graph/reveal-target.js';
 import { summarizeProjectLeftovers, projectBuildOutputIds } from '../graph/project-leftovers.js';
 import { findIdenticalFiles, copiesToSelect } from '../graph/identical-files.js';
+import { reportData, reportHtml, reportCsv } from '../graph/report.js';
 import { fromPathKey } from '../platform/path-keys.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
@@ -1025,6 +1026,23 @@ export function createAtlasServer(options = {}) {
       if (url.pathname === '/api/node/prompt' && req.method === 'POST') {
         const body = await readJsonBody(req);
         return sendJson(res, 200, { ok: true, ...activeService().describeNodePrompts(body.nodeId) });
+      }
+
+      // A report of this scan, written to the data folder and shown in Finder / File Explorer
+      if (url.pathname === '/api/report' && req.method === 'POST') {
+        const state = activeService().activeState;
+        if (!state?.scan) return sendJson(res, 409, { ok: false, error: 'NO_SCAN' });
+        const data = reportData(state, { leftovers: projectLeftovers(state), copies: copiesJob?.scanId === state.scan.id ? copiesJob.result : null });
+        const dir = path.join(defaultBaseDir, 'reports');
+        fs.mkdirSync(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const base = `${String(data.application).replace(/[^\w.-]+/g, '-').slice(0, 40)}-${stamp}`;
+        const htmlPath = path.join(dir, `${base}.html`);
+        const csvPath = path.join(dir, `${base}.csv`);
+        fs.writeFileSync(htmlPath, reportHtml(data, { appVersion }));
+        fs.writeFileSync(csvPath, reportCsv(data));
+        const shown = await activeService().platformServices.revealInFinder(htmlPath, { simulate: Boolean(options.simulateSystemOpen) });
+        return sendJson(res, 200, { ok: true, htmlPath, csvPath, shown: shown.ok });
       }
 
       if (url.pathname === '/api/insights/copies' && req.method === 'GET') {

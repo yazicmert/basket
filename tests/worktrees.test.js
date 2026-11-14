@@ -175,3 +175,41 @@ test('WT3. Show in Finder never opens a path sent by the window', async () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('WT4. The report is written locally, names sessions without their prompts, and is safe to open in a spreadsheet', async () => {
+  const env = makeHome();
+  const dataDir = path.join(env.root, 'data');
+  const atlas = createAtlasServer({ dataDir, liveHomeDir: env.home, platform: 'darwin', applicationDirs: [path.dirname(env.bundle)], simulateSystemOpen: true });
+  const api = async (route, body) => {
+    const res = await fetch(`http://127.0.0.1:${atlas.server.address().port}${route}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'X-Atlas-Token': atlas.sessionToken, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return { status: res.status, data: await res.json() };
+  };
+  try {
+    await new Promise((resolve) => atlas.server.listen(0, '127.0.0.1', resolve));
+    await api('/api/permissions/home-folder-scan', { granted: true });
+    await api('/api/permissions/scan-scope', { id: 'project-folders', granted: true });
+    await api('/api/scan/start', { bundlePath: env.bundle });
+    const report = (await api('/api/report', {})).data;
+    assert.ok(report.ok);
+    assert.ok(report.htmlPath.startsWith(path.join(dataDir, 'reports')));
+    const html = fs.readFileSync(report.htmlPath, 'utf8');
+    const csv = fs.readFileSync(report.csvPath, 'utf8');
+    assert.match(html, /Artifact Atlas report/);
+    assert.match(html, /feat/, 'the worktree is listed');
+    for (const text of [html, csv]) {
+      assert.doesNotMatch(text, /Add a cart|Build it/, 'no prompt text');
+    }
+    assert.match(csv, /^section,name,files,bytes,size,detail\n/);
+
+    const { reportCsv } = await import('../src/graph/report.js');
+    const out = reportCsv({ application: '=HYPERLINK("x")', fileCount: 0, listedBytes: 0, measuredBytes: 0, scannedAt: '', kinds: [], risks: [], sessions: [], worktrees: [], buildProjects: [] });
+    assert.match(out, /"'=HYPERLINK\(""x""\)"/, 'a formula is written as text');
+  } finally {
+    await atlas.shutdown();
+    fs.rmSync(env.root, { recursive: true, force: true });
+  }
+});
