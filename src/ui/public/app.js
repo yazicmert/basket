@@ -2075,7 +2075,6 @@ function renderGlobalInspectorSummary() {
         : ''
     }
     ${traceTotalsHtml(uiState.activeState.promptCosts)}
-    <div id="project-leftovers-box"></div>
     <div class="inspector-section">
       <div class="inspector-section-title">By cleanup risk</div>
       <div class="kv-list">${riskRows}</div>
@@ -2100,7 +2099,6 @@ function renderGlobalInspectorSummary() {
         : ''
     }
   `;
-  loadProjectLeftovers();
   const scopeBtn = document.getElementById('scope-open-permissions-btn');
   if (scopeBtn) {
     scopeBtn.addEventListener('click', () => {
@@ -2477,61 +2475,139 @@ async function revealById(targetId, label) {
   }
 }
 
-/* Worktrees and build outputs, under the scan totals. Only what files state is shown. */
-async function loadProjectLeftovers() {
-  const box = document.getElementById('project-leftovers-box');
-  if (!box) return;
-  let data;
-  try {
-    data = (await apiRequest('/api/project-leftovers', 'GET')).leftovers;
-  } catch {
-    return;
+/* =========================================================================
+   INSIGHTS: growth, worktrees, build outputs, identical files, report
+   ========================================================================= */
+
+const GROWTH_REASONS = {
+  FIRST_SCAN: 'This is the first scan of this app. The next one will show what changed.',
+  DIFFERENT_SCOPE: 'The last scan counted different folders (see Permissions), so the totals are not comparable.',
+  FILE_LIMIT: 'One of the scans reached the file limit, so the totals are not comparable.',
+  CANCELLED: 'This scan was stopped before the end.',
+  OTHER_APPLICATION: 'The last scan was of another app.'
+};
+
+// A title made up from the session's ID says nothing; the map names those by their prompt
+const MADE_UP_TITLE = /^(Claude|Cursor|Codex) Session [\w-]{1,12}$/;
+
+function signedBytes(bytes) {
+  if (!bytes) return 'No change';
+  return `${bytes > 0 ? '+' : '−'}${formatBytes(Math.abs(bytes))}`;
+}
+
+/* A small line of the totals of earlier comparable scans. Ink only: color means risk. */
+function sparklineSvg(points) {
+  if (!points || points.length < 2) return '';
+  const w = 220;
+  const h = 44;
+  const values = points.map((p) => p.bytes);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const xy = values.map((v, i) => [Math.round((i / (values.length - 1)) * (w - 4)) + 2, Math.round(h - 4 - ((v - min) / span) * (h - 8))]);
+  const d = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join(' ');
+  const [lx, ly] = xy[xy.length - 1];
+  return `<svg class="sparkline" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Total size over the last ${points.length} scans"><path d="${d}" /><circle cx="${lx}" cy="${ly}" r="2.5" /></svg>`;
+}
+
+function insightCard(title, body, { wide = false, id = '' } = {}) {
+  return `<section class="insight-card${wide ? ' insight-card-wide' : ''}"${id ? ` id="${id}"` : ''}><h3 class="insight-title">${escapeHtml(title)}</h3>${body}</section>`;
+}
+
+function growthCardHtml(growth) {
+  if (!growth) return '';
+  if (!growth.comparable) {
+    return insightCard('Since the last scan', `<p class="insight-quiet">${escapeHtml(GROWTH_REASONS[growth.reason] || 'Nothing to compare yet.')}</p>${sparklineSvg(growth.history)}`);
   }
-  if (!data || !document.body.contains(box)) return;
+  const kinds = (growth.kinds || [])
+    .slice(0, 4)
+    .map((k) => `<div class="insight-row"><span>${escapeHtml(formatArtifactTypeLabelClient(k.artifactType))}</span><span class="insight-num">${signedBytes(k.deltaBytes)}</span></div>`)
+    .join('');
+  const sessions = (growth.sessions || [])
+    .slice(0, 3)
+    .map((s) => `<div class="insight-row"><span class="insight-ellipsis">${escapeHtml(s.label || 'Session')}${s.isNew ? ' <span class="insight-tag">new</span>' : ''}</span><span class="insight-num">${signedBytes(s.deltaBytes)}</span></div>`)
+    .join('');
+  return insightCard(
+    'Since the last scan',
+    `<div class="insight-split">
+       <div>
+         <div class="insight-figure">${signedBytes(growth.deltaBytes)}</div>
+         <div class="insight-meta">since ${escapeHtml(formatDate(growth.previousScannedAt))} · ${growth.deltaFiles >= 0 ? '+' : '−'}${Math.abs(growth.deltaFiles).toLocaleString()} files</div>
+         ${sparklineSvg(growth.history)}
+       </div>
+       <div>
+         ${kinds ? `<div class="insight-subtitle">By kind</div>${kinds}` : ''}
+         ${sessions ? `<div class="insight-subtitle">Sessions that grew</div>${sessions}` : ''}
+         ${!kinds && !sessions ? '<p class="insight-quiet">Nothing was added or removed since then.</p>' : ''}
+       </div>
+     </div>`
+  );
+}
+
+function formatArtifactTypeLabelClient(type) {
+  return (
+    {
+      REGENERABLE_CACHE: 'Regenerable caches',
+      TEMP_FILE: 'Temporary files',
+      LOG: 'Diagnostic logs',
+      BUILD_OUTPUT: 'Build outputs',
+      DERIVED_DATA: 'Derived data',
+      SESSION_HISTORY: 'Session histories',
+      USER_CONTENT: 'Source & user content',
+      MODEL_DATA: 'Model weights & datasets',
+      CHECKPOINT: 'State checkpoints',
+      UNKNOWN: 'Unclassified'
+    }[type] || type
+  );
+}
+
+function worktreesCardHtml(data) {
+  if (!data || data.worktreeCount === 0) return '';
   const atLeast = data.lowerBound ? 'at least ' : '';
-  // A title made up from the session's ID says nothing; the map names those by their prompt
-  const MADE_UP_TITLE = /^(Claude|Cursor|Codex) Session [\w-]{1,12}$/;
-  const sessionsTitle = (sessions) => {
+  const sessionsLine = (sessions) => {
     const list = sessions || [];
     if (list.length === 0) return '';
     const titles = list.map((s) => s.title).filter((t) => t && !MADE_UP_TITLE.test(t));
-    if (titles.length === 0) return `${pluralize(list.length, 'session')} worked here; open Sessions on the map to see ${list.length === 1 ? 'its prompt' : 'their prompts'}.`;
-    return `Sessions: ${titles.slice(0, 2).map((t) => `"${t}"`).join(', ')}${list.length > 2 ? ` and ${list.length - 2} more` : ''}.`;
+    if (titles.length === 0) return `${pluralize(list.length, 'session')} worked here.`;
+    return `Sessions: ${titles.slice(0, 2).map((t) => `“${t}”`).join(', ')}${list.length > 2 ? ` and ${list.length - 2} more` : ''}.`;
   };
   const gitLine = (w) => {
-    if (!w.isGitWorktree) return 'No longer a Git worktree (its .git file is gone).';
-    if (!w.git) return data.gitMetadataRead ? '' : 'Branch unknown: Git folders are read only with Dependency and Git folders allowed.';
-    if (w.git.registered === false) return 'Git no longer lists this worktree; `git worktree prune` forgets it.';
-    const branch = w.git.branch ? `Branch ${w.git.branch}` : w.git.detached ? 'No branch (detached)' : 'Branch unknown';
-    const exists = w.git.branch ? (w.git.branchExists ? ', still in the repository' : ', no longer in the repository') : '';
-    return `${branch}${exists}.`;
+    if (!w.isGitWorktree) return 'No longer a Git worktree.';
+    if (!w.git) return data.gitMetadataRead ? '' : 'Branch shown with Dependency and Git folders allowed.';
+    if (w.git.registered === false) return 'Git no longer lists it.';
+    if (!w.git.branch) return w.git.detached ? 'No branch (detached).' : '';
+    return `${w.git.branch} · ${w.git.branchExists ? 'branch still in the repository' : 'branch no longer in the repository'}.`;
   };
-  const worktreeRows = data.worktrees
+  const rows = data.worktrees
     .map(
       (w) => `<div class="leftover-row">
-        <div class="leftover-head"><span class="leftover-name">${escapeHtml(w.name)}</span><span class="kv-val">${atLeast}${formatBytes(w.bytes)}</span></div>
-        <div class="leftover-facts">${escapeHtml(
-          [
-            `${pluralize(w.fileCount, 'file')}${w.newestChange ? `, last changed ${formatDate(w.newestChange)}` : ''}.`,
-            gitLine(w),
-            sessionsTitle(w.sessions)
-          ]
-            .filter(Boolean)
-            .join(' ')
-        )}</div>
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(w.name)}</span><span class="insight-num">${atLeast}${formatBytes(w.bytes)}</span></div>
+        <div class="leftover-facts">${escapeHtml([`${pluralize(w.fileCount, 'file')}${w.newestChange ? `, changed ${formatDate(w.newestChange)}` : ''}.`, gitLine(w), sessionsLine(w.sessions)].filter(Boolean).join(' '))}</div>
         <div class="leftover-actions">
           <button class="link-btn" type="button" data-reveal="${escapeHtml(w.id)}" data-label="${escapeHtml(w.name)}">Show in ${fileManagerName()}</button>
-          ${w.buildOutputs.count > 0 ? `<button class="link-btn" type="button" data-select-build="${escapeHtml(w.id)}">Select its build outputs (${formatBytes(w.buildOutputs.bytes)})</button>` : ''}
-          ${w.removeCommand ? `<button class="link-btn" type="button" data-copy="${escapeHtml(w.removeCommand)}">Copy the Git command that removes it</button>` : ''}
+          ${w.buildOutputs.count > 0 ? `<button class="link-btn" type="button" data-select-build="${escapeHtml(w.id)}">Select build outputs · ${formatBytes(w.buildOutputs.bytes)}</button>` : ''}
+          ${w.removeCommand ? `<button class="link-btn" type="button" data-command="${escapeHtml(w.removeCommand)}">Git command to remove it</button>` : ''}
         </div>
+        <div class="command-box hidden"></div>
       </div>`
     )
     .join('');
-  const buildRows = data.buildProjects
+  return insightCard(
+    `Worktrees · ${data.worktreeCount}`,
+    `<p class="insight-quiet">Second copies of a project that sessions work in. Whether a branch was merged or has unsaved work can only be checked with Git, which this app never runs, so a worktree is never moved as a whole.</p>
+     ${rows}
+     ${data.worktreeCount > data.worktrees.length ? `<p class="insight-quiet">The ${data.worktrees.length} largest of ${data.worktreeCount}.</p>` : ''}`,
+    { wide: true }
+  );
+}
+
+function buildOutputsCardHtml(data) {
+  if (!data || data.buildProjectCount === 0) return '';
+  const rows = data.buildProjects
     .map(
       (b) => `<div class="leftover-row">
-        <div class="leftover-head"><span class="leftover-name">${escapeHtml(b.name)}</span><span class="kv-val">${formatBytes(b.bytes)}</span></div>
-        <div class="leftover-facts">${escapeHtml(`${pluralize(b.count, 'file')}. ${b.manifest ? `Has ${b.manifest}: usually rebuilt with ${b.rebuild}.` : 'No build file found next to it; check how it was made before removing it.'}`)}</div>
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(b.name)}</span><span class="insight-num">${formatBytes(b.bytes)}</span></div>
+        <div class="leftover-facts">${escapeHtml(`${pluralize(b.count, 'file')}. ${b.manifest ? `${b.manifest} next to it: usually rebuilt with ${b.rebuild}.` : 'No build file next to it; check how it was made first.'}`)}</div>
         <div class="leftover-actions">
           <button class="link-btn" type="button" data-reveal="${escapeHtml(b.id)}" data-label="${escapeHtml(b.name)}">Show in ${fileManagerName()}</button>
           <button class="link-btn" type="button" data-select-build="${escapeHtml(b.id)}">Select for review</button>
@@ -2539,29 +2615,102 @@ async function loadProjectLeftovers() {
       </div>`
     )
     .join('');
-  box.innerHTML = `
-    ${
-      data.worktreeCount > 0
-        ? `<div class="inspector-section">
-      <div class="inspector-section-title">Worktrees</div>
-      <div class="inspector-note">Second copies of a project that sessions work in. Whether a branch was merged or has unsaved work can only be checked with Git, which this app never runs. A worktree holds source code, so it is never moved as a whole: select its build outputs here, or remove it with Git.</div>
-      ${worktreeRows}
-      ${data.worktreeCount > data.worktrees.length ? `<div class="inspector-note">Showing the ${data.worktrees.length} largest of ${data.worktreeCount}.</div>` : ''}
-    </div>`
-        : ''
-    }
-    ${
-      data.buildProjectCount > 0
-        ? `<div class="inspector-section">
-      <div class="inspector-section-title">Build outputs by project</div>
-      ${buildRows}
-      ${data.buildProjectCount > data.buildProjects.length ? `<div class="inspector-note">Showing the ${data.buildProjects.length} largest of ${data.buildProjectCount}.</div>` : ''}
-    </div>`
-        : ''
-    }`;
-  box.querySelectorAll('[data-reveal]').forEach((btn) =>
-    btn.addEventListener('click', () => revealById(btn.dataset.reveal, btn.dataset.label))
+  return insightCard(`Build outputs · ${data.buildProjectCount} ${data.buildProjectCount === 1 ? 'project' : 'projects'}`, rows);
+}
+
+function copiesCardHtml(copies) {
+  const intro = '<p class="insight-quiet">Files with exactly the same content in different places. Only files of 64 KB or more are compared, by reading them; nothing is changed.</p>';
+  if (!copies || copies.status === 'idle' || copies.status === 'cancelled' || copies.status === 'failed') {
+    return insightCard(
+      'Identical files',
+      `${intro}${copies?.status === 'failed' ? '<p class="insight-quiet">The last search stopped with an error.</p>' : ''}<button id="copies-start-btn" class="secondary-btn" type="button">Find Identical Files</button>`
+    );
+  }
+  if (copies.status === 'running') {
+    const pct = copies.progress.totalBytes > 0 ? Math.min(100, Math.round((copies.progress.doneBytes / copies.progress.totalBytes) * 100)) : 0;
+    return insightCard(
+      'Identical files',
+      `${intro}<div class="progress-line" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
+       <div class="insight-meta">Comparing ${formatBytes(copies.progress.totalBytes)} of same-sized files · ${pct}%</div>
+       <button id="copies-cancel-btn" class="ghost-btn" type="button">Stop</button>`
+    );
+  }
+  const r = copies.result;
+  if (!r || r.groupCount === 0) {
+    return insightCard('Identical files', `<p class="insight-quiet">No two listed files of 64 KB or more have the same content.</p><button id="copies-start-btn" class="link-btn" type="button">Search again</button>`);
+  }
+  const groups = r.groups
+    .slice(0, 8)
+    .map((g) => {
+      const keeper = g.files.find((f) => f.id === g.keeperId);
+      return `<div class="leftover-row">
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(g.name)}</span><span class="insight-num">${g.files.length} × ${formatBytes(g.sizeBytes)}</span></div>
+        <div class="leftover-facts">Keeps <span class="mono">${escapeHtml(shortPath(keeper.path))}</span>${keeper.risk === 'PROTECTED' ? ' (protected)' : keeper.inProject ? ' (in a project)' : ' (the oldest)'}.</div>
+        <div class="leftover-actions"><button class="link-btn" type="button" data-select-copies="${escapeHtml(g.id)}">Select the other ${pluralize(g.files.length - 1, 'copy', 'copies')}</button></div>
+      </div>`;
+    })
+    .join('');
+  return insightCard(
+    'Identical files',
+    `<div class="insight-figure">${formatBytes(r.duplicateBytes)}</div>
+     <div class="insight-meta">in copies beyond one of each · ${pluralize(r.groupCount, 'group')}</div>
+     ${groups}
+     <div class="leftover-actions insight-actions">
+       <button class="secondary-btn" type="button" data-select-copies="*">Select All But One in Every Group</button>
+       <button id="copies-start-btn" class="link-btn" type="button">Search again</button>
+     </div>
+     <p class="insight-quiet">Whether a copy is still needed is your call: every selected file is reviewed before it moves, and protected copies are never selected.</p>`,
+    { wide: true }
   );
+}
+
+function pastLimitCardHtml(scan) {
+  const o = scan?.overflow;
+  if (!o || !(o.fileCount > 0)) return '';
+  return insightCard(
+    'Past the file limit',
+    `<div class="insight-split">
+       <div>
+         <div class="insight-figure">${formatBytes(o.physicalBytes)}</div>
+         <div class="insight-meta">${pluralize(o.fileCount, 'file')} counted, not listed, so they cannot be selected</div>
+         <button class="link-btn insight-link" type="button" id="insights-open-overflow">Open on the map</button>
+       </div>
+       <div>
+         <div class="insight-subtitle">Largest folders</div>
+         ${(o.folders || [])
+           .slice(0, 5)
+           .map((f) => `<div class="insight-row"><span class="insight-ellipsis mono">${escapeHtml(shortPath(f.path))}</span><span class="insight-num">${formatBytes(f.physicalBytes)}</span></div>`)
+           .join('')}
+       </div>
+     </div>`
+  );
+}
+
+async function renderInsightsView() {
+  const body = document.getElementById('insights-body');
+  if (!body || !uiState.activeState?.scan) return;
+  const [leftovers, copies] = await Promise.all([
+    apiRequest('/api/project-leftovers', 'GET').then((r) => r.leftovers).catch(() => null),
+    apiRequest('/api/insights/copies', 'GET').then((r) => r.copies).catch(() => null)
+  ]);
+  const cards = [
+    growthCardHtml(uiState.activeState.growth),
+    pastLimitCardHtml(uiState.activeState.scan),
+    copiesCardHtml(copies),
+    worktreesCardHtml(leftovers),
+    buildOutputsCardHtml(leftovers)
+  ].filter(Boolean);
+  body.innerHTML = cards.join('') || '<p class="insight-quiet">Scan an app to see insights.</p>';
+  bindInsightsActions(body);
+  // While the search runs, refresh its card
+  clearTimeout(uiState.copiesPoll);
+  if (copies?.status === 'running' && uiState.activeTab === 'insights') {
+    uiState.copiesPoll = setTimeout(renderInsightsView, 800);
+  }
+}
+
+function bindInsightsActions(box) {
+  box.querySelectorAll('[data-reveal]').forEach((btn) => btn.addEventListener('click', () => revealById(btn.dataset.reveal, btn.dataset.label)));
   box.querySelectorAll('[data-select-build]').forEach((btn) =>
     btn.addEventListener('click', async () => {
       try {
@@ -2572,16 +2721,67 @@ async function loadProjectLeftovers() {
       }
     })
   );
-  box.querySelectorAll('[data-copy]').forEach((btn) =>
+  box.querySelectorAll('[data-select-copies]').forEach((btn) =>
     btn.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(btn.dataset.copy);
-        showToast('Copied. Run it in Terminal when you are sure the worktree is no longer needed.');
-      } catch {
-        showToast(btn.dataset.copy, 8000);
+        const count = await selectByDescription({ kind: 'copies', groupId: btn.dataset.selectCopies });
+        showToast(count > 0 ? `Selected ${pluralize(count, 'copy', 'copies')}. Each is checked in the review before it moves.` : 'Nothing to select: the other copies are protected.');
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
       }
     })
   );
+  // The command is shown as selectable text, and copied when the clipboard allows it
+  box.querySelectorAll('[data-command]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      const holder = btn.closest('.leftover-row').querySelector('.command-box');
+      holder.innerHTML = `<input class="command-text mono" readonly value="${escapeHtml(btn.dataset.command)}" aria-label="Git command" /><span class="insight-quiet">Run it in ${isWindows() ? 'a terminal' : 'Terminal'} when you are sure the worktree is no longer needed.</span>`;
+      holder.classList.remove('hidden');
+      const input = holder.querySelector('input');
+      input.focus();
+      input.select();
+      try {
+        await navigator.clipboard.writeText(btn.dataset.command);
+        showToast('Copied.');
+      } catch {
+        // Selected above, so the usual copy shortcut works
+      }
+    })
+  );
+  const start = box.querySelector('#copies-start-btn');
+  if (start) {
+    start.addEventListener('click', async () => {
+      await apiRequest('/api/insights/copies/start', 'POST', {});
+      renderInsightsView();
+    });
+  }
+  const cancel = box.querySelector('#copies-cancel-btn');
+  if (cancel) {
+    cancel.addEventListener('click', async () => {
+      await apiRequest('/api/insights/copies/cancel', 'POST', {});
+      setTimeout(renderInsightsView, 200);
+    });
+  }
+  const overflow = box.querySelector('#insights-open-overflow');
+  if (overflow) {
+    overflow.addEventListener('click', async () => {
+      uiState.switchTab('graph');
+      await loadMapLevel('overflow');
+    });
+  }
+}
+
+async function exportReport() {
+  const btn = document.getElementById('insights-report-btn');
+  btn.disabled = true;
+  try {
+    const res = await apiRequest('/api/report', 'POST', {});
+    showToast(`Report saved as a page and a spreadsheet file, and shown in ${fileManagerName()}: ${shortPath(res.htmlPath)}`, 6000);
+  } catch (err) {
+    showToast(`Could not write the report: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* =========================================================================
@@ -2667,19 +2867,25 @@ function bindExplorerControls() {
     document.getElementById('tab-graph-btn').classList.toggle('active', tab === 'graph');
     document.getElementById('tab-treemap-btn').classList.toggle('active', tab === 'treemap');
     document.getElementById('tab-quarantine-btn').classList.toggle('active', tab === 'quarantine');
+    document.getElementById('tab-insights-btn').classList.toggle('active', tab === 'insights');
 
     document.getElementById('panel-graph').classList.toggle('hidden', tab !== 'graph');
+    document.getElementById('panel-insights').classList.toggle('hidden', tab !== 'insights');
     document.getElementById('panel-treemap').classList.toggle('hidden', tab !== 'treemap');
     document.getElementById('panel-quarantine').classList.toggle('hidden', tab !== 'quarantine');
 
     if (tab === 'graph') resizeCanvas();
     if (tab === 'treemap') renderTreemapView();
     if (tab === 'quarantine') renderQuarantineVaultView();
+    if (tab === 'insights') renderInsightsView();
   };
+  uiState.switchTab = switchTab;
 
   document.getElementById('tab-graph-btn').addEventListener('click', () => switchTab('graph'));
   document.getElementById('tab-treemap-btn').addEventListener('click', () => switchTab('treemap'));
   document.getElementById('tab-quarantine-btn').addEventListener('click', () => switchTab('quarantine'));
+  document.getElementById('tab-insights-btn').addEventListener('click', () => switchTab('insights'));
+  document.getElementById('insights-report-btn').addEventListener('click', exportReport);
 
   document.getElementById('graph-search-input').addEventListener('input', (e) => {
     uiState.searchQuery = e.target.value.trim();
@@ -3342,7 +3548,7 @@ function openSettingsModal() {
       <div class="kv-item"><span class="kv-key">Home folder</span><span class="kv-val mono">${escapeHtml(boot.homeDir || '')}</span></div>
       <div class="kv-item"><span class="kv-key">Quarantine folder</span><span class="kv-val mono">${escapeHtml(boot.quarantineVaultLocation || '')}</span></div>
     </div>
-    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back.</p>
+    <p class="inspector-note">Nothing about you or your files leaves ${deviceName()}. Apps you choose are read, never opened. Removed files go to Quarantine and can be put back; after 30 days you can empty them to free the space.</p>
     <div class="inspector-section">
       <div class="inspector-section-title">Updates</div>
       <div class="kv-list">
@@ -3355,8 +3561,49 @@ function openSettingsModal() {
       </label>
       <p class="inspector-note">The check asks GitHub for the latest release number and sends nothing about you or your files. A new version is downloaded only when you click the update button; it is checked against its published SHA-256 before it replaces this copy. These are the only times the app uses the network.</p>
     </div>
+    <div class="inspector-section">
+      <div class="inspector-section-title">Help support more apps</div>
+      <p class="inspector-note">Collects where the largest unclassified files are, and the layout of Cursor's and Codex's records: field names and types only, never a prompt, a reply or a value. Nothing is sent; you copy it and share it if you want to.</p>
+      <button id="settings-diagnostics-btn" class="secondary-btn" type="button">Collect Diagnostics</button>
+      <div id="settings-diagnostics" class="diagnostics-box hidden">
+        <textarea id="settings-diagnostics-text" class="diagnostics-text mono" readonly spellcheck="false" aria-label="Diagnostics"></textarea>
+        <button id="settings-diagnostics-copy" class="secondary-btn" type="button">Copy</button>
+      </div>
+    </div>
   `;
   modal.classList.remove('hidden');
+
+  document.getElementById('settings-diagnostics-btn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Collecting…';
+    try {
+      const res = await apiRequest('/api/diagnostics', 'POST', {});
+      const area = document.getElementById('settings-diagnostics-text');
+      area.value = res.text;
+      document.getElementById('settings-diagnostics').classList.remove('hidden');
+      area.focus();
+      area.select();
+      btn.textContent = 'Collect Again';
+    } catch (err) {
+      showToast(`Could not collect diagnostics: ${err.message}`);
+      btn.textContent = 'Collect Diagnostics';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById('settings-diagnostics-copy').addEventListener('click', async () => {
+    const area = document.getElementById('settings-diagnostics-text');
+    area.focus();
+    area.select();
+    try {
+      await navigator.clipboard.writeText(area.value);
+      showToast('Copied.');
+    } catch {
+      // The text is selected, so the usual copy shortcut works
+      showToast(`Selected. Press ${isWindows() ? 'Ctrl' : '⌘'}+C to copy.`);
+    }
+  });
 
   const checkbox = document.getElementById('settings-update-check');
   const showUpdate = (update) => {

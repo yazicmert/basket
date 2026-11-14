@@ -16,6 +16,7 @@ import { normalizeScanScope } from './platform/permissions.js';
 import { readSessionFirstPrompt, promptExcerpt } from './provenance/session-prompt.js';
 import { computePromptCosts } from './graph/prompt-costs.js';
 import { summarizeScanForHistory, compareScans } from './graph/scan-history.js';
+import { sessionLabel } from './graph/report.js';
 
 // Upper bound on files in one scan. The map and the UI stay responsive well beyond this
 // because they work from summaries; the bound keeps memory and scan time predictable.
@@ -319,6 +320,12 @@ export class ArtifactAtlasService {
     const earlier = this.sqliteStore.listScanSummaries(summary.applicationId, 20).filter((s) => !s.cancelled);
     const previous = earlier.find((s) => s.scope === summary.scope && !s.truncated) || earlier[0] || null;
     this.activeState.growth = { ...compareScans(previous, summary), history: [] };
+    // Names for the sessions that grew: their stored title, or their ID (never prompt text)
+    const sessionById = new Map((this.activeState.sessions || []).map((s) => [s.id, s]));
+    for (const s of this.activeState.growth.sessions || []) {
+      const session = sessionById.get(s.sessionId);
+      s.label = session ? sessionLabel(session) : 'Session';
+    }
     if (scan.status !== 'CANCELLED') this.sqliteStore.saveScanSummary(summary);
     this.activeState.growth.history = this.sqliteStore
       .listScanSummaries(summary.applicationId, 12)

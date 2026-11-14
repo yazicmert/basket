@@ -87,3 +87,48 @@ test('G2. Identical files: same content only, hardlinks are one file, protected 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+import { DatabaseSync } from 'node:sqlite';
+import { buildDiagnostics, normalizeKey, shapeOf } from '../src/discovery/diagnostics.js';
+
+test('G3. Diagnostics hold field names and types only: no prompt, value, ID or path', () => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-diag-')));
+  const SECRET = 'Refactor the billing module please';
+  const UUID = '3f2a1b4c-1111-2222-3333-444455556666';
+  try {
+    assert.equal(normalizeKey(UUID), '<id>');
+    assert.equal(normalizeKey('/Users/me/x'), '<path>');
+    assert.equal(normalizeKey(`composerData:${UUID}`), 'composerData:<id>');
+    assert.deepEqual(shapeOf({ a: 'text', b: [1, 2], c: { d: null } }), { a: 'string', b: ['number'], c: { d: 'null' } });
+
+    const codexDir = path.join(home, '.codex', 'sessions', '2026', '11', '01');
+    fs.mkdirSync(codexDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(codexDir, 'rollout.jsonl'),
+      [
+        JSON.stringify({ type: 'session_meta', payload: { id: UUID, cwd: '/Users/me/p' } }),
+        JSON.stringify({ type: 'response_item', payload: { type: 'message', content: [{ type: 'input_text', text: SECRET }] } })
+      ].join('\n')
+    );
+    const cursorDir = path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage');
+    fs.mkdirSync(cursorDir, { recursive: true });
+    const db = new DatabaseSync(path.join(cursorDir, 'state.vscdb'));
+    db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
+    db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`composerData:${UUID}`, JSON.stringify({ text: SECRET, files: { [`/Users/me/${UUID}.js`]: 1 } }));
+    db.close();
+
+    const text = buildDiagnostics({
+      state: { application: { name: 'Codex' }, artifacts: [{ artifactType: 'UNKNOWN', canonicalPath: path.join(home, 'Library', 'Big', 'blob.bin'), extension: '.bin', sizeBytes: 5 * 1024 * 1024 }] },
+      homeDir: home,
+      platform: 'darwin',
+      appVersion: '0.9.0'
+    });
+    assert.match(text, /~\/Library\/Big/);
+    assert.match(text, /session_meta/);
+    assert.match(text, /composerData:<id>/);
+    assert.match(text, /"text": "string"/);
+    assert.doesNotMatch(text, /billing|3f2a1b4c|\/Users\/me/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

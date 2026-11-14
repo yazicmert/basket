@@ -81,6 +81,7 @@
         <div class="view-mode-tabs" role="tablist" aria-label="Views">
           <button id="tab-graph-btn" class="view-tab active" role="tab" aria-selected="true" type="button">Map</button>
           <button id="tab-treemap-btn" class="view-tab" role="tab" aria-selected="false" type="button">Sizes</button>
+          <button id="tab-insights-btn" class="view-tab" role="tab" aria-selected="false" type="button">Insights</button>
           <button id="tab-quarantine-btn" class="view-tab" role="tab" aria-selected="false" type="button">
             Quarantine <span id="quarantine-count-pill" class="tab-pill">0</span>
           </button>
@@ -147,6 +148,19 @@
 
             <div id="treemap-summary-strip" class="treemap-summary-strip"></div>
             <div id="treemap-grid-container" class="treemap-grid-container"></div>
+          </div>
+
+          <div id="panel-insights" class="stage-panel hidden">
+            <div class="insights-wrap">
+              <div class="insights-head">
+                <div>
+                  <h2 class="panel-heading">Insights</h2>
+                  <p class="panel-subheading">What changed since the last scan, the larger leftovers of your projects, and files with identical content.</p>
+                </div>
+                <button id="insights-report-btn" class="secondary-btn" type="button">Export Report</button>
+              </div>
+              <div id="insights-body" class="insights-grid"></div>
+            </div>
           </div>
 
           <div id="panel-quarantine" class="stage-panel hidden">

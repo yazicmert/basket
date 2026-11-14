@@ -21,6 +21,7 @@ import { chooseRevealTarget } from '../graph/reveal-target.js';
 import { summarizeProjectLeftovers, projectBuildOutputIds } from '../graph/project-leftovers.js';
 import { findIdenticalFiles, copiesToSelect } from '../graph/identical-files.js';
 import { reportData, reportHtml, reportCsv } from '../graph/report.js';
+import { buildDiagnostics } from '../discovery/diagnostics.js';
 import { fromPathKey } from '../platform/path-keys.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
@@ -1030,6 +1031,19 @@ export function createAtlasServer(options = {}) {
       if (url.pathname === '/api/node/prompt' && req.method === 'POST') {
         const body = await readJsonBody(req);
         return sendJson(res, 200, { ok: true, ...activeService().describeNodePrompts(body.nodeId) });
+      }
+
+      // Diagnostics the user can copy to help support more applications; made on request,
+      // never sent anywhere (see src/discovery/diagnostics.js)
+      if (url.pathname === '/api/diagnostics' && req.method === 'POST') {
+        const service = activeService();
+        const text = buildDiagnostics({
+          state: service.activeState,
+          homeDir: service.platformServices.homeDir,
+          platform: service.platformServices.platform,
+          appVersion
+        });
+        return sendJson(res, 200, { ok: true, text });
       }
 
       // A report of this scan, written to the data folder and shown in Finder / File Explorer
