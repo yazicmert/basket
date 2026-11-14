@@ -5,7 +5,7 @@
 **Artifact Atlas** is a safety-critical local filesystem provenance and cleanup tool. Any agent modifying this codebase must uphold these invariants:
 
 1. **Never Execute Scanned Applications**: `.app` bundles dropped or selected by the user must only be inspected via static metadata (`Contents/Info.plist`, directory structure). Never spawn or execute binaries inside scanned bundles.
-   - The same holds on Windows: a program, shortcut (`.lnk`) or installation folder is identified by its name and the target path stored in the shortcut. No program is started and no registry tool is run.
+   - The same holds on Windows: a program, shortcut (`.lnk`) or installation folder is identified by its name and the target path stored in the shortcut; a Microsoft Store app by the name of its data folder under `AppData\Local\Packages`. A program's icon is read from the icon resources of its `.exe` file (`src/discovery/windows-icon.js`). No program is started and no registry tool is run. The only processes the app starts on Windows are the system file dialogs (`src/platform/windows-picker.js`), which return the path the user picked, and the update helper.
 2. **Never Permanently Delete User Files**: All cleanup operations in `CleanupEngine` must move files into the managed Quarantine Vault with both a SQLite record and an on-disk `manifest.json` recovery descriptor.
 3. **Never Fabricate Provenance**:
    - `VERIFIED` confidence requires a direct, structured reference in an authoritative log or ledger (e.g., an explicit tool call `Write` / `Edit` / `apply_patch` targeting the canonical path, or an explicit workspace mapping).
@@ -33,7 +33,7 @@
    - The app's only outbound requests are the new-version check in `src/platform/update-check.js` (GitHub's latest-release endpoint) and, only after the user clicks the update button, the download of that release in `src/platform/self-update.js`. No request may carry user, machine or file data. The check stays switchable in Settings. Do not add other network calls.
    - The check runs while the app is open (the backend asks GitHub at most once every half hour), so a new version shows up without a restart.
    - A copy that cannot be replaced where it is (opened from the disk image, translocated, or in a folder the user cannot write to) is installed into the Applications folder, or the user's own Applications folder, and the confirmation says so. The download page is opened only when nothing can be installed from the app, after saying why. An update that did not finish is reported on the next launch with the helper's reason.
-   - On Windows the update button opens the download page; there is no in-place update there.
+   - On Windows an update is installed in place too (`src/platform/self-update-windows.js`): the ZIP must match the published SHA-256, is unpacked with the system `tar.exe`, and must hold `ArtifactAtlas.exe`, its runtime and an `app/package.json` named `artifact-atlas` with the expected version. There is no code signature to check, so those checks stand in for it. The Windows PowerShell helper replaces only the app's own entries, keeps the previous ones until the new copy is in place and restores them on failure; a folder the user cannot write to is replaced by an install in `%LOCALAPPDATA%\Programs\ArtifactAtlas`.
    - An update is installed only when its ZIP matches the SHA-256 published with the release, the unpacked bundle has this app's bundle identifier and the expected version, and `codesign --verify` passes. The swap keeps the previous bundle until the new one is in place and restores it on failure. Never install silently.
 
 ## 2. Project Layout
@@ -42,7 +42,10 @@
   - `src/models/` — Versioned domain models and enumerations.
   - `src/platform/` — `PlatformServices` (filesystem boundary guards, symlink checks, inode identity, Finder / File Explorer reveal, macOS Library and Windows AppData locations). `platform` names the layout of the home folder being read (`darwin` or `win32`); the sample home is always laid out like a Mac's.
   - `src/platform/path-keys.js` — `/`-separated keys for Windows paths, used only for matching and folder grouping. Never pass a key to the filesystem.
-  - `src/discovery/windows-apps.js` — Windows applications: Start Menu shortcuts by name and the shortcut's stored target.
+  - `src/discovery/windows-apps.js` — Windows applications: Start Menu shortcuts by name and the shortcut's stored target, and Store apps by their `Packages` folder name.
+  - `src/discovery/windows-icon.js` — A program's icon, read from the resources of its `.exe` (PE file); static read only.
+  - `src/platform/windows-picker.js` — The Windows file and folder dialogs behind Browse in Choose App.
+  - `src/platform/self-update-windows.js` — In-place update on Windows (see rule 8).
   - `src/provenance/session-prompt.js` — First prompt of a session, read on demand for display (see rule 6).
   - `src/platform/permissions.js` — Permission model (in-app home-folder-scan consent, macOS Full Disk Access probe, allowlisted System Settings / documentation targets). Every permission id must have a page under `site/permissions/<id>/`.
   - `src/discovery/` — `ApplicationDiscovery` (`.app/Contents/Info.plist` XML/binary parser and app identity resolver) and `app-footprint.js` (generic per-app data location discovery by bundle identifier and name; strict matching only, attribution stays `INFERRED`).
@@ -61,7 +64,7 @@
   - `src/ui/public/icons.js` — Shared icon set (one glyph per artifact type, plus workspace, session, tool call and application fallbacks). `site/icons.js` must stay an exact copy; a test enforces it. Glyphs are original and are not product logos. Color stays reserved for cleanup risk. Known applications may fall back to a logo from `src/ui/public/logos/` (Simple Icons, trademarks of their owners; see the README there) when their own icon cannot be read.
   - `src/graph/map-levels.js` — The map is served one level at a time (`/api/map/level`): the app with its kinds and sessions, then folders, then files, with alternative top-level groupings. No level may hold more than a few dozen marks.
   - `src/cli.js` — Command-line entrypoint (`serve`, `scan`, `demo`, `quarantine`, `restore`).
-- `packaging/windows/` — Windows launcher (`Launcher.cs`, compiled with the C# compiler that ships with Windows; keep it to C# 5), icon and README. `scripts/package-windows.ps1` builds `dist/ArtifactAtlas-Windows.zip`; `scripts/verify-windows-bundle.ps1` checks it.
+- `packaging/windows/` — Windows launcher (`Launcher.cs`, compiled with the C# compiler that ships with Windows; keep it to C# 5), icon and README. `scripts/package-windows.ps1` builds `dist/ArtifactAtlas-Windows.zip`; `scripts/verify-windows-bundle.ps1` checks it, `scripts/test-self-update-windows.ps1` checks the update swap under Windows PowerShell 5.1, and `scripts/test-windows-launch.ps1` starts the app as a user would and checks the readers against the machine's real Start Menu and Store folders.
 - `Sources/` & `Tests/` — Native macOS Swift Package (`ArtifactAtlasCore`, `ArtifactAtlasApp`, `ArtifactAtlasCoreTests`).
 - `site/` — Project site published to GitHub Pages (landing page and one page per permission).
 - `tests/` — Portable Core automated test suite executed via `node --test`.
