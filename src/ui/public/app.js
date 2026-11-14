@@ -614,20 +614,40 @@ function bindTopBarEvents() {
    EMPTY WORKSPACE & DRAG-AND-DROP RECOGNITION (Sections 4.1 & 4.2)
    ========================================================================= */
 
+// What a row says about where the app is: the sample, its install path, or the data folder
+// that was found for a known app that is not installed
+function bundleMeta(b) {
+  if (b.isDemoFixture) return 'Sample';
+  if (b.dataOnly) return `Data only: ${shortPath(b.evidencePath)}`;
+  return b.bundlePath;
+}
+
+// Apps whose sessions and prompts are traced, by their known profile
+const TRACED_PROFILES = new Set(['claude', 'codex', 'cursor']);
+
+// The start screen keeps rows quiet: the name, and a tag only where it says something
+function dockTag(b) {
+  if (b.isDemoFixture) return '<span class="bundle-pill-meta">Sample</span>';
+  if (TRACED_PROFILES.has(b.profileId)) return '<span class="bundle-pill-tag">Sessions and prompts</span>';
+  return '';
+}
+
 function renderDraggableBundles(bundles) {
   const dockList = document.getElementById('draggable-bundles-list');
   const modalList = document.getElementById('modal-bundles-list');
   dockList.innerHTML = '';
   modalList.innerHTML = '';
 
-  // With real applications the dock shows known AI apps first and stays short;
-  // the full list remains available in the picker.
-  const dockBundles = bundles.some((b) => !b.isDemoFixture)
-    ? bundles.filter((b) => b.isKnownAIApp).slice(0, 12)
-    : bundles;
+  // With real applications the dock shows installed AI apps first and stays short; known
+  // apps that are not installed but left data follow under their own caption. The full
+  // list remains available in the picker.
+  // The start screen lists only AI apps installed on this computer. Known apps that are not
+  // installed but left data stay in the Choose App list, marked as such.
+  const realScan = bundles.some((b) => !b.isDemoFixture);
+  const dockBundles = realScan ? bundles.filter((b) => b.isKnownAIApp && !b.dataOnly).slice(0, 12) : bundles;
   if (bundles.length > 0 && dockBundles.length === 0) {
     dockList.innerHTML =
-      '<div class="empty-note">No known AI apps found. Drop any app here, or use Choose App.</div>';
+      '<div class="empty-note">No known AI apps are installed. Drop any app here, or use Choose App.</div>';
   }
 
   bundles.forEach((b) => {
@@ -640,9 +660,9 @@ function renderDraggableBundles(bundles) {
     pill.innerHTML = `
       <span class="app-icon" aria-hidden="true"></span>
       <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
-      <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
+      ${dockTag(b)}
     `;
-    fillAppIcon(pill.querySelector('.app-icon'), b);
+    fillAppIcon(pill.querySelector('.app-icon'), b.dataOnly ? null : b);
 
     pill.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', b.bundlePath);
@@ -664,9 +684,9 @@ function renderDraggableBundles(bundles) {
     item.innerHTML = `
       <span class="app-icon" aria-hidden="true"></span>
       <span class="bundle-pill-name">${escapeHtml(b.name)}</span>
-      <span class="bundle-pill-meta">${escapeHtml(b.isDemoFixture ? 'Sample' : b.bundlePath)}</span>
+      <span class="bundle-pill-meta">${escapeHtml(bundleMeta(b))}</span>
     `;
-    fillAppIcon(item.querySelector('.app-icon'), b);
+    fillAppIcon(item.querySelector('.app-icon'), b.dataOnly ? null : b);
     item.addEventListener('click', async () => {
       document.getElementById('custom-bundle-path-input').value = b.bundlePath;
       await previewIdentifiedBundleInModal(b.bundlePath);

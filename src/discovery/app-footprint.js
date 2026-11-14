@@ -193,15 +193,30 @@ export function profileDisplayName(profile) {
 export function listKnownApplicationsWithData({ platformServices }) {
   const found = [];
   for (const profile of KNOWN_APP_PROFILES) {
-    const present = profileLocations(profile, platformServices.isWindowsLayout).some((rel) => {
-      const st = lstatSafe(path.join(platformServices.homeDir, rel));
-      return Boolean(st && !st.isSymbolicLink());
-    });
-    if (present) {
-      found.push({ profileId: profile.id, name: profileDisplayName(profile), ai: profile.ai });
+    for (const rel of profileLocations(profile, platformServices.isWindowsLayout)) {
+      const location = path.join(platformServices.homeDir, rel);
+      if (holdsData(location)) {
+        // The folder that matched is shown to the user as the evidence
+        found.push({ profileId: profile.id, name: profileDisplayName(profile), ai: profile.ai, location });
+        break;
+      }
     }
   }
   return found;
+}
+
+/** A real (not symlinked) folder with something in it, or a non-empty file. */
+function holdsData(location) {
+  const st = lstatSafe(location);
+  if (!st || st.isSymbolicLink()) return false;
+  if (st.isFile()) return st.size > 0;
+  if (!st.isDirectory()) return false;
+  try {
+    return fs.readdirSync(location).some((name) => name !== '.DS_Store');
+  } catch {
+    // Unreadable: it exists, and the scan will report it
+    return true;
+  }
 }
 
 export function findKnownAppProfile({ name = '', bundleId = '' }) {

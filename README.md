@@ -52,7 +52,7 @@ While the app is open it checks GitHub for a newer release at most once every ha
 ## Using it
 
 1. The app opens on built-in sample data and reads nothing from your disk.
-2. Choose an application: drag it from Applications onto the window on macOS, or pick it from the list. Command-line tools such as Claude Code and Codex are listed by the data they left.
+2. Choose an application: drag it from Applications onto the window on macOS, or pick it from the list. The start screen lists only the AI apps installed on your computer. Known AI tools that are not installed as an app but left data behind (command-line tools such as Claude Code, or apps you removed) can still be chosen in **Choose App…**, marked *Data only* with the folder that was found. An empty folder does not count.
 3. Before the first real scan, the app asks what it may read and what it should count (see [Permissions](#permissions)). The folder being scanned is shown live.
 4. The **Map** opens level by level: the application with its kinds of files and its sessions, then folders, then files. **Sizes** shows the same files as a treemap; **Quarantine** lists what you moved.
 5. Select files and choose **Move to Quarantine…**. A review lists what can move and what is blocked, and why. Restoring never overwrites another file.
