@@ -218,6 +218,20 @@ const MIGRATIONS = [
     sql: `
       ALTER TABLE quarantine_entries ADD COLUMN purged_at TEXT;
     `
+  },
+  {
+    version: 6,
+    name: '006_scan_history',
+    // Numbers, IDs and worktree paths only (see src/graph/scan-history.js); never conversation text
+    sql: `
+      CREATE TABLE IF NOT EXISTS scan_history (
+        scan_id TEXT PRIMARY KEY,
+        application_id TEXT NOT NULL,
+        scanned_at TEXT NOT NULL,
+        summary_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_scan_history_app ON scan_history(application_id, scanned_at);
+    `
   }
 ];
 
@@ -631,6 +645,34 @@ export class SQLiteStore {
       status: r.status,
       sessionIds: parseIdList(r.session_ids)
     }));
+  }
+
+  saveScanSummary(summary) {
+    if (!summary.scanId || !summary.applicationId) return;
+    this.db
+      .prepare('INSERT OR REPLACE INTO scan_history (scan_id, application_id, scanned_at, summary_json) VALUES (?, ?, ?, ?)')
+      .run(summary.scanId, summary.applicationId, summary.scannedAt, JSON.stringify(summary));
+    // Keep the last 50 scans of each application
+    this.db
+      .prepare(
+        'DELETE FROM scan_history WHERE application_id = ? AND scan_id NOT IN (SELECT scan_id FROM scan_history WHERE application_id = ? ORDER BY scanned_at DESC LIMIT 50)'
+      )
+      .run(summary.applicationId, summary.applicationId);
+  }
+
+  /** Summaries of earlier scans of an application, newest first. */
+  listScanSummaries(applicationId, limit = 50) {
+    return this.db
+      .prepare('SELECT summary_json FROM scan_history WHERE application_id = ? ORDER BY scanned_at DESC LIMIT ?')
+      .all(applicationId, limit)
+      .map((r) => {
+        try {
+          return JSON.parse(r.summary_json);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
   }
 
   getQuarantineEntryById(entryId) {

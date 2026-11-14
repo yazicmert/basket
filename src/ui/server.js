@@ -19,6 +19,7 @@ import { listStartMenuApplications, listStoreApplications } from '../discovery/w
 import { PICK_KINDS, pickWithWindowsDialog } from '../platform/windows-picker.js';
 import { chooseRevealTarget } from '../graph/reveal-target.js';
 import { summarizeProjectLeftovers, projectBuildOutputIds } from '../graph/project-leftovers.js';
+import { findIdenticalFiles, copiesToSelect } from '../graph/identical-files.js';
 import { fromPathKey } from '../platform/path-keys.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
@@ -503,7 +504,8 @@ export function createAtlasServer(options = {}) {
         : state.scan,
       graph,
       isDemoEnvironment: state.isDemoEnvironment,
-      promptCosts: state.promptCosts || null
+      promptCosts: state.promptCosts || null,
+      growth: state.growth || null
     };
   };
 
@@ -523,6 +525,12 @@ export function createAtlasServer(options = {}) {
     if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
       return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
     }
+    // All copies but one of a group of identical files (never the kept one, never protected)
+    if (body.kind === 'copies' && typeof body.groupId === 'string') {
+      const result = copiesJob && copiesJob.scanId === state.scan?.id ? copiesJob.result : null;
+      const groups = (result?.groups || []).filter((g) => body.groupId === '*' || g.id === body.groupId);
+      return groups.flatMap((g) => copiesToSelect(g, state));
+    }
     // The build outputs of one listed worktree or project
     if (body.kind === 'project-build' && typeof body.targetId === 'string') {
       const leftovers = projectLeftovers(state);
@@ -540,6 +548,27 @@ export function createAtlasServer(options = {}) {
       return (cell.artifactIds || []).filter((id) => liveIds.has(id));
     }
     return null;
+  };
+
+  // Files with identical content, searched only when the user asks (see identical-files.js)
+  let copiesJob = null;
+  const copiesStatus = () => {
+    const state = activeService().activeState;
+    if (!copiesJob || copiesJob.scanId !== state?.scan?.id) return { status: 'idle' };
+    const { controller, ...rest } = copiesJob;
+    return rest;
+  };
+  const startCopies = () => {
+    const state = activeService().activeState;
+    if (!state?.scan) return { status: 'idle' };
+    if (copiesJob && copiesJob.scanId === state.scan.id && copiesJob.status === 'running') return copiesStatus();
+    const controller = new AbortController();
+    copiesJob = { scanId: state.scan.id, status: 'running', progress: { doneBytes: 0, totalBytes: 0 }, result: null, controller };
+    const job = copiesJob;
+    findIdenticalFiles(state, { signal: controller.signal, onProgress: (p) => (job.progress = p) })
+      .then((result) => Object.assign(job, { status: 'done', result }))
+      .catch((err) => Object.assign(job, { status: err.message === 'CANCELLED' ? 'cancelled' : 'failed', error: err.message }));
+    return copiesStatus();
   };
 
   // Worktrees and build outputs of this scan (see project-leftovers.js), worked out once per scan
@@ -996,6 +1025,17 @@ export function createAtlasServer(options = {}) {
       if (url.pathname === '/api/node/prompt' && req.method === 'POST') {
         const body = await readJsonBody(req);
         return sendJson(res, 200, { ok: true, ...activeService().describeNodePrompts(body.nodeId) });
+      }
+
+      if (url.pathname === '/api/insights/copies' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, copies: copiesStatus() });
+      }
+      if (url.pathname === '/api/insights/copies/start' && req.method === 'POST') {
+        return sendJson(res, 200, { ok: true, copies: startCopies() });
+      }
+      if (url.pathname === '/api/insights/copies/cancel' && req.method === 'POST') {
+        if (copiesJob?.status === 'running') copiesJob.controller.abort();
+        return sendJson(res, 200, { ok: true });
       }
 
       if (url.pathname === '/api/project-leftovers' && req.method === 'GET') {
