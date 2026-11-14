@@ -8,7 +8,7 @@
   document.documentElement.classList.add('motion');
 
   // Items that come in one after another, numbered within their group
-  var GROUPS = ['.rows', '.principles', '.app-tiers', '.stats', '.steps', '.spec-body > .callout'];
+  var GROUPS = ['.rows', '.principles', '.app-tiers', '.stats', '.steps', '.spec-body > .callout', '.install-cards', '.closing', '.footer-rich'];
   GROUPS.forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (group) {
       Array.prototype.forEach.call(group.children, function (child, i) {
