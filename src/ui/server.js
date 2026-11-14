@@ -611,7 +611,8 @@ export function createAtlasServer(options = {}) {
       reveal: withReveal
         ? chooseRevealTarget(files, {
             homeDir: activeService().platformServices.homeDir,
-            pathApi: activeService().platformServices.platform === 'win32' ? path.win32 : path.posix
+            // Paths on disk follow the system this runs on, whatever layout the home folder has
+            pathApi: path
           })
         : undefined
     };
