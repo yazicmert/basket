@@ -2074,6 +2074,7 @@ function renderGlobalInspectorSummary() {
         : ''
     }
     ${traceTotalsHtml(uiState.activeState.promptCosts)}
+    <div id="project-leftovers-box"></div>
     <div class="inspector-section">
       <div class="inspector-section-title">By cleanup risk</div>
       <div class="kv-list">${riskRows}</div>
@@ -2098,6 +2099,7 @@ function renderGlobalInspectorSummary() {
         : ''
     }
   `;
+  loadProjectLeftovers();
   const scopeBtn = document.getElementById('scope-open-permissions-btn');
   if (scopeBtn) {
     scopeBtn.addEventListener('click', () => {
@@ -2332,6 +2334,11 @@ function renderNodeInspector(node, trace) {
         }
       </div>
       ${
+        (isArtifact || meta.path || meta.measuredOnly) && !meta.session && node.nodeType !== 'AI_APPLICATION'
+          ? `<button id="node-reveal-btn" class="secondary-btn inspector-reveal-btn" type="button">Show in ${fileManagerName()}</button>`
+          : ''
+      }
+      ${
         meta.measuredOnly
           ? `<div class="inspector-note">${node.drillId ? 'Click it on the map to open it. ' : ''}Dependency and Git folders are measured as a whole: counted and sized, never listed file by file. They are never offered for cleanup; remove them with your package manager or Git.</div>`
           : meta.summary && node.nodeType !== 'AI_APPLICATION' && !meta.cost
@@ -2385,6 +2392,11 @@ function renderNodeInspector(node, trace) {
     });
   }
 
+  const revealBtn = document.getElementById('node-reveal-btn');
+  if (revealBtn) {
+    revealBtn.addEventListener('click', () => revealById(node.id, node.label));
+  }
+
   const folderBtn = document.getElementById('select-level-files-btn');
   if (folderBtn) {
     folderBtn.addEventListener('click', async () => {
@@ -2399,6 +2411,174 @@ function renderNodeInspector(node, trace) {
       }
     });
   }
+}
+
+/* The folders a selection is spread over, largest first; each row opens its folder. */
+function openRevealMenu(anchor, reveal, onPick) {
+  closeRevealMenu();
+  const menu = document.createElement('div');
+  menu.id = 'reveal-menu';
+  menu.className = 'reveal-menu';
+  menu.setAttribute('role', 'menu');
+  const more = reveal.regionCount - reveal.regions.length;
+  menu.innerHTML = `
+    <div class="reveal-menu-title">${pluralize(reveal.totalCount, 'selected file')} in ${pluralize(reveal.regionCount, 'folder')}</div>
+    ${reveal.regions
+      .map(
+        (r, i) => `<button class="reveal-menu-row" type="button" role="menuitem" data-index="${i}">
+          <span class="reveal-menu-path mono">${escapeHtml(shortPath(r.path))}</span>
+          <span class="reveal-menu-meta">${pluralize(r.fileCount, 'file')} · ${formatBytes(r.bytes)}</span>
+        </button>`
+      )
+      .join('')}
+    ${more > 0 ? `<div class="reveal-menu-note">and ${pluralize(more, 'smaller folder')}</div>` : ''}`;
+  document.body.appendChild(menu);
+  const box = anchor.getBoundingClientRect();
+  const width = Math.min(440, window.innerWidth - 32);
+  menu.style.width = `${width}px`;
+  menu.style.left = `${Math.max(16, Math.min(box.left, window.innerWidth - width - 16))}px`;
+  menu.style.bottom = `${window.innerHeight - box.top + 8}px`;
+  menu.addEventListener('click', async (e) => {
+    const row = e.target.closest('.reveal-menu-row');
+    if (!row) return;
+    closeRevealMenu();
+    try {
+      await onPick(Number(row.dataset.index));
+    } catch (err) {
+      showToast(`Reveal failed: ${err.message}`);
+    }
+  });
+  menu.querySelector('.reveal-menu-row')?.focus();
+  setTimeout(() => document.addEventListener('mousedown', closeRevealMenuOutside), 0);
+  document.addEventListener('keydown', closeRevealMenuOnEscape);
+}
+function closeRevealMenuOutside(e) {
+  if (!e.target.closest('#reveal-menu')) closeRevealMenu();
+}
+function closeRevealMenuOnEscape(e) {
+  if (e.key === 'Escape') closeRevealMenu();
+}
+function closeRevealMenu() {
+  document.getElementById('reveal-menu')?.remove();
+  document.removeEventListener('mousedown', closeRevealMenuOutside);
+  document.removeEventListener('keydown', closeRevealMenuOnEscape);
+}
+
+/* Shows a mark, a worktree or a project in Finder / File Explorer by its id. */
+async function revealById(targetId, label) {
+  try {
+    const res = await apiRequest('/api/finder/reveal', 'POST', { targetId });
+    showToast(`Showing ${label} in ${fileManagerName()}.${res.commandPreview ? ` ${res.commandPreview}` : ''}`);
+  } catch (err) {
+    showToast(`Reveal failed: ${err.message}`);
+  }
+}
+
+/* Worktrees and build outputs, under the scan totals. Only what files state is shown. */
+async function loadProjectLeftovers() {
+  const box = document.getElementById('project-leftovers-box');
+  if (!box) return;
+  let data;
+  try {
+    data = (await apiRequest('/api/project-leftovers', 'GET')).leftovers;
+  } catch {
+    return;
+  }
+  if (!data || !document.body.contains(box)) return;
+  const atLeast = data.lowerBound ? 'at least ' : '';
+  // A title made up from the session's ID says nothing; the map names those by their prompt
+  const MADE_UP_TITLE = /^(Claude|Cursor|Codex) Session [\w-]{1,12}$/;
+  const sessionsTitle = (sessions) => {
+    const list = sessions || [];
+    if (list.length === 0) return '';
+    const titles = list.map((s) => s.title).filter((t) => t && !MADE_UP_TITLE.test(t));
+    if (titles.length === 0) return `${pluralize(list.length, 'session')} worked here; open Sessions on the map to see ${list.length === 1 ? 'its prompt' : 'their prompts'}.`;
+    return `Sessions: ${titles.slice(0, 2).map((t) => `"${t}"`).join(', ')}${list.length > 2 ? ` and ${list.length - 2} more` : ''}.`;
+  };
+  const gitLine = (w) => {
+    if (!w.isGitWorktree) return 'No longer a Git worktree (its .git file is gone).';
+    if (!w.git) return data.gitMetadataRead ? '' : 'Branch unknown: Git folders are read only with Dependency and Git folders allowed.';
+    if (w.git.registered === false) return 'Git no longer lists this worktree; `git worktree prune` forgets it.';
+    const branch = w.git.branch ? `Branch ${w.git.branch}` : w.git.detached ? 'No branch (detached)' : 'Branch unknown';
+    const exists = w.git.branch ? (w.git.branchExists ? ', still in the repository' : ', no longer in the repository') : '';
+    return `${branch}${exists}.`;
+  };
+  const worktreeRows = data.worktrees
+    .map(
+      (w) => `<div class="leftover-row">
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(w.name)}</span><span class="kv-val">${atLeast}${formatBytes(w.bytes)}</span></div>
+        <div class="leftover-facts">${escapeHtml(
+          [
+            `${pluralize(w.fileCount, 'file')}${w.newestChange ? `, last changed ${formatDate(w.newestChange)}` : ''}.`,
+            gitLine(w),
+            sessionsTitle(w.sessions)
+          ]
+            .filter(Boolean)
+            .join(' ')
+        )}</div>
+        <div class="leftover-actions">
+          <button class="link-btn" type="button" data-reveal="${escapeHtml(w.id)}" data-label="${escapeHtml(w.name)}">Show in ${fileManagerName()}</button>
+          ${w.buildOutputs.count > 0 ? `<button class="link-btn" type="button" data-select-build="${escapeHtml(w.id)}">Select its build outputs (${formatBytes(w.buildOutputs.bytes)})</button>` : ''}
+          ${w.removeCommand ? `<button class="link-btn" type="button" data-copy="${escapeHtml(w.removeCommand)}">Copy the Git command that removes it</button>` : ''}
+        </div>
+      </div>`
+    )
+    .join('');
+  const buildRows = data.buildProjects
+    .map(
+      (b) => `<div class="leftover-row">
+        <div class="leftover-head"><span class="leftover-name">${escapeHtml(b.name)}</span><span class="kv-val">${formatBytes(b.bytes)}</span></div>
+        <div class="leftover-facts">${escapeHtml(`${pluralize(b.count, 'file')}. ${b.manifest ? `Has ${b.manifest}: usually rebuilt with ${b.rebuild}.` : 'No build file found next to it; check how it was made before removing it.'}`)}</div>
+        <div class="leftover-actions">
+          <button class="link-btn" type="button" data-reveal="${escapeHtml(b.id)}" data-label="${escapeHtml(b.name)}">Show in ${fileManagerName()}</button>
+          <button class="link-btn" type="button" data-select-build="${escapeHtml(b.id)}">Select for review</button>
+        </div>
+      </div>`
+    )
+    .join('');
+  box.innerHTML = `
+    ${
+      data.worktreeCount > 0
+        ? `<div class="inspector-section">
+      <div class="inspector-section-title">Worktrees</div>
+      <div class="inspector-note">Second copies of a project that sessions work in. Whether a branch was merged or has unsaved work can only be checked with Git, which this app never runs. A worktree holds source code, so it is never moved as a whole: select its build outputs here, or remove it with Git.</div>
+      ${worktreeRows}
+      ${data.worktreeCount > data.worktrees.length ? `<div class="inspector-note">Showing the ${data.worktrees.length} largest of ${data.worktreeCount}.</div>` : ''}
+    </div>`
+        : ''
+    }
+    ${
+      data.buildProjectCount > 0
+        ? `<div class="inspector-section">
+      <div class="inspector-section-title">Build outputs by project</div>
+      ${buildRows}
+      ${data.buildProjectCount > data.buildProjects.length ? `<div class="inspector-note">Showing the ${data.buildProjects.length} largest of ${data.buildProjectCount}.</div>` : ''}
+    </div>`
+        : ''
+    }`;
+  box.querySelectorAll('[data-reveal]').forEach((btn) =>
+    btn.addEventListener('click', () => revealById(btn.dataset.reveal, btn.dataset.label))
+  );
+  box.querySelectorAll('[data-select-build]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      try {
+        const count = await selectByDescription({ kind: 'project-build', targetId: btn.dataset.selectBuild });
+        showToast(`Selected ${pluralize(count, 'build output')}. Each is checked in the review before it moves.`);
+      } catch (err) {
+        showToast(`Could not select files: ${err.message}`);
+      }
+    })
+  );
+  box.querySelectorAll('[data-copy]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy);
+        showToast('Copied. Run it in Terminal when you are sure the worktree is no longer needed.');
+      } catch {
+        showToast(btn.dataset.copy, 8000);
+      }
+    })
+  );
 }
 
 /* =========================================================================
@@ -2819,19 +2999,24 @@ function bindContextualToolbarEvents() {
 
   document.getElementById('ctx-reveal-finder-btn').addEventListener('click', async () => {
     if (uiState.selectedArtifactIds.size === 0) return;
+    const button = document.getElementById('ctx-reveal-finder-btn');
     try {
-      const res = await apiRequest('/api/finder/reveal', 'POST', {
-        artifactIds: Array.from(uiState.selectedArtifactIds)
-      });
-      const r = res.reveal;
-      let message;
-      if (!r || r.kind === 'file') {
-        message = `Showing ${selectionSummary.firstName || baseName(res.path)} in ${fileManagerName()}.`;
-      } else if (r.fileCount === r.totalCount) {
-        message = `Opened ${shortPath(r.path)}, the folder that holds all ${pluralize(r.totalCount, 'selected file')}.`;
-      } else {
-        message = `The selection is spread over ${pluralize(r.folderCount, 'folder')}. Opened ${shortPath(r.path)}, which holds ${pluralize(r.fileCount, 'file')} (${formatBytes(r.bytes)} of ${formatBytes(r.totalBytes)}).`;
+      const artifactIds = Array.from(uiState.selectedArtifactIds);
+      const res = await apiRequest('/api/finder/reveal', 'POST', { artifactIds });
+      if (res.chooseRegion) {
+        // Spread over several folders: the user picks which one to open
+        openRevealMenu(button, res.reveal, async (index) => {
+          const opened = await apiRequest('/api/finder/reveal', 'POST', { artifactIds, region: index });
+          const region = res.reveal.regions[index];
+          showToast(`Opened ${shortPath(region.path)}: ${pluralize(region.fileCount, 'selected file')}, ${formatBytes(region.bytes)}.${opened.commandPreview ? ` ${opened.commandPreview}` : ''}`);
+        });
+        return;
       }
+      const r = res.reveal;
+      const message =
+        !r || r.kind === 'file'
+          ? `Showing ${selectionSummary.firstName || baseName(res.path)} in ${fileManagerName()}.`
+          : `Opened ${shortPath(r.path)}, the folder that holds all ${pluralize(r.totalCount, 'selected file')}.`;
       showToast(res.commandPreview ? `${message} ${res.commandPreview}` : message);
     } catch (err) {
       showToast(`Reveal failed: ${err.message}`);

@@ -1,65 +1,83 @@
 import path from 'node:path';
 
 /**
- * What "Show in Finder / File Explorer" opens for a selection. One file is selected in its
- * folder. For many files, the folder they all share is opened, unless that folder is the
- * home folder, a folder above it or a drive root: then the folder below it that holds the
- * largest part of the selection is opened, and the result says how much of the selection
- * it holds, so the user is never shown one arbitrary file of thousands.
+ * What "Show in Finder / File Explorer" opens for a selection.
  *
- * `files` is [{ path, bytes }]. Paths are compared as given; `pathApi` is path.posix or
- * path.win32 for the layout of the home folder being read.
+ * One file is selected in its folder. Many files are split into the folders they sit in
+ * ("regions"): a region is the deepest folder its files share, never the home folder, a
+ * folder above it or a drive root. One region is opened directly. Several are offered as a
+ * short list with sizes, largest first, so the user is never shown one arbitrary file of
+ * thousands and always sees where the rest are.
+ *
+ * `files` is [{ path, bytes }]. `pathApi` is path.posix or path.win32 for the layout of the
+ * home folder being read.
  */
+export const MAX_REGIONS = 8;
+
 export function chooseRevealTarget(files, { homeDir = '', pathApi = path } = {}) {
   const list = (files || []).filter((f) => f && f.path);
   if (list.length === 0) return null;
   const totalBytes = list.reduce((sum, f) => sum + (f.bytes || 0), 0);
   if (list.length === 1) {
-    return { kind: 'file', path: list[0].path, fileCount: 1, bytes: totalBytes, totalCount: 1, totalBytes, folderCount: 1 };
+    const only = { path: list[0].path, fileCount: 1, bytes: totalBytes };
+    return { kind: 'file', ...only, totalCount: 1, totalBytes, regions: [only], regionCount: 1 };
   }
   const sep = pathApi.sep;
-  const fold = (p) => (pathApi === path.win32 ? p.toLowerCase() : p);
-  const parts = list.map((f) => f.path.split(sep));
-  // Folders shared by every file (the last part of each path is the file name)
-  let depth = 0;
-  let shortest = Infinity;
-  for (const p of parts) shortest = Math.min(shortest, p.length - 1); // no spread: 300,000 paths
-  while (depth < shortest && parts.every((p) => fold(p[depth]) === fold(parts[0][depth]))) depth += 1;
-
-  // Judged on the files still in play, which all share their first `d` folders
+  const fold = pathApi === path.win32 ? (p) => p.toLowerCase() : (p) => p;
+  const members = list.map((f) => ({ bytes: f.bytes || 0, parts: f.path.split(sep) }));
   const tooBroad = (d, sample) => d <= 1 || (Boolean(homeDir) && isAboveOrHome(sample, d, homeDir, pathApi));
 
-  // While the folder is too broad, go into the part of it that holds the most bytes
-  let members = list.map((f, i) => ({ ...f, parts: parts[i] }));
-  while (true) {
-    const groups = new Map();
-    for (const m of members) {
-      if (m.parts.length - 1 <= depth) continue; // a file directly in this folder
-      const key = fold(m.parts[depth]);
-      const g = groups.get(key) || { files: [], bytes: 0 };
-      g.files.push(m);
-      g.bytes += m.bytes || 0;
-      groups.set(key, g);
+  // Regions, found without recursion so deep trees cannot overflow the stack
+  const regions = [];
+  const work = [{ members, depth: 0 }];
+  while (work.length > 0) {
+    let { members: group, depth } = work.pop();
+    // Go down while every file shares the next folder (the last part is the file name)
+    for (;;) {
+      if (!group.every((m) => m.parts.length - 1 > depth)) break;
+      const next = fold(group[0].parts[depth]);
+      if (!group.every((m) => fold(m.parts[depth]) === next)) break;
+      depth += 1;
     }
-    const largest = [...groups.values()].sort((a, b) => b.bytes - a.bytes || b.files.length - a.files.length)[0];
-    if (!largest) break;
-    // Past the broad folders, stop where the remaining files part ways
-    if (!tooBroad(depth, members[0].parts) && largest.files.length < members.length) break;
-    members = largest.files;
-    depth += 1;
+    if (!tooBroad(depth, group[0].parts)) {
+      regions.push(regionOf(group, depth, sep));
+      continue;
+    }
+    // Too broad: split by the next folder; files lying directly in it form their own region
+    const children = new Map();
+    const direct = [];
+    for (const m of group) {
+      if (m.parts.length - 1 <= depth) {
+        direct.push(m);
+        continue;
+      }
+      const key = fold(m.parts[depth]);
+      if (!children.has(key)) children.set(key, []);
+      children.get(key).push(m);
+    }
+    if (direct.length > 0) regions.push(regionOf(direct, depth, sep));
+    for (const child of children.values()) work.push({ members: child, depth: depth + 1 });
   }
-  const folderParts = members[0].parts.slice(0, depth);
-  const folder = folderParts.join(sep) || sep;
-  const folderBytes = members.reduce((s, m) => s + (m.bytes || 0), 0);
-  const folderCount = new Set(list.map((f) => fold(pathApi.dirname(f.path)))).size;
+  regions.sort((a, b) => b.bytes - a.bytes || b.fileCount - a.fileCount);
+  const shown = regions.slice(0, MAX_REGIONS);
   return {
-    kind: 'folder',
-    path: /^[A-Za-z]:$/.test(folder) ? `${folder}\\` : folder,
-    fileCount: members.length,
-    bytes: folderBytes,
+    kind: regions.length === 1 ? 'folder' : 'folders',
+    path: shown[0].path,
+    fileCount: shown[0].fileCount,
+    bytes: shown[0].bytes,
     totalCount: list.length,
     totalBytes,
-    folderCount
+    regions: shown,
+    regionCount: regions.length
+  };
+}
+
+function regionOf(group, depth, sep) {
+  const folder = group[0].parts.slice(0, depth).join(sep) || sep;
+  return {
+    path: /^[A-Za-z]:$/.test(folder) ? `${folder}\\` : folder,
+    fileCount: group.length,
+    bytes: group.reduce((s, m) => s + m.bytes, 0)
   };
 }
 

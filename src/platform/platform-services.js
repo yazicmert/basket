@@ -473,7 +473,7 @@ export class PlatformServices {
   /**
    * Reveals a file in Finder on macOS (or returns dry-run action info on non-macOS).
    */
-  async revealInFinder(targetPath) {
+  async revealInFinder(targetPath, { simulate = false } = {}) {
     const resolved = path.resolve(targetPath);
     if (!fs.existsSync(resolved)) {
       return { ok: false, error: 'FILE_NOT_FOUND', path: resolved };
@@ -486,7 +486,7 @@ export class PlatformServices {
     } catch {
       isFolder = false;
     }
-    if (this.platform === 'darwin') {
+    if (this.platform === 'darwin' && process.platform === 'darwin' && !simulate) {
       return new Promise((resolve) => {
         execFile('/usr/bin/open', isFolder ? [resolved] : ['-R', resolved], (err) => {
           if (err) {
@@ -497,7 +497,7 @@ export class PlatformServices {
         });
       });
     }
-    if (this.platform === 'win32' && process.platform === 'win32') {
+    if (this.platform === 'win32' && process.platform === 'win32' && !simulate) {
       return new Promise((resolve) => {
         // File Explorer selects the file; it reports a non-zero exit code even when it worked
         execFile('explorer.exe', [isFolder ? resolved : `/select,${resolved}`], () => {

@@ -18,6 +18,8 @@ import { findKnownAppProfile, findStorePackageProfile, listKnownApplicationsWith
 import { listStartMenuApplications, listStoreApplications } from '../discovery/windows-apps.js';
 import { PICK_KINDS, pickWithWindowsDialog } from '../platform/windows-picker.js';
 import { chooseRevealTarget } from '../graph/reveal-target.js';
+import { summarizeProjectLeftovers, projectBuildOutputIds } from '../graph/project-leftovers.js';
+import { fromPathKey } from '../platform/path-keys.js';
 import { KNOWN_APP_PREFIX, parseMacOSBinaryPlist, parseMacOSPlistXml } from '../discovery/application-discovery.js';
 
 /**
@@ -521,6 +523,12 @@ export function createAtlasServer(options = {}) {
     if (body.kind === 'session-leftovers' && typeof body.sessionId === 'string' && state.promptCosts) {
       return sessionLeftoverIds(state, body.sessionId, state.promptCosts);
     }
+    // The build outputs of one listed worktree or project
+    if (body.kind === 'project-build' && typeof body.targetId === 'string') {
+      const leftovers = projectLeftovers(state);
+      const row = [...(leftovers?.worktrees || []), ...(leftovers?.buildProjects || [])].find((r) => r.id === body.targetId);
+      return row ? projectBuildOutputIds(state, row.path) : [];
+    }
     if (body.kind === 'search') {
       if (!String(body.query || '').trim() && (body.risk || 'ALL') === 'ALL' && (body.origin || 'ALL') === 'ALL') return [];
       return searchFiles(state, body).ids;
@@ -530,6 +538,47 @@ export function createAtlasServer(options = {}) {
       if (!cell) return [];
       const liveIds = new Set(live.map((a) => a.id));
       return (cell.artifactIds || []).filter((id) => liveIds.has(id));
+    }
+    return null;
+  };
+
+  // Worktrees and build outputs of this scan (see project-leftovers.js), worked out once per scan
+  let leftoversCache = { scanId: null, value: null };
+  const projectLeftovers = (state) => {
+    const scanId = state?.scan?.id || null;
+    if (!state || !state.scan) return null;
+    if (leftoversCache.scanId !== scanId || leftoversCache.quarantinedCount !== quarantinedCountOf(state)) {
+      leftoversCache = {
+        scanId,
+        quarantinedCount: quarantinedCountOf(state),
+        value: summarizeProjectLeftovers(state, { readGitMetadata: Boolean(state.scan.scope?.dependencyFolders) })
+      };
+    }
+    return leftoversCache.value;
+  };
+  const quarantinedCountOf = (state) => (state.artifacts || []).reduce((n, a) => n + (a.quarantined ? 1 : 0), 0);
+
+  // The folder or file behind a mark of the map, a worktree or a project. Only places the scan
+  // listed can be shown; the client never names a path here.
+  const revealPathForId = (state, id) => {
+    if (!state) return null;
+    const live = (state.artifacts || []).filter((a) => !a.quarantined);
+    const art = live.find((a) => a.id === id);
+    if (art) return art.canonicalPath;
+    const leftovers = projectLeftovers(state);
+    const listed = [...(leftovers?.worktrees || []), ...(leftovers?.buildProjects || [])].find((r) => r.id === id);
+    if (listed) return listed.path;
+    const dir = /^(?:dir|type):.*?::(\/[^]*?)(?:::[^:]*)?$/.exec(id);
+    if (dir) {
+      const folder = fromPathKey(dir[1]);
+      const hasFiles = live.some((a) => a.canonicalPath === folder || a.canonicalPath.startsWith(folder.endsWith(path.sep) ? folder : folder + path.sep));
+      return hasFiles ? folder : null;
+    }
+    const measured = /^measured(?:-folder|-project)?:(.+)$/.exec(id);
+    if (measured) {
+      const p = measured[1];
+      const known = (state.scan?.bulkFolders || []).some((f) => f.path === p || f.projectRoot === p);
+      return known ? p : null;
     }
     return null;
   };
@@ -948,6 +997,10 @@ export function createAtlasServer(options = {}) {
         return sendJson(res, 200, { ok: true, ...activeService().describeNodePrompts(body.nodeId) });
       }
 
+      if (url.pathname === '/api/project-leftovers' && req.method === 'GET') {
+        return sendJson(res, 200, { ok: true, leftovers: projectLeftovers(activeService().activeState) });
+      }
+
       if (url.pathname === '/api/finder/reveal' && req.method === 'POST') {
         const body = await readJsonBody(req);
         // A selection is revealed by what the summary chose for it (a file or a folder)
@@ -956,9 +1009,19 @@ export function createAtlasServer(options = {}) {
         if (Array.isArray(body.artifactIds)) {
           reveal = summarizeSelection(activeService().activeState, body.artifactIds, { withReveal: true }).reveal;
           if (!reveal) return sendJson(res, 404, { ok: false, error: 'NOTHING_SELECTED' });
-          target = reveal.path;
+          // A region is chosen by its place in the list the server worked out, not by a path
+          const index = Number.isInteger(body.region) ? body.region : 0;
+          if (!reveal.regions[index]) return sendJson(res, 400, { ok: false, error: 'UNKNOWN_REGION' });
+          target = reveal.regions[index].path;
+          // With several regions and none chosen, only the list is sent back to choose from
+          if (reveal.regionCount > 1 && !Number.isInteger(body.region)) {
+            return sendJson(res, 200, { ok: true, chooseRegion: true, reveal });
+          }
+        } else if (typeof body.targetId === 'string') {
+          target = revealPathForId(activeService().activeState, body.targetId);
+          if (!target) return sendJson(res, 404, { ok: false, error: 'UNKNOWN_TARGET' });
         }
-        const result = await activeService().platformServices.revealInFinder(target);
+        const result = await activeService().platformServices.revealInFinder(target, { simulate: Boolean(options.simulateSystemOpen) });
         return sendJson(res, result.ok ? 200 : 404, { ...result, reveal });
       }
 

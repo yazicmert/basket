@@ -14,7 +14,7 @@ test('RV1. Show in Finder opens the file, the shared folder, or the largest part
     { path: '/Users/me/Library/Caches/claude/a', bytes: 1 },
     { path: '/Users/me/Library/Caches/claude/sub/b', bytes: 1 }
   ]);
-  assert.deepEqual([shared.kind, shared.path, shared.fileCount, shared.totalCount], ['folder', '/Users/me/Library/Caches/claude', 2, 2]);
+  assert.deepEqual([shared.kind, shared.path, shared.fileCount, shared.totalCount, shared.regionCount], ['folder', '/Users/me/Library/Caches/claude', 2, 2, 1]);
 
   // Spread over the home folder: never the home folder or one arbitrary file
   const spread = mac([
@@ -23,11 +23,21 @@ test('RV1. Show in Finder opens the file, the shared folder, or the largest part
     { path: '/Users/me/dev/blog/out/c.js', bytes: 100 },
     { path: '/Users/me/Library/Caches/x/d', bytes: 50 }
   ]);
-  assert.equal(spread.kind, 'folder');
+  assert.equal(spread.kind, 'folders');
   assert.equal(spread.path, '/Users/me/dev', 'the part of home holding most bytes, down to where its files part ways');
   assert.equal(spread.fileCount, 3);
   assert.equal(spread.totalCount, 4);
-  assert.equal(spread.folderCount, 3);
+  assert.deepEqual(spread.regions.map((r) => [r.path, r.fileCount, r.bytes]), [
+    ['/Users/me/dev', 3, 1900],
+    ['/Users/me/Library/Caches/x', 1, 50]
+  ]);
+  assert.equal(spread.regionCount, 2);
+
+  // Many separate folders: the eight largest are offered, and the count says how many there are
+  const many = mac(Array.from({ length: 20 }, (_, i) => ({ path: `/Users/me/p${i}/out/f.js`, bytes: i })));
+  assert.equal(many.regions.length, 8);
+  assert.equal(many.regionCount, 20);
+  assert.equal(many.regions[0].path, '/Users/me/p19/out');
 
   // Outside the home folder, the root is never opened
   const root = chooseRevealTarget([{ path: '/opt/a/x', bytes: 1 }, { path: '/var/b/y', bytes: 5 }], { homeDir: '/Users/me', pathApi: path.posix });
