@@ -519,7 +519,7 @@ export class CleanupEngine {
         ...manifest,
         quarantinePath: path.join(entryDir, 'payload'),
         manifestPath,
-        status: manifest.status === 'RESTORED' ? 'RESTORED' : 'QUARANTINED'
+        status: ['RESTORED', 'PURGED'].includes(manifest.status) ? manifest.status : 'QUARANTINED'
       });
     }
     return null;
@@ -546,6 +546,9 @@ export class CleanupEngine {
 
     if (entry.status === 'RESTORED') {
       throw new Error(`Quarantine entry '${entryId}' has already been restored.`);
+    }
+    if (entry.status === 'PURGED') {
+      throw new Error(`Quarantine entry '${entryId}' was emptied from the Quarantine and cannot be restored.`);
     }
 
     let payloadStat;
@@ -683,7 +686,77 @@ export class CleanupEngine {
       restoredAt: entry.restoredAt
     };
   }
+
+  /**
+   * Entries that may be emptied from the Quarantine: held there at least PURGE_MIN_AGE_DAYS,
+   * with the same date in SQLite and in the manifest, and a payload that is a regular file
+   * inside the vault at the place the vault layout gives it. Stored paths are never used.
+   */
+  listPurgeableEntries({ now = Date.now() } = {}) {
+    if (!this.sqliteStore) return [];
+    const minAge = PURGE_MIN_AGE_DAYS * 24 * 60 * 60 * 1000;
+    let vaultReal;
+    try {
+      vaultReal = fs.realpathSync(this.quarantineRoot);
+    } catch {
+      return [];
+    }
+    const eligible = [];
+    for (const entry of this.sqliteStore.listQuarantineEntries('QUARANTINED')) {
+      if (!/^[A-Za-z0-9_-]+$/.test(String(entry.id)) || !/^[A-Za-z0-9_-]+$/.test(String(entry.batchId))) continue;
+      const at = Date.parse(entry.quarantinedAt || '');
+      if (!Number.isFinite(at) || now - at < minAge) continue;
+      const entryDir = path.join(this.quarantineRoot, 'batches', entry.batchId, entry.id);
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(entryDir, 'manifest.json'), 'utf8'));
+      } catch {
+        continue;
+      }
+      if (manifest.id !== entry.id || manifest.status !== 'QUARANTINED' || manifest.quarantinedAt !== entry.quarantinedAt) continue;
+      const payload = path.join(entryDir, 'payload');
+      const st = fs.lstatSync(payload, { throwIfNoEntry: false });
+      if (!st || !st.isFile()) continue;
+      let payloadReal;
+      try {
+        payloadReal = fs.realpathSync(payload);
+      } catch {
+        continue;
+      }
+      if (!payloadReal.startsWith(vaultReal + path.sep)) continue;
+      eligible.push({ ...entry, payloadPath: payload, manifestPath: path.join(entryDir, 'manifest.json'), payloadBytes: st.size });
+    }
+    return eligible;
+  }
+
+  /**
+   * Deletes the payloads of exactly these entries, each checked again just before. The
+   * manifest and the SQLite row stay, marked PURGED, so the Quarantine still shows what was
+   * there. This is the only place in the app that deletes a file permanently.
+   */
+  purgeEntries(entryIds, { now = Date.now() } = {}) {
+    const wanted = new Set(entryIds);
+    const purged = [];
+    for (const entry of this.listPurgeableEntries({ now })) {
+      if (!wanted.has(entry.id)) continue;
+      fs.unlinkSync(entry.payloadPath);
+      const { payloadPath, payloadBytes, ...stored } = entry;
+      const updated = { ...stored, status: 'PURGED', purgedAt: new Date(now).toISOString() };
+      try {
+        const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, 'utf8'));
+        writeFileDurable(entry.manifestPath, JSON.stringify({ ...manifest, status: 'PURGED', purgedAt: updated.purgedAt }, null, 2));
+      } catch {
+        // The row below still records it
+      }
+      this.sqliteStore.saveQuarantineEntry(updated);
+      purged.push({ id: entry.id, sizeBytes: payloadBytes });
+    }
+    return purged;
+  }
 }
+
+/** How long a file waits in the Quarantine before it may be emptied (with the user's confirmation). */
+export const PURGE_MIN_AGE_DAYS = 30;
 
 /**
  * Writes a file and fsyncs it so the recovery descriptor survives a crash right after the move.

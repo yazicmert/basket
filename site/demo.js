@@ -800,7 +800,7 @@
   function renderList() {
     list.textContent = '';
     if (!state.quarantined.length) {
-      list.appendChild(html('p', 'demo-empty', 'Quarantine is empty. Select a file on the map and move it here. Nothing is deleted.'));
+      list.appendChild(html('p', 'demo-empty', 'Quarantine is empty. Select a file on the map and move it here. It can be put back.'));
       return;
     }
     state.quarantined.forEach(function (id) {

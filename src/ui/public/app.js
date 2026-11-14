@@ -269,6 +269,7 @@ async function initApp() {
   initGraphCanvas();
 
   bindPermissionsEvents();
+  bindPurgeEvents();
 
   // Inside the macOS app (WKWebView) the real window controls overlap the top-left corner
   if (/AppleWebKit/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent)) {
@@ -2871,15 +2872,18 @@ function renderQuarantineVaultView() {
   if (!listEl) return;
 
   if (!uiState.quarantineEntries || uiState.quarantineEntries.length === 0) {
+    renderQuarantineSummary();
     listEl.innerHTML = `<div class="empty-note">Nothing in Quarantine. Select files on the map and choose Move to Quarantine.</div>`;
     return;
   }
 
   listEl.innerHTML = '';
+  renderQuarantineSummary();
   uiState.quarantineEntries.forEach((entry) => {
     const isHeld = entry.status === 'QUARANTINED';
+    const isPurged = entry.status === 'PURGED';
     const row = document.createElement('div');
-    row.className = 'quarantine-row-card';
+    row.className = `quarantine-row-card${isPurged ? ' is-purged' : ''}`;
     row.title = `SHA-256 ${entry.sha256 || 'not recorded'}`;
     row.innerHTML = `
       <div class="quarantine-row-main">
@@ -2889,7 +2893,9 @@ function renderQuarantineVaultView() {
           <span class="metric-label">${
             isHeld
               ? `Removed ${escapeHtml(formatDate(entry.quarantinedAt))}`
-              : `Restored ${escapeHtml(formatDate(entry.restoredAt))}`
+              : isPurged
+                ? `Emptied for good ${escapeHtml(formatDate(entry.purgedAt))}`
+                : `Restored ${escapeHtml(formatDate(entry.restoredAt))}`
           }</span>
         </div>
         <div class="quarantine-row-path mono">${escapeHtml(entry.originalPath)}</div>
@@ -2930,6 +2936,103 @@ function renderQuarantineVaultView() {
       }
     });
   });
+}
+
+/* What the Quarantine holds now, and what emptying it has freed so far. */
+function renderQuarantineSummary() {
+  const box = document.getElementById('quarantine-summary');
+  if (!box) return;
+  const entries = uiState.quarantineEntries || [];
+  const held = entries.filter((e) => e.status === 'QUARANTINED');
+  const purged = entries.filter((e) => e.status === 'PURGED');
+  const sum = (list) => list.reduce((s, e) => s + (e.sizeBytes || 0), 0);
+  box.innerHTML = held.length || purged.length
+    ? `<span><strong>${formatBytes(sum(held))}</strong> held in ${pluralize(held.length, 'file')}</span>${
+        purged.length ? `<span>${formatBytes(sum(purged))} freed by emptying</span>` : ''
+      }`
+    : '';
+}
+
+/* Emptying the Quarantine: the server lists what has waited 30 days and binds the
+   confirmation to exactly that list. */
+async function openPurgeModal() {
+  const modal = document.getElementById('purge-modal');
+  const body = document.getElementById('purge-modal-body');
+  const confirmBtn = document.getElementById('confirm-purge-btn');
+  let purge;
+  try {
+    purge = (await apiRequest('/api/quarantine/purge/prepare', 'POST', {})).purge;
+  } catch (err) {
+    showToast(`Could not list old files: ${err.message}`);
+    return;
+  }
+  uiState.pendingPurge = purge;
+  const held = (uiState.quarantineEntries || []).filter((e) => e.status === 'QUARANTINED');
+  if (purge.entries.length === 0) {
+    const oldest = held.map((e) => Date.parse(e.quarantinedAt)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    const ready = oldest ? new Date(oldest + purge.minAgeDays * 86400000) : null;
+    body.innerHTML = `<div class="purge-empty">
+      <div class="purge-empty-title">Nothing has waited ${purge.minAgeDays} days yet</div>
+      <p class="inspector-note">${held.length > 0 && ready ? `The oldest file can be emptied from ${escapeHtml(formatDate(ready.toISOString()))}. Until then everything here can be put back.` : 'Files moved to Quarantine wait here first, so you can put them back.'}</p>
+    </div>`;
+    confirmBtn.classList.add('hidden');
+  } else {
+    body.innerHTML = `
+      <div class="purge-total">
+        <span class="purge-total-value">${formatBytes(purge.totalBytes)}</span>
+        <span class="purge-total-meta">${pluralize(purge.entries.length, 'file')} that ${purge.entries.length === 1 ? 'has' : 'have'} waited at least ${purge.minAgeDays} days</span>
+      </div>
+      <p class="purge-warning">These files are deleted for good and cannot be put back. Files that waited less than ${purge.minAgeDays} days stay in Quarantine.</p>
+      <div class="purge-list">
+        ${purge.entries
+          .map(
+            (e) => `<div class="purge-row">
+              <div class="purge-row-main"><strong>${escapeHtml(e.artifactName)}</strong><span class="mono purge-row-path">${escapeHtml(shortPath(e.originalPath))}</span></div>
+              <div class="purge-row-meta">${formatBytes(e.sizeBytes)}<span>Removed ${escapeHtml(formatDate(e.quarantinedAt))}</span></div>
+            </div>`
+          )
+          .join('')}
+      </div>`;
+    confirmBtn.classList.remove('hidden');
+    confirmBtn.textContent = `Delete ${pluralize(purge.entries.length, 'File')} Permanently`;
+  }
+  modal.classList.remove('hidden');
+}
+
+function closePurgeModal() {
+  document.getElementById('purge-modal').classList.add('hidden');
+  uiState.pendingPurge = null;
+}
+
+async function confirmPurge() {
+  const purge = uiState.pendingPurge;
+  if (!purge || !purge.token) return;
+  const btn = document.getElementById('confirm-purge-btn');
+  btn.disabled = true;
+  try {
+    const res = await apiRequest('/api/quarantine/purge', 'POST', { token: purge.token });
+    uiState.quarantineEntries = res.quarantineEntries || [];
+    closePurgeModal();
+    renderQuarantineVaultView();
+    updateQuarantineCountPill();
+    showToast(
+      `Freed ${formatBytes(res.freedBytes)}: ${pluralize(res.purgedCount, 'file')} deleted for good.${
+        res.skippedCount > 0 ? ` ${pluralize(res.skippedCount, 'file')} changed since the list was shown and ${res.skippedCount === 1 ? 'was' : 'were'} kept.` : ''
+      }`
+    );
+  } catch (err) {
+    showToast(`Nothing was deleted: ${err.message.replace(/^PURGE_CONFIRMATION_EXPIRED: /, '')}`);
+    closePurgeModal();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function bindPurgeEvents() {
+  document.getElementById('purge-open-btn').addEventListener('click', openPurgeModal);
+  document.getElementById('close-purge-modal-btn').addEventListener('click', closePurgeModal);
+  document.getElementById('cancel-purge-modal-btn').addEventListener('click', closePurgeModal);
+  document.getElementById('confirm-purge-btn').addEventListener('click', confirmPurge);
 }
 
 function updateQuarantineCountPill() {

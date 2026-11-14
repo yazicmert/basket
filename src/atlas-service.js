@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { PlatformServices } from './platform/platform-services.js';
 import { AdapterRegistry } from './adapters/adapter-registry.js';
 import { ApplicationDiscovery } from './discovery/application-discovery.js';
@@ -8,7 +9,7 @@ import { ArtifactIndexer } from './indexer/artifact-indexer.js';
 import { ProvenanceEngine } from './provenance/provenance-engine.js';
 import { ClassificationEngine } from './classification/classification-engine.js';
 import { GraphEngine } from './graph/graph-engine.js';
-import { CleanupEngine } from './cleanup/cleanup-engine.js';
+import { CleanupEngine, PURGE_MIN_AGE_DAYS } from './cleanup/cleanup-engine.js';
 import { SQLiteStore } from './persistence/sqlite-store.js';
 import { WRITE_OPERATION_TYPES } from './models/entities.js';
 import { normalizeScanScope } from './platform/permissions.js';
@@ -553,6 +554,39 @@ export class ArtifactAtlasService {
     return {
       ...result,
       updatedGraph: this.activeState.graph,
+      quarantineEntries: this.quarantineEntriesWithSessions()
+    };
+  }
+
+  /**
+   * What "Empty Quarantine" would delete: entries held at least 30 days. The confirmation
+   * token is bound to exactly this list; anything that changes in between is not deleted.
+   */
+  preparePurge({ now = Date.now() } = {}) {
+    const entries = this.cleanupEngine.listPurgeableEntries({ now });
+    const ids = entries.map((e) => e.id).sort();
+    const token = ids.length > 0 ? `purge_${crypto.createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 24)}` : null;
+    this.pendingPurge = token ? { token, ids, preparedAt: now } : null;
+    return {
+      minAgeDays: PURGE_MIN_AGE_DAYS,
+      token,
+      totalBytes: entries.reduce((s, e) => s + (e.payloadBytes || 0), 0),
+      entries: entries.map((e) => ({ id: e.id, artifactName: e.artifactName, originalPath: e.originalPath, sizeBytes: e.payloadBytes, quarantinedAt: e.quarantinedAt }))
+    };
+  }
+
+  purgeQuarantine({ token, now = Date.now() }) {
+    const pending = this.pendingPurge;
+    // One use, within ten minutes of the list the user saw
+    if (!pending || !token || token !== pending.token || now - pending.preparedAt > 10 * 60 * 1000) {
+      throw new Error('PURGE_CONFIRMATION_EXPIRED: Open the list again and confirm.');
+    }
+    this.pendingPurge = null;
+    const purged = this.cleanupEngine.purgeEntries(pending.ids, { now });
+    return {
+      purgedCount: purged.length,
+      skippedCount: pending.ids.length - purged.length,
+      freedBytes: purged.reduce((s, p) => s + (p.sizeBytes || 0), 0),
       quarantineEntries: this.quarantineEntriesWithSessions()
     };
   }

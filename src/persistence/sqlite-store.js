@@ -211,6 +211,13 @@ const MIGRATIONS = [
     sql: `
       ALTER TABLE quarantine_entries ADD COLUMN session_ids TEXT NOT NULL DEFAULT '[]';
     `
+  },
+  {
+    version: 5,
+    name: '005_quarantine_purged_at',
+    sql: `
+      ALTER TABLE quarantine_entries ADD COLUMN purged_at TEXT;
+    `
   }
 ];
 
@@ -553,8 +560,8 @@ export class SQLiteStore {
             original_path, quarantine_path, manifest_path, size_bytes,
             original_mode, original_mtime_ms, original_inode_key, sha256,
             risk_category, artifact_type, provenance_confidence, reason,
-            quarantined_at, restored_at, status, session_ids
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            quarantined_at, restored_at, status, session_ids, purged_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           entry.id,
@@ -577,12 +584,14 @@ export class SQLiteStore {
           entry.quarantinedAt,
           entry.restoredAt,
           entry.status,
-          JSON.stringify(Array.isArray(entry.sessionIds) ? entry.sessionIds : [])
+          JSON.stringify(Array.isArray(entry.sessionIds) ? entry.sessionIds : []),
+          entry.purgedAt || null
         );
 
       this.db
         .prepare('UPDATE artifacts SET quarantined = ? WHERE id = ?')
-        .run(entry.status === 'QUARANTINED' ? 1 : 0, entry.artifactId);
+        // A file emptied from the Quarantine is gone, so it stays out of the scan as well
+        .run(entry.status === 'QUARANTINED' || entry.status === 'PURGED' ? 1 : 0, entry.artifactId);
 
       this.db.exec('COMMIT;');
     } catch (err) {
@@ -618,6 +627,7 @@ export class SQLiteStore {
       reason: r.reason,
       quarantinedAt: r.quarantined_at,
       restoredAt: r.restored_at,
+      purgedAt: r.purged_at || null,
       status: r.status,
       sessionIds: parseIdList(r.session_ids)
     }));

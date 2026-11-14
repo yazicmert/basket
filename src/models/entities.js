@@ -282,7 +282,9 @@ export function createQuarantineEntryModel(fields) {
     sessionIds: Array.isArray(fields.sessionIds) ? fields.sessionIds.filter((id) => typeof id === 'string') : [],
     quarantinedAt: fields.quarantinedAt || new Date().toISOString(),
     restoredAt: fields.restoredAt || null,
-    status: fields.status || 'QUARANTINED' // PENDING | QUARANTINED | RESTORED
+    // Set when the user emptied it from the Quarantine after the waiting period
+    purgedAt: fields.purgedAt || null,
+    status: fields.status || 'QUARANTINED' // PENDING | QUARANTINED | RESTORED | PURGED
   };
 }
 

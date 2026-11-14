@@ -1097,6 +1097,21 @@ export function createAtlasServer(options = {}) {
         });
       }
 
+      // Emptying the Quarantine: first the list of what has waited long enough, then the
+      // confirmed deletion of exactly that list
+      if (url.pathname === '/api/quarantine/purge/prepare' && req.method === 'POST') {
+        return sendJson(res, 200, { ok: true, purge: activeService().preparePurge() });
+      }
+      if (url.pathname === '/api/quarantine/purge' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        try {
+          const result = activeService().purgeQuarantine({ token: body.token });
+          return sendJson(res, 200, { ok: true, ...result });
+        } catch (err) {
+          return sendJson(res, 409, { ok: false, error: err.message });
+        }
+      }
+
       if (url.pathname === '/api/cleanup/restore' && req.method === 'POST') {
         const body = await readJsonBody(req);
         const result = activeService().restoreQuarantineEntry({

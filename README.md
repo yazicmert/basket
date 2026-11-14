@@ -2,7 +2,7 @@
 
 > **Know which AI session made a file before you delete it.**
 
-Artifact Atlas shows what an application left on your Mac or PC: caches, logs, models, session records and the files its AI sessions wrote. It links each file to the session and tool call that produced it where a record exists, says how safe it is to remove, and moves what you choose into a Quarantine you can restore from. Nothing is deleted permanently, nothing leaves your computer, and the applications you scan are never started.
+Artifact Atlas shows what an application left on your Mac or PC: caches, logs, models, session records and the files its AI sessions wrote. It links each file to the session and tool call that produced it where a record exists, says how safe it is to remove, and moves what you choose into a Quarantine you can restore from. A file is deleted for good only after it has waited 30 days in Quarantine and you confirm the list. Nothing leaves your computer, and the applications you scan are never started.
 
 Session-level tracing works for **Claude Code** (the CLI, and the Code view of the Claude app): each file a session wrote is linked to the session and the tool call that wrote it. For **Cursor** and **Codex** (the CLI, and the Codex view of the ChatGPT desktop app, which replaced the separate Codex app in July 2026) sessions are listed with their starting prompt, but linking their files to tool calls is not yet supported for their current record formats. Any other application can be scanned too; its files are attributed to the application, not to a session. Windsurf, renamed Devin Desktop, is found under both names.
 
@@ -108,7 +108,7 @@ The three macOS settings do not exist on Windows.
    - `INFERRED`: structural evidence, such as the application's own cache or log folder.
    - `UNKNOWN`: no evidence. Timestamp proximity alone never links a file to a session.
 4. **Risk is never judged by extension alone.** The classifier looks at the folder a file is in, Git repositories, provenance, hardlinks and files shared between sessions. Source code, Git data, session records, model weights, credentials and files in your project folders that no session recorded are never marked safe to remove.
-5. **Quarantine, not deletion.** Moving a file runs a pre-flight check (same file, same size and time, inside the scanned folders, not a symlink), writes a recovery manifest before the move, and keeps a SHA-256 of every file. Sizes count hardlinked data once.
+5. **Quarantine first, deletion only when you say so.** Moving a file runs a pre-flight check (same file, same size and time, inside the scanned folders, not a symlink), writes a recovery manifest before the move, and keeps a SHA-256 of every file. Sizes count hardlinked data once. Quarantine sits on the same disk, so it frees space only when emptied: **Empty Old Files** lists the files that have waited at least 30 days, and deletes exactly that list after you confirm. Anything younger stays and can be put back.
 6. **No conversation text is stored.** The index holds session IDs, timestamps, tool names and file paths. The starting prompt shown in the window is read from the session's record when it is shown and is never written anywhere.
 7. **Loopback only.** The app's interface talks to a backend bound to `127.0.0.1` on a random port, protected by a per-launch token and `Host` and `Origin` checks. The backend stops when the app quits.
 

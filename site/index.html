@@ -46,7 +46,7 @@
       Artifact Atlas maps the files that Claude Code, Cursor, Codex and other AI apps leave on your Mac or PC
       to the sessions and tool calls that produced them, names each session by the prompt that started it,
       and shows what that prompt cost beyond its output. Cleanup moves files into a quarantine you can
-      restore from. Nothing is deleted permanently.
+      restore from; a file is deleted for good only after 30 days there and your confirmation.
     </p>
     <div class="actions">
       <a class="btn primary" href="https://github.com/yazicmert/basket/releases/latest/download/ArtifactAtlas-macOS.dmg">Download for macOS</a>
@@ -138,8 +138,8 @@
     <h2>What it guarantees</h2>
     <div class="spec-body">
       <div class="principles">
-        <div><h3>Never deletes permanently</h3>
-          <p>Cleanup moves files into a Quarantine Vault with a SHA-256 digest and a manifest written before the move. Anything can be restored, and restoring never overwrites another file.</p></div>
+        <div><h3>Quarantine before anything is deleted</h3>
+          <p>Cleanup moves files into a Quarantine Vault with a SHA-256 digest and a manifest written before the move, and restoring never overwrites another file. To free the space, Empty Old Files deletes only files that have waited 30 days, from a list you confirm.</p></div>
         <div><h3>Reads, never runs</h3>
           <p>Apps are identified from static metadata: the bundle's Info.plist on macOS, the shortcut or program name on Windows. Scanned applications are never executed, and symlinks are never followed outside the folders you authorized.</p></div>
         <div><h3>Keeps conversations private</h3>
