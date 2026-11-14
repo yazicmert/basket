@@ -174,7 +174,7 @@ exit $Status
 `;
 }
 
-/** Starts the swap helper detached from this process, which is about to be stopped. */
+/** Starts the swap helper so that it outlives this process, which is about to be stopped. */
 export async function launchWindowsSwap({ installDir, stagedDir, appPid, stagingDir, relaunch = true, runningDir = null, startTimeoutMs = 20000 }) {
   const scriptPath = path.join(stagingDir, 'swap.ps1');
   // A byte-order mark keeps Windows PowerShell 5.1 reading the script as UTF-8
@@ -182,23 +182,28 @@ export async function launchWindowsSwap({ installDir, stagedDir, appPid, staging
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   // What PowerShell itself prints (a script it cannot start, a policy) goes next to the log
   const output = fs.openSync(path.join(stagingDir, 'helper-output.txt'), 'a');
+  // The helper must outlive the app. Node keeps its children in a job that ends with it, but
+  // lets their own children leave it, and a detached PowerShell has no console and does not
+  // start. So a short-lived PowerShell starts the helper with Start-Process (hidden window).
+  const quoteArg = (v) => `"${String(v).replace(/"/g, '')}"`;
+  const helperArgs = [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', scriptPath,
+    '-InstallDir', installDir, '-StagedDir', stagedDir, '-AppPid', String(appPid), '-Staging', stagingDir,
+    '-Relaunch', relaunch ? '1' : '0', '-RunningDir', runningDir || installDir
+  ].map((v) => (v.startsWith('-') ? v : quoteArg(v)));
+  const psQuote = (v) => `'${String(v).replace(/'/g, "''")}'`;
+  const starter = `Start-Process -FilePath ${psQuote(powershell)} -WindowStyle Hidden -ArgumentList ${psQuote(helperArgs.join(' '))}`;
   const child = spawn(
     powershell,
-    [
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
-      '-InstallDir', installDir, '-StagedDir', stagedDir, '-AppPid', String(appPid), '-Staging', stagingDir,
-      '-Relaunch', relaunch ? '1' : '0', '-RunningDir', runningDir || installDir
-    ],
-    // Detached, or Windows ends it with the app (Node keeps its children in a job that
-    // closes with it). No -WindowStyle: a detached process has no console window to hide.
-    { detached: true, stdio: ['ignore', output, output], windowsHide: true }
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(starter, 'utf16le').toString('base64')],
+    { stdio: ['ignore', output, output], windowsHide: true }
   );
   fs.closeSync(output);
   child.unref();
   // The app quits only once the helper has said it started
   const log = path.join(stagingDir, 'update.log');
   let exited = null;
-  child.on('exit', (code) => { exited = code; });
+  child.on('exit', (code) => { if (code !== 0) exited = code; });
   child.on('error', () => { exited = -1; });
   const deadline = Date.now() + startTimeoutMs;
   while (Date.now() < deadline) {
