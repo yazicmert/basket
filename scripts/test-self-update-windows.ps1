@@ -49,8 +49,16 @@ launchWindowsSwap({ installDir: install, stagedDir: staged, appPid: Number(pid),
     if ((Test-Path $Log) -and (Select-String -Path $Log -Pattern 'update finished' -Quiet)) { break }
     Start-Sleep -Milliseconds 100
   }
-  Get-Content $Log
-  if (-not (Select-String -Path $Log -Pattern 'update finished with status 0' -Quiet)) { throw 'the helper did not finish with status 0' }
+  if (Test-Path $Log) { Get-Content $Log } else { Write-Host 'no update.log was written' }
+  $Output = Join-Path $Staging 'helper-output.txt'
+  if (Test-Path $Output) { Write-Host '--- helper output ---'; Get-Content $Output }
+  if (-not (Test-Path $Log)) {
+    Write-Host '--- running the helper in the foreground to show why ---'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Staging 'swap.ps1') -InstallDir $Install -StagedDir (Join-Path $Staging 'unpacked\ArtifactAtlas') -AppPid $Fake.Id -Staging $Staging -Relaunch 0 -RunningDir $Install
+    Write-Host "foreground exit code $LASTEXITCODE"
+    if (Test-Path $Log) { Get-Content $Log }
+  }
+  if (-not (Test-Path $Log) -or -not (Select-String -Path $Log -Pattern 'update finished with status 0' -Quiet)) { throw 'the helper did not finish with status 0' }
   if (Get-Process -Id $Fake.Id -ErrorAction SilentlyContinue) { throw 'the running app was not stopped' }
   if (Test-Path (Join-Path $Install 'app\OLD_COPY_MARKER')) { throw 'the old copy is still installed' }
   if (-not (Test-Path (Join-Path $Install 'my-notes.txt'))) { throw 'a file that is not part of the app was removed' }

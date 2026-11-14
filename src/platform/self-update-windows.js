@@ -180,15 +180,18 @@ export function launchWindowsSwap({ installDir, stagedDir, appPid, stagingDir, r
   // A byte-order mark keeps Windows PowerShell 5.1 reading the script as UTF-8
   fs.writeFileSync(scriptPath, '\ufeff' + windowsSwapScript(), 'utf8');
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  // What PowerShell itself prints (a script it cannot start, a policy) goes next to the log
+  const output = fs.openSync(path.join(stagingDir, 'helper-output.txt'), 'a');
   const child = spawn(
     powershell,
     [
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', scriptPath,
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
       '-InstallDir', installDir, '-StagedDir', stagedDir, '-AppPid', String(appPid), '-Staging', stagingDir,
       '-Relaunch', relaunch ? '1' : '0', '-RunningDir', runningDir || installDir
     ],
-    { detached: true, stdio: 'ignore', windowsHide: true }
+    { detached: true, stdio: ['ignore', output, output], windowsHide: true }
   );
+  fs.closeSync(output);
   child.unref();
   return scriptPath;
 }
