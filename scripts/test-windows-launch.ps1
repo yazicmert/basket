@@ -58,6 +58,9 @@ Write-Host "  window: $($Window.Name) (pid $($Window.ProcessId))"
 $Backend = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.ExecutablePath -eq $Node } | Select-Object -First 1
 if (-not $Backend) { throw 'the backend process was not found' }
 
+# A window that closes within 4 seconds is taken for one handed to another browser, and the
+# launcher then keeps the app running until the user says so; a user's window stays open longer
+Start-Sleep -Seconds 6
 Write-Host '==> [Launch 4/4] Closing the window quits the launcher and the backend'
 # All browser processes of this profile, as when the user closes the window
 Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($WindowProfile) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

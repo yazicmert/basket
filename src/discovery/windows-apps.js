@@ -62,6 +62,17 @@ export function parseWindowsShortcutTarget(buffer) {
 /** Shortcut names that are not applications (uninstallers, manuals, links to web sites). */
 const NOT_AN_APP = /\b(uninstall|uninstaller|readme|read me|help|manual|documentation|license|website|web site|release notes|changelog)\b/i;
 
+/** Shortcuts to web links and documents are not applications. */
+const DOCUMENT_TARGET = /\.(url|html?|chm|pdf|txt|rtf)$/i;
+function pointsToDocument(shortcutPath) {
+  try {
+    const target = parseWindowsShortcutTarget(fs.readFileSync(shortcutPath));
+    return Boolean(target && DOCUMENT_TARGET.test(target));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Lists Start Menu shortcuts by name. `startMenuDirs` are the per-user and all-users
  * "Programs" folders; they are walked two folders deep and never followed through links.
@@ -85,7 +96,7 @@ export function listStartMenuApplications(startMenuDirs) {
       } else if (entry.isFile() && /\.lnk$/i.test(entry.name)) {
         const name = entry.name.replace(/\.lnk$/i, '');
         const key = name.toLowerCase();
-        if (!NOT_AN_APP.test(name) && !found.has(key)) {
+        if (!NOT_AN_APP.test(name) && !found.has(key) && !pointsToDocument(full)) {
           found.set(key, { name, shortcutPath: full });
         }
       }

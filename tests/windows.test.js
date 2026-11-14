@@ -179,6 +179,8 @@ test('W4. Shortcuts: the stored target is read, nothing is run, and non-applicat
 
   const env = makeWindowsHome();
   try {
+    // A shortcut to a web link is not an application
+    fs.writeFileSync(path.join(env.startMenu, 'Module Search.lnk'), makeShortcut('C:\\Strawberry\\win32\\Module Search.url'));
     const apps = listStartMenuApplications([env.startMenu]);
     assert.deepEqual(apps.map((a) => a.name).sort(), ['Cursor', 'Notepad Plus']);
   } finally {
