@@ -189,9 +189,9 @@ export async function launchWindowsSwap({ installDir, stagedDir, appPid, staging
       '-InstallDir', installDir, '-StagedDir', stagedDir, '-AppPid', String(appPid), '-Staging', stagingDir,
       '-Relaunch', relaunch ? '1' : '0', '-RunningDir', runningDir || installDir
     ],
-    // Not detached: a process without a console of its own may never start PowerShell. On
-    // Windows a child keeps running when its parent exits, so the helper outlives the app.
-    { stdio: ['ignore', output, output], windowsHide: true }
+    // Detached, or Windows ends it with the app (Node keeps its children in a job that
+    // closes with it). No -WindowStyle: a detached process has no console window to hide.
+    { detached: true, stdio: ['ignore', output, output], windowsHide: true }
   );
   fs.closeSync(output);
   child.unref();
